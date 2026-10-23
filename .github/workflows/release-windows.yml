@@ -61,11 +61,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+          python -m playwright install chromium-headless-shell
           python -m ruff check .
           python -m pytest -q
-
-      - name: Браузер агента
-        run: python -m playwright install chromium-headless-shell
 
       - name: Сборка через Nuitka
         shell: pwsh

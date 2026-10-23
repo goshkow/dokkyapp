@@ -56,11 +56,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip install -r requirements-dmg.txt
+          python -m playwright install chromium-headless-shell
           python -m ruff check .
           python -m pytest -q
-
-      - name: Браузер агента
-        run: python -m playwright install chromium-headless-shell
 
       - name: Сборка Докки.app через Nuitka
         run: bash scripts/build_macos.sh dist_macos

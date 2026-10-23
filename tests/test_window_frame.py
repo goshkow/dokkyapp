@@ -138,7 +138,9 @@ def test_dwm_decoration_attributes_are_gated_to_windows_11(monkeypatch, build, e
     assert attributes == expected
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="нужен настоящий Windows HWND")
+# на раннерах GitHub нет интерактивного рабочего стола, QtWebEngine там падает с access violation
+@pytest.mark.skipif(sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") == "true",
+                    reason="нужен настоящий Windows HWND и рабочий стол")
 @pytest.mark.parametrize("scale", ["1", "1.5"])
 def test_windows_caption_hwnd_in_isolated_process(tmp_path, scale):
     source = r'''
