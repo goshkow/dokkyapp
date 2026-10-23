@@ -1,0 +1,35 @@
+/* шапка: одна строка высотой --controls-h, всё центрируется на её середине (как кнопки навигации) */
+.chat-page > .chat-header,
+main:not(.chat-page) > .chat-header,
+.desktop-window .chat-page > .chat-header {
+  height: var(--controls-h);
+  min-height: 0;
+  padding: 0 16px;
+}
+.chat-header .ai-product-switch { top: 6px; }
+.chat-header .header-start, .chat-header .header-end { height: 100%; }
+#title { line-height: 1.4; padding-block: 1px 3px; }
+main:not(.chat-page) { grid-template-rows: var(--controls-h) minmax(0, 1fr); }
+
+/* затухание под шапкой и над полем ввода короче и мягче; у самого края ленты оно выключено, чтобы ничего не закрывать */
+.chat-edge-fade { transition: opacity 0.22s ease; }
+.chat-edge-fade-top {
+  height: calc(var(--feed-top, 84px) + 6px);
+  background: linear-gradient(to bottom, var(--bg) 0, var(--bg) 62%, color-mix(in srgb, var(--bg) 55%, transparent) 82%, transparent 100%);
+}
+.chat-edge-fade-bottom {
+  height: calc(var(--feed-bottom, 140px) + 6px);
+  background: linear-gradient(to top, var(--bg) 0, var(--bg) 60%, color-mix(in srgb, var(--bg) 55%, transparent) 82%, transparent 100%);
+}
+#main[data-at-top] .chat-edge-fade-top { opacity: 0; }
+/* снизу затухание не пропадает: у конца ленты оно ужимается до самого поля ввода и не заходит выше его границы */
+.chat-edge-fade-bottom { transition: height 0.22s var(--ease); }
+#main[data-at-bottom] .chat-edge-fade-bottom { height: calc(var(--feed-bottom, 140px) - 20px); }
+
+/* в начатом чате переключатель «Чат / Поиск» плавно уходит */
+.chat-header .ai-product-switch { transition: opacity 0.22s ease, visibility 0s; }
+.chat-header .ai-product-switch[data-away] { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.22s ease, visibility 0s linear 0.22s; }
+
+/* чат виден в Докки на телефоне */
+.chat-phone-mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-right: 6px; color: var(--muted); }
+.chat-phone-mark svg { width: 16px; height: 16px; }

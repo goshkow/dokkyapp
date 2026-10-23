@@ -1,0 +1,29 @@
+.desktop-window .desktop-window-controls {
+  position:fixed; top:0; right:0; z-index:2000; height:var(--caption-height,38px); display:flex;
+  background:var(--bg,#101010); user-select:none;
+}
+.desktop-window-controls button {
+  width:46px; height:38px; padding:0; border:0; border-radius:0;
+  display:grid; place-items:center; color:var(--text,#ddd); background:transparent;
+  font-family:'Segoe Fluent Icons','Segoe MDL2 Assets',sans-serif; font-size:var(--fs-10);
+}
+.desktop-window-controls button:focus-visible { outline:2px solid currentColor; outline-offset:-3px; }
+.desktop-window-controls button:hover,.desktop-window-controls button.native-hover { background:var(--hover,#252525); }
+.desktop-window-controls [data-window-action="close"]:hover,
+.desktop-window-controls [data-window-action="close"].native-hover { background:#c42b1c; color:white; }
+.desktop-window-controls button:active { background:var(--active,#333); }
+.desktop-window-controls [data-window-action="close"]:active { background:#b02519; color:white; }
+.desktop-window .chat-header { min-height:64px; }
+.desktop-window .header-end { padding-right:var(--caption-width,138px); }
+.desktop-window #shell:not(.right-collapsed) .header-end { padding-right:0; }
+.desktop-window #shell:not(.right-collapsed) .inspector-heading { min-height:70px; padding-top:var(--caption-height,38px); }
+.desktop-window .chat-header,.desktop-window .sidebar-brand,.desktop-window .inspector-heading { user-select:none; }
+.desktop-window body.auth-required .desktop-window-controls { background:transparent; }
+.desktop-drag-strip { position:fixed; top:0; left:0; right:var(--caption-width,138px); height:10px; z-index:1999; }
+.auth-required .desktop-drag-strip { height:var(--caption-height,38px); }
+@media (forced-colors:active) {
+  .desktop-window-controls button { color:ButtonText; }
+  .desktop-window-controls button:hover,.desktop-window-controls button.native-hover {
+    color:HighlightText; background:Highlight;
+  }
+}

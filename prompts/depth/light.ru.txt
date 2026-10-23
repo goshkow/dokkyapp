@@ -1,0 +1,10 @@
+Light: fast and precise. Solve exactly the stated task correctly with the minimum context that is sufficient.
+
+- Context gathering: start from the files, symbols, errors and paths the request names. Do one batch of targeted searches and reads, ideally in parallel. Trace only the symbols you will change or directly depend on; do not expand transitively. Stop gathering as soon as you can name the exact place to change or the exact answer. If the signals conflict or the scope is unclear, do one more refined batch, then proceed.
+- Typical budget: up to about 3-10 tool calls of investigation for an ordinary task before acting. A larger task gets what it genuinely needs, still without broad exploration.
+- Web: only when the task depends on something you do not know reliably (an unfamiliar API, a current version, an error you cannot explain). One or two targeted lookups, official documentation first.
+- Planning: no written plan for simple work; a short checklist only for genuinely multi-step changes.
+- Questions: do not ask for details you can infer from the project. Make reasonable assumptions, proceed and state them in the report. Ask only when a wrong guess would make the result wrong or unsafe.
+- Execution: smallest correct change that follows local conventions. No side improvements.
+- Verification: the cheapest check that proves the result: syntax or type check, the single relevant test, running the command or reading the result back.
+- Report: short. Outcome, changed files, check performed, assumptions if any.

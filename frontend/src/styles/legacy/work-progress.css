@@ -1,0 +1,218 @@
+/* work-progress.css */
+:root {
+  --border: var(--line);
+}
+.work-progress .spinner {
+  display: block;
+  flex: 0 0 15px;
+  align-self: center;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  min-height: 15px;
+  max-height: 15px;
+  box-sizing: border-box;
+  border: 1.5px solid #777;
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: dokky-progress-spin 0.8s linear infinite;
+}
+@keyframes dokky-progress-spin {to {
+    transform: rotate(360deg);
+  }}
+.status-line {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: var(--fs-14);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  animation: workCommentIn 0.3s var(--ease) both;
+}
+.cloud-work {
+  margin-top: 8px;
+}
+.work-progress {
+  margin: 0 0 14px;
+  min-width: 0;
+}
+.browser-preview {
+  margin: 12px 0;
+  width: min(100%, 360px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  animation: workCommentIn 0.35s var(--ease);
+}
+.browser-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 240px;
+  object-fit: cover;
+  object-position: top;
+}
+.browser-preview figcaption {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: var(--fs-12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-progress[hidden],
+.work-progress [hidden] {
+  display: none !important;
+}
+.work-progress-comments {
+  display: grid;
+  gap: 12px;
+}
+.work-progress-phase {
+  color: var(--muted);
+  font-size: var(--fs-13);
+}
+.message-body .work-progress-phase {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.message-body .work-progress-phase summary {
+  font-weight: 400;
+  list-style: none;
+}
+.work-progress-phase summary::-webkit-details-marker {
+  display: none;
+}
+.work-progress-phase[open] > summary .work-progress-chevron {
+  transform: rotate(180deg);
+}
+.work-progress-phase > div {
+  padding: 8px 12px;
+  line-height: 1.7;
+  animation: workCommentIn 0.3s var(--ease);
+}
+.work-progress-commentary {
+  font: inherit;
+  line-height: inherit;
+  animation: workCommentIn 0.3s var(--ease);
+}
+.work-progress-commentary :first-child {
+  margin-top: 0;
+}
+.work-progress-commentary :last-child {
+  margin-bottom: 0;
+}
+.work-progress-live > .status-line {
+  margin: 12px 0 0;
+}
+.work-progress-faster {
+  display: block;
+  margin: 10px 0 0;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.work-progress-faster:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.work-progress-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-13);
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+.work-progress-toggle:active {
+  color: var(--text);
+}
+.work-progress-toggle:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+.work-progress-chevron {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  transition: transform 0.3s var(--ease);
+}
+.work-progress-chevron svg {
+  width: 16px;
+  height: 16px;
+}
+.work-progress.is-expanded .work-progress-chevron {
+  transform: rotate(180deg);
+}
+.work-progress-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.34s var(--ease), opacity 0.24s ease;
+}
+.work-progress.is-expanded .work-progress-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.work-progress-history {
+  min-height: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-13);
+  line-height: 1.65;
+}
+.work-progress-entry {
+  padding: 4px 0 4px 14px;
+  margin-left: 3px;
+  border-left: 1px solid color-mix(in srgb, var(--muted) 28%, transparent);
+}
+.work-progress-entry.is-commentary {
+  padding-block: 10px;
+  font-size: var(--fs-14);
+}
+.work-progress-entry.is-commentary * {
+  color: inherit;
+}
+.work-progress-entry.is-commentary :first-child {
+  margin-top: 0;
+}
+.work-progress-entry.is-commentary :last-child {
+  margin-bottom: 0;
+}
+@keyframes workCommentIn {from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }}
+@media (hover: hover) {
+  .work-progress-toggle:hover {
+    color: var(--text);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-progress *,
+  .work-progress {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,163 @@
+<Window x:Class="DokkySetup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Установка Докки" Width="480" Height="452"
+        WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Bg}" FontFamily="{StaticResource Inter}" Foreground="{StaticResource Text}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Ideal">
+  <WindowChrome.WindowChrome>
+    <!-- своя строка заголовка; тонкая стеклянная рамка оставляет системную тень окна -->
+    <WindowChrome CaptionHeight="40" ResizeBorderThickness="0" GlassFrameThickness="0,0,0,1"
+                  CornerRadius="0" UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
+
+  <Grid>
+    <!-- мягкое свечение акцента сверху -->
+    <Grid.Background>
+      <RadialGradientBrush Center="0.5,0" GradientOrigin="0.5,0" RadiusX="0.9" RadiusY="0.6">
+        <GradientStop Color="#22438DFF" Offset="0" />
+        <GradientStop Color="#00141414" Offset="1" />
+      </RadialGradientBrush>
+    </Grid.Background>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="40" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- строка заголовка -->
+    <Grid Grid.Row="0">
+      <TextBlock x:Name="CaptionText" Text="Установка" Margin="16,0,0,0" VerticalAlignment="Center"
+                 FontSize="12" Foreground="{StaticResource Faint}" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Content="&#xE921;"
+                WindowChrome.IsHitTestVisibleInChrome="True" Click="OnMinimize" ToolTip="Свернуть" />
+        <Button x:Name="CloseButton" Style="{StaticResource CloseButton}" Content="&#xE8BB;"
+                WindowChrome.IsHitTestVisibleInChrome="True" Click="OnClose" ToolTip="Закрыть" />
+      </StackPanel>
+    </Grid>
+
+    <!-- шапка: значок, название, подпись -->
+    <StackPanel Grid.Row="1" x:Name="Hero" Margin="36,14,36,0" HorizontalAlignment="Center">
+      <Grid Width="68" Height="68" HorizontalAlignment="Center">
+        <Image x:Name="Mark" Source="pack://application:,,,/Assets/mark.png" Width="64" Height="64"
+               RenderOptions.BitmapScalingMode="HighQuality" />
+        <Border x:Name="ErrorMark" Width="64" Height="64" CornerRadius="32" Background="#2AEE7B83" Visibility="Collapsed">
+          <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource Icons}" FontSize="26" Foreground="{StaticResource Danger}"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <Border x:Name="DoneMark" Width="22" Height="22" CornerRadius="11" Background="{StaticResource Positive}"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-4,-4" Visibility="Collapsed"
+                BorderBrush="{StaticResource Bg}" BorderThickness="3">
+          <Path Data="M 3.5,8 L 6.6,11 L 12.5,4.8" Stroke="#0E2A1C" StrokeThickness="2.2" Margin="-1.5,-1,0,0"
+                StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+        </Border>
+      </Grid>
+      <TextBlock x:Name="TitleText" Text="Докки" FontFamily="{StaticResource Unbounded}" FontSize="30"
+                 Margin="0,16,0,0" HorizontalAlignment="Center" TextAlignment="Center" />
+      <TextBlock x:Name="SubtitleText" Text="Установка на этот компьютер" Foreground="{StaticResource Muted}"
+                 FontSize="15" Margin="0,8,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                 TextWrapping="Wrap" MaxWidth="400" />
+    </StackPanel>
+
+    <!-- сменная нижняя часть -->
+    <Grid Grid.Row="3" x:Name="Body" Margin="32,0,32,28">
+      <Grid.RenderTransform>
+        <TranslateTransform x:Name="BodyShift" />
+      </Grid.RenderTransform>
+
+      <!-- приветствие: папка, ярлык, кнопка -->
+      <StackPanel x:Name="WelcomeBody">
+        <Border Background="{StaticResource Panel}" CornerRadius="14" BorderBrush="{StaticResource Line}"
+                BorderThickness="1" Padding="16,12,10,14">
+          <StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource Icons}" FontSize="16"
+                         Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1" Margin="12,0,8,0">
+                <TextBlock Text="Папка установки" FontSize="12" Foreground="{StaticResource Faint}" />
+                <TextBlock x:Name="FolderText" FontSize="13" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+              </StackPanel>
+              <Button Grid.Column="2" x:Name="ChangeButton" Style="{StaticResource LinkButton}" Content="Изменить"
+                      VerticalAlignment="Center" Click="OnChangeFolder" />
+            </Grid>
+            <Rectangle Height="1" Fill="{StaticResource Line}" Margin="0,12,6,12" />
+            <CheckBox x:Name="DesktopBox" Content="Ярлык на рабочем столе" IsChecked="True" />
+          </StackPanel>
+        </Border>
+        <Button x:Name="InstallButton" Style="{StaticResource PrimaryButton}" Content="Установить"
+                Margin="0,16,0,0" IsDefault="True" Click="OnInstall" />
+        <TextBlock x:Name="FooterText" FontSize="12" Foreground="{StaticResource Faint}"
+                   HorizontalAlignment="Center" Margin="0,12,0,0" />
+      </StackPanel>
+
+      <!-- ход установки -->
+      <StackPanel x:Name="ProgressBody" Visibility="Collapsed" Margin="0,0,0,20">
+        <Grid Margin="0,0,0,10">
+          <TextBlock x:Name="StatusText" FontSize="13" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" />
+          <TextBlock x:Name="PercentText" FontSize="13" Foreground="{StaticResource Text}" HorizontalAlignment="Right"
+                     Typography.NumeralAlignment="Tabular" />
+        </Grid>
+        <Border x:Name="Track" Height="6" CornerRadius="3" Background="{StaticResource Field}" ClipToBounds="True">
+          <Border x:Name="Fill" Width="0" HorizontalAlignment="Left" CornerRadius="3">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                <GradientStop Color="#2F7BFF" Offset="0" />
+                <GradientStop Color="#6AA6FF" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+          </Border>
+        </Border>
+        <Button x:Name="CancelButton" Style="{StaticResource LinkButton}" Content="Отменить" Margin="0,14,0,0"
+                HorizontalAlignment="Center" Click="OnCancel" />
+      </StackPanel>
+
+      <!-- готово -->
+      <StackPanel x:Name="DoneBody" Visibility="Collapsed">
+        <Border Background="{StaticResource Panel}" CornerRadius="14" BorderBrush="{StaticResource Line}"
+                BorderThickness="1" Padding="16,14">
+          <CheckBox x:Name="LaunchBox" Content="Открыть Докки сейчас" IsChecked="True" />
+        </Border>
+        <Button x:Name="FinishButton" Style="{StaticResource PrimaryButton}" Content="Готово"
+                Margin="0,16,0,0" IsDefault="True" Click="OnFinish" />
+      </StackPanel>
+
+      <!-- Докки открыт: сначала закрыть -->
+      <StackPanel x:Name="RunningBody" Visibility="Collapsed">
+        <Button Style="{StaticResource PrimaryButton}" Content="Закрыть Докки и продолжить" IsDefault="True" Click="OnCloseRunning" />
+        <Button Style="{StaticResource SecondaryButton}" Content="Отмена" Margin="0,10,0,0" Click="OnClose" />
+      </StackPanel>
+
+      <!-- ошибка -->
+      <StackPanel x:Name="ErrorBody" Visibility="Collapsed">
+        <Button x:Name="RetryButton" Style="{StaticResource PrimaryButton}" Content="Повторить" IsDefault="True" Click="OnRetry" />
+        <Button Style="{StaticResource SecondaryButton}" Content="Закрыть" Margin="0,10,0,0" Click="OnClose" />
+      </StackPanel>
+
+      <!-- удаление -->
+      <StackPanel x:Name="UninstallBody" Visibility="Collapsed">
+        <Border Background="{StaticResource Panel}" CornerRadius="14" BorderBrush="{StaticResource Line}"
+                BorderThickness="1" Padding="16,14">
+          <StackPanel>
+            <CheckBox x:Name="RemoveDataBox" Content="Удалить также чаты и настройки" IsChecked="False" />
+            <TextBlock Text="Они хранятся отдельно от программы и останутся, если не отмечать. Пригодятся при переустановке."
+                       FontSize="12" Foreground="{StaticResource Faint}" TextWrapping="Wrap" Margin="28,6,0,0" />
+          </StackPanel>
+        </Border>
+        <Button Style="{StaticResource DangerButton}" Content="Удалить" Margin="0,16,0,0" Click="OnUninstall" />
+      </StackPanel>
+
+      <!-- всё закончено, только закрыть -->
+      <StackPanel x:Name="CloseBody" Visibility="Collapsed">
+        <Button Style="{StaticResource PrimaryButton}" Content="Закрыть" IsDefault="True" Click="OnClose" />
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

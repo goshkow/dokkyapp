@@ -1,0 +1,12 @@
+{
+  "app.name": "Koddi",
+  "nav.chat": "Chat",
+  "nav.projects": "Projects",
+  "nav.llm": "AI server",
+  "nav.logs": "Logs",
+  "nav.settings": "Settings",
+  "action.send": "Send",
+  "action.rollback": "Rollback",
+  "status.ai_ready": "AI server connected",
+  "status.ai_unavailable": "AI server unavailable"
+}

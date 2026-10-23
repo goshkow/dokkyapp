@@ -1,0 +1,23 @@
+/* Полоса прокрутки поверх содержимого: родная скрыта, вместо неё тонкий ползунок (lib/overlayScroll.ts). */
+[data-overlay-scroll] { scrollbar-width: none; }
+[data-overlay-scroll]::-webkit-scrollbar { display: none; }
+/* список чатов прокручивается без полосы */
+.sidebar-scroll { scrollbar-width: none; }
+.sidebar-scroll::-webkit-scrollbar { display: none; }
+.overlay-thumb {
+  position: fixed;
+  top: 0;
+  z-index: 90;
+  width: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, width 0.12s ease, background-color 0.12s ease;
+  will-change: transform;
+}
+.overlay-thumb.visible { opacity: 1; pointer-events: auto; }
+.overlay-thumb.hover, .overlay-thumb.dragging { width: 6px; margin-left: -1px; background: color-mix(in srgb, var(--text) 30%, transparent); }
+/* зона захвата шире самого ползунка и уходит влево от края окна: справа лежит невидимая зона изменения размера окна */
+.overlay-thumb::before { content: ""; position: absolute; top: 0; bottom: 0; left: -10px; right: 0; }
+html[data-motion="reduced"] .overlay-thumb { transition: none; }

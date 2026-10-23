@@ -1,0 +1,60 @@
+/* строка состояния и журнал: спокойная, без «улетающего» текста */
+/* бегущий блик по тексту убран: текст стоит на месте, меняется только его содержимое (плавным появлением) */
+.is-running > summary > span,
+.agent-working .activity-line.pending {
+  background: none;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+.journal-summary-copy {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swap { animation: status-swap 0.2s ease both; }
+@keyframes status-swap { from { opacity: 0; } to { opacity: 1; } }
+.status-line { animation: status-swap 0.2s ease both; }
+.local-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* стрелка раскрытия стоит по центру строки, а не ниже текста */
+.local-work .activity > summary > svg { margin-top: 0; transform: translateY(-1px); }
+.local-work .activity[open] > summary > svg { transform: translateY(-1px) rotate(90deg); }
+.activity > summary > svg { transition: transform 0.22s var(--ease); }
+/* между состоянием и ответом небольшой зазор, а не пустая полоса */
+.local-work .activity.turn-journal { margin: 2px 0 6px; }
+.work-progress, #local-waiting { margin: 2px 0 6px; }
+
+/* раскрытие считает Disclosure (высота через Web Animations); собственная анимация содержимого <details> только мешала */
+.activity::details-content { block-size: auto; transition: none; overflow: visible; }
+
+/* план-документ: раскрывается плавно (высота и затухание края), а не щелчком */
+@property --plan-fade { syntax: "<percentage>"; inherits: false; initial-value: 45%; }
+.plan-document-body {
+  max-height: min(70vh, 720px);
+  transition: max-height 0.38s var(--ease), --plan-fade 0.38s var(--ease);
+  mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%));
+}
+.plan-document details:not([open]) + .plan-document-body { max-height: 112px; --plan-fade: 45%; mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%)); }
+.plan-document details[open] + .plan-document-body { --plan-fade: 100%; mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%)); }
+
+/* новый этап появляется проявлением, а не рывком */
+.journal-segment, .journal-stage, .journal-commentary { animation: status-swap 0.22s ease both; }
+
+/* как на сайте: у ответа подпись «Скопировать», стрелка журнала смотрит вниз и переворачивается при раскрытии */
+.message-actions .copy-label { margin-left: 6px; font-size: var(--fs-12); }
+.message-actions .icon-button:has(.copy-label) { display: inline-flex; align-items: center; }
+.local-work .activity > summary > svg { transform: translateY(-1px); }
+.local-work .activity[open] > summary > svg { transform: translateY(-1px) rotate(180deg); }
+
+/* лента открывается одним плавным появлением: вложенные анимации появления в это время отключены */
+#feed[data-opening] *, #feed[data-opening] *::before, #feed[data-opening] *::after { animation: none !important; }
+
+/* пока открывающаяся лента проявляется целиком, отдельные блоки внутри не анимируются второй раз */
+#feed[data-opening] * { animation: none !important; }
+
+/* сообщение отправлено с телефона */
+.message-origin { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin: 0 2px 6px; font-size: var(--fs-12, 12px); color: var(--muted); }
+.message-origin svg { width: 13px; height: 13px; flex: none; }

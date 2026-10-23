@@ -1,0 +1,14 @@
+#auth-screen { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 28px; background: var(--bg); }
+.auth-content { display: flex; flex-direction: column; align-items: center; gap: 16px; width: min(100%, 340px); text-align: center; animation: surface-in 300ms var(--ease) both; }
+.auth-mark { width: 64px; height: 64px; object-fit: contain; }
+#auth-screen[data-pending] .auth-mark { animation: auth-breathe 1.4s ease-in-out infinite; }
+/* название приложения везде шрифтом Unbounded, как в левом меню */
+.auth-content h1 { font-family: Unbounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+.auth-content h2 { margin: 12px 0 6px; font-size: var(--fs-18); font-weight: 450; color: var(--muted); }
+#auth-login { width: 100%; min-height: 44px; }
+#auth-status { min-height: 42px; color: var(--muted); font-size: var(--fs-13); overflow-wrap: anywhere; }
+#auth-status[data-waiting] { animation: auth-breathe 2s ease-in-out infinite; }
+@keyframes auth-breathe { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@keyframes surface-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
+.auth-link { margin-top: -4px; padding: 6px 10px; border-radius: 8px; color: var(--muted); font-size: var(--fs-13); }
+.auth-link:hover { color: var(--text); text-decoration: underline; }

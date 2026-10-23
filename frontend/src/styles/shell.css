@@ -1,0 +1,84 @@
+/* оболочка: сайдбар, чат, правая панель
+   Колонки сетки сразу получают итоговую ширину, поэтому чат пересчитывается один раз, а не на каждом кадре.
+   Плавность дают только transform: панель, колонка чата и кнопки едут через Web Animations (state/shellMotion.ts).
+   --lw/--rw: ширина открытой панели или 0, если она закрыта. */
+#shell {
+  --lw-open: 288px;
+  --rw-open: 350px;
+  --lw: var(--lw-open);
+  --rw: var(--rw-open);
+  --lw-g: var(--lw);
+  --main-hold: 0px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--lw) minmax(0, 1fr) var(--rw);
+  /* строка ровно в высоту окна: длинный список чатов прокручивается внутри, а не раздвигает страницу */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+  overflow: clip;
+  background: var(--bg);
+}
+/* пока окно растёт, колонка чата держит итоговую ширину и не сжимает текст */
+#shell.growing { grid-template-columns: var(--lw) minmax(var(--main-hold), 1fr) var(--rw); }
+@media (max-width: 1100px) { #shell { --lw-open: 260px; --rw-open: 320px; } }
+#shell.left-collapsed { --lw: 0px; }
+#shell.right-collapsed { --rw: 0px; }
+
+#left { grid-column: 1; grid-row: 1; min-height: 0; height: 100%; position: relative; z-index: 2; background: var(--side); }
+#main { grid-column: 2; grid-row: 1; position: relative; min-width: 0; min-height: 0; background: var(--bg); }
+#right { grid-column: 3; grid-row: 1; min-height: 0; height: 100%; position: relative; z-index: 2; background: var(--bg); }
+/* колонка закрытой панели нулевой ширины, а сама панель стоит за краем окна и выезжает оттуда */
+#left, #right { min-width: 0; transition: visibility 0s; }
+#left { background: transparent; }
+#right { background: transparent; }
+.left-collapsed #left, .right-collapsed #right { visibility: hidden; pointer-events: none; transition: visibility 0s linear 380ms; }
+.panel-inner { height: 100%; }
+/* содержимое панели не сжимается и не растягивается */
+.sidebar-panel {
+  width: var(--lw-open);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line-soft);
+  background: var(--side);
+}
+.inspector-panel {
+  width: var(--rw-open);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.left-collapsed .sidebar-panel { transform: translateX(-100%); }
+
+/* кнопки навигации поверх страницы, без своего фона */
+.shell-controls {
+  position: absolute;
+  top: 6px;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 30px;
+  pointer-events: none;
+}
+.shell-controls > * { pointer-events: auto; }
+/* при открытом меню кнопки правее названия, при закрытом прижаты к левому краю окна */
+/* на macOS слева стоят системные кнопки окна: --controls-left-min отодвигает навигацию от них */
+.shell-controls-left { left: max(var(--controls-left-min, 8px), calc(var(--lw) - 108px)); }
+.shell-controls-right { right: calc(var(--caption-width, 138px) + 4px); }
+.shell-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+.shell-button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.shell-button:disabled { opacity: 0.38; cursor: default; }
+.shell-button svg { width: 17px; height: 17px; transition: fill-opacity 200ms ease; fill: currentColor; fill-opacity: 0; }
+.shell-button[aria-expanded="true"] svg { fill-opacity: 0.16; }
+
+.desktop-window .desktop-window-controls { background: transparent; height: var(--controls-h); }
+.desktop-window .desktop-window-controls button { height: var(--controls-h); }

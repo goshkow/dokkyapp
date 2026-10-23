@@ -1,0 +1,162 @@
+/* local-journal.css */
+.journal-timeline {
+  min-width: 0;
+}
+.local-work .journal-commentary {
+  color: var(--text);
+  padding: 6px 0 12px;
+  overflow-wrap: anywhere;
+}
+.local-work .activity.turn-journal {
+  margin: 2px 0 14px;
+  font-size: var(--fs-14);
+}
+.journal-segment > summary,
+.journal-completed > summary {
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.journal-dots {
+  display: none;
+  grid-template-columns: repeat(2, 5px);
+  grid-auto-rows: 5px;
+  gap: 3px;
+  flex: none;
+  margin-right: 2px;
+}
+.journal-dots b {
+  border-radius: 50%;
+  background: var(--accent);
+  animation: journal-dot 1.2s ease-in-out infinite;
+}
+.journal-dots b:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.journal-dots b:nth-child(4) {
+  animation-delay: 0.3s;
+}
+.journal-dots b:nth-child(3) {
+  animation-delay: 0.45s;
+}
+.journal-segment.is-running > summary > .journal-dots,
+#local-waiting .journal-dots {
+  display: grid;
+}
+@keyframes journal-dot {0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }}
+.journal-badge {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  border-radius: 6px;
+  font-size: var(--fs-12);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+.journal-badge b {
+  padding: 1px 6px;
+  font-weight: 600;
+}
+.journal-badge .positive {
+  background: color-mix(in srgb, var(--positive) 20%, transparent);
+}
+.journal-badge .danger {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+.local-work .activity-body {
+  margin: 6px 0 0;
+  padding: 0;
+  border-left: 0;
+}
+.local-work .journal-history {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.local-work .journal-history > * {
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+}
+.local-work .journal-history > :first-child {
+  border-top: 0;
+}
+.local-work .journal-history .activity-line {
+  font-size: var(--fs-14);
+  padding-block: 9px;
+}
+.journal-summary-copy {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.journal-error-reason {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.journal-duration {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.journal-duration:empty {
+  display: none;
+}
+.local-work .is-running > summary > .journal-duration {
+  color: var(--faint);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+.local-work .journal-duration {
+  animation: none;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+.local-work .activity > summary > svg {
+  flex: none;
+  margin-top: 3px;
+  transform: none;
+}
+.local-work .activity[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.local-work .journal-segment:not(.is-running) > summary > span,
+.journal-completed > summary > span {
+  animation: none;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+.journal-pagination {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+}
+.journal-pagination button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+}
+.journal-pagination button:disabled {
+  opacity: 0.35;
+}
+@media (prefers-reduced-motion: reduce) {
+  .local-work *,
+  .local-work ::before,
+  .local-work ::after,
+  .local-work .activity::details-content {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+#local-waiting {
+  margin: 2px 0 14px;
+}
+#local-waiting .status-line {
+  font-size: var(--fs-14);
+  gap: 8px;
+  margin: 0;
+}

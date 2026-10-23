@@ -1,0 +1,49 @@
+name: Проверки
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Установка зависимостей
+        run: python -m pip install -e ".[dev]"
+      - name: Проверка Python
+        run: python -m ruff check backend tests scripts
+      - name: Проверка состава репозитория
+        run: python scripts/check_repository.py
+      - name: Тесты
+        run: python -m pytest -q
+      - name: Проверка JavaScript
+        shell: pwsh
+        run: |
+          Get-ChildItem backend/koddi/desktop/web -Filter *.js | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

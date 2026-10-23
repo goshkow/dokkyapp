@@ -1,0 +1,115 @@
+/* подписка и оплата, приглашение в Докки Code, подсказки про использование */
+.plans-view { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 6px 0 4px; }
+.plans-head { text-align: center; }
+.plans-head h3 { margin: 0; font-size: var(--fs-20); font-weight: 650; }
+.plans-head p { margin: 5px 0 0; color: var(--muted); font-size: var(--fs-13); }
+.plans-head .plan-badge { font-size: inherit; }
+
+.plan-tabs { display: flex; width: 100%; max-width: 460px; padding: 3px; gap: 2px; border-radius: 999px; background: var(--field); }
+.plan-tabs button { flex: 1; min-height: 36px; padding: 0 10px; border-radius: 999px; transition: background-color 160ms ease; }
+.plan-tabs button:hover { background: color-mix(in srgb, var(--hover) 55%, transparent); }
+.plan-tabs button[aria-selected="true"] { background: var(--hover); box-shadow: 0 1px 2px #0004; }
+.plan-tabs .plan-badge { font-size: var(--fs-14); }
+
+.plan-detail { box-sizing: border-box; width: 100%; max-width: 460px; padding: 22px 24px 18px; border: 1px solid var(--line-soft); border-radius: 18px; background: var(--field); animation: pop-in 200ms var(--ease) both; }
+.plan-detail h4 { margin: 0 0 4px; font-size: var(--fs-20); }
+.plan-detail h4 .plan-badge { font-size: inherit; }
+.plan-tagline { margin: 0 0 14px; color: var(--muted); font-size: var(--fs-13); line-height: 1.45; }
+.plan-price { margin-bottom: 14px; }
+.plan-price-line { display: flex; align-items: baseline; gap: 10px; }
+.plan-price-line strong { font-size: var(--fs-28); font-weight: 650; font-variant-numeric: tabular-nums; }
+.plan-price-line s { color: var(--faint); font-size: var(--fs-15); }
+.plan-price-line em { padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--positive) 22%, transparent); color: var(--positive); font-size: var(--fs-12); font-style: normal; font-weight: 650; }
+.plan-price > span { color: var(--muted); font-size: var(--fs-12); }
+.plan-cta { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid var(--line-soft); }
+.plan-buy { width: 100%; min-height: 46px; }
+.plan-buy-price { margin-left: 6px; opacity: 0.75; font-weight: 500; }
+.plan-note { margin: 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.45; text-align: center; }
+.plan-foot { margin: 0; max-width: 460px; color: var(--faint); font-size: var(--fs-12); line-height: 1.45; text-align: center; }
+
+.plan-features { display: grid; gap: 4px; margin: 14px 0 0; padding: 0; list-style: none; }
+.plan-feature { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 32px; padding: 0 4px; border-radius: 8px; color: var(--text); font-size: var(--fs-14); text-align: left; cursor: default; }
+.plan-feature:not(:disabled) { cursor: pointer; }
+.plan-feature:not(:disabled):hover { background: color-mix(in srgb, var(--hover) 50%, transparent); }
+.plan-icon { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; color: inherit; }
+.plan-icon svg { width: 18px; height: 18px; }
+.plan-feature-note { margin: 2px 0 6px 33px; color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
+.plan-features .is-included .plan-feature { color: var(--muted); }
+.plan-included-heading { margin-top: 8px; color: var(--muted); font-size: var(--fs-12); font-weight: 600; }
+
+/* сброс использования */
+.usage-reset { display: grid; gap: 10px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 8%, var(--field)); }
+.usage-reset-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.usage-reset-head strong { font-size: var(--fs-15); }
+.usage-reset-head span { color: var(--muted); font-size: var(--fs-13); font-variant-numeric: tabular-nums; }
+.usage-reset-scale { position: relative; height: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--text) 14%, transparent); }
+.usage-reset-scale i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; transition: width 400ms var(--ease); }
+.usage-reset-now { background: linear-gradient(90deg, #ffb073, #ff7a7a); z-index: 1; }
+.usage-reset-after { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.usage-reset-after[data-over] { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), var(--positive)); }
+.usage-reset-result { margin: 0; color: var(--muted); font-size: var(--fs-13); }
+.usage-reset-result b { color: var(--text); font-variant-numeric: tabular-nums; }
+.usage-reset-result em { font-style: normal; color: var(--positive); }
+.usage-reset-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.usage-reset-options button { display: grid; gap: 2px; justify-items: center; padding: 10px 6px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--field); transition: border-color 150ms ease, background-color 150ms ease; }
+.usage-reset-options button b { font-size: var(--fs-15); }
+.usage-reset-options button span { color: var(--muted); font-size: var(--fs-12); }
+.usage-reset-options button[aria-checked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--field)); }
+.usage-reset-pay { width: 100%; min-height: 42px; }
+.usage-reset.compact { padding: 12px 14px; }
+
+/* экран ожидания оплаты */
+dialog.payment-window { box-sizing: border-box; width: min(440px, calc(100vw - 32px)); margin: auto; padding: 0; border: 1px solid var(--line-soft); border-radius: 20px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0009; opacity: 0; transform: translateY(8px) scale(0.99); transition: opacity 160ms ease, transform 200ms var(--ease), display 200ms allow-discrete, overlay 200ms allow-discrete; }
+dialog.payment-window[open] { opacity: 1; transform: none; }
+@starting-style { dialog.payment-window[open] { opacity: 0; transform: translateY(8px) scale(0.99); } }
+dialog.payment-window.is-closing { opacity: 0; transform: translateY(5px); }
+dialog.payment-window::backdrop { background: #0008; }
+.payment-body { display: grid; justify-items: center; gap: 10px; padding: 30px 28px 24px; text-align: center; }
+.payment-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: var(--field); color: var(--muted); }
+.payment-icon svg { width: 26px; height: 26px; }
+.payment-body[data-stage="paid"] .payment-icon { color: var(--positive); background: color-mix(in srgb, var(--positive) 16%, transparent); }
+.payment-body[data-stage="failed"] .payment-icon, .payment-body[data-stage="canceled"] .payment-icon, .payment-body[data-stage="expired"] .payment-icon { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.payment-body h2 { margin: 6px 0 0; font-size: var(--fs-20); font-weight: 650; }
+.payment-body p { margin: 0; max-width: 340px; color: var(--muted); font-size: var(--fs-14); line-height: 1.5; }
+.payment-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+.payment-icon .spin { animation: spin 900ms linear infinite; }
+
+/* Докки Code недоступен на тарифе */
+.dev-gate { display: grid; justify-items: center; gap: 12px; max-width: 520px; margin: 0 auto; padding: 8px 20px 0; text-align: center; }
+.dev-gate-icon, .locked-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--field); color: var(--muted); }
+.dev-gate-icon svg, .locked-icon svg { width: 20px; height: 20px; }
+.dev-gate h2 { margin: 2px 0 0; font-size: var(--fs-22); font-weight: 650; line-height: 1.25; }
+.dev-gate p { margin: 0; color: var(--muted); font-size: var(--fs-14); line-height: 1.55; }
+.dev-gate-points { display: grid; gap: 6px; margin: 4px 0; padding: 12px 16px; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--field); list-style: none; text-align: left; }
+.dev-gate-points li { display: flex; align-items: center; gap: 10px; font-size: var(--fs-14); }
+.dev-gate-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.dev-gate-actions .pref-button { min-height: 42px; padding: 0 20px; }
+.dev-gate .dev-gate-note { margin-top: 6px; font-size: var(--fs-12); color: var(--faint); }
+.welcome.locked { gap: 8px; }
+
+#composer.locked { padding-top: 0; }
+.locked-composer { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: 22px; background: var(--field); }
+.locked-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.locked-text strong { font-size: var(--fs-14); }
+.locked-text span { color: var(--muted); font-size: var(--fs-13); line-height: 1.4; }
+.locked-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+@media (max-width: 720px) {
+  .locked-composer { flex-direction: column; align-items: stretch; }
+  .locked-actions .pref-button { flex: 1; }
+}
+
+/* подсказка про остаток использования над полем ввода */
+.usage-notice { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 10px 12px 10px 14px; border: 1px solid color-mix(in srgb, #ffb073 45%, var(--line-soft)); border-radius: 16px; background: color-mix(in srgb, #ffb073 10%, var(--field)); }
+.usage-notice[data-tone="danger"] { border-color: color-mix(in srgb, var(--danger) 50%, var(--line-soft)); background: color-mix(in srgb, var(--danger) 10%, var(--field)); }
+.usage-notice > svg { width: 18px; height: 18px; flex: none; color: #ffb073; }
+.usage-notice[data-tone="danger"] > svg { color: var(--danger); }
+.usage-notice-text { display: grid; gap: 1px; min-width: 0; flex: 1; }
+.usage-notice-text strong { font-size: var(--fs-13); }
+.usage-notice-text span { color: var(--muted); font-size: var(--fs-12); line-height: 1.4; }
+.usage-notice-actions { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.usage-notice-actions .pref-button { min-height: 32px; padding: 0 14px; }
+.usage-notice-close { flex: none; width: 28px; height: 28px; }
+@media (max-width: 720px) { .usage-notice { flex-wrap: wrap; } .usage-notice-actions { order: 3; width: 100%; } }
+
+.side-reset { display: block; box-sizing: border-box; width: calc(100% - 20px); margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: color-mix(in srgb, var(--accent) 85%, var(--text)); font-size: var(--fs-12); font-weight: 600; transition: background-color 150ms ease; }
+.side-reset:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }

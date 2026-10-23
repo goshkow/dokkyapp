@@ -1,0 +1,12 @@
+{
+  "app.name": "Кодди",
+  "nav.chat": "Чат",
+  "nav.projects": "Проекты",
+  "nav.llm": "AI-сервер",
+  "nav.logs": "Логи",
+  "nav.settings": "Настройки",
+  "action.send": "Отправить",
+  "action.rollback": "Откатить",
+  "status.ai_ready": "AI-сервер подключён",
+  "status.ai_unavailable": "AI-сервер недоступен"
+}

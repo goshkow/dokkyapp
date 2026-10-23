@@ -1,0 +1,109 @@
+/* окно просмотра изображения и файла (как на сайте: картинка по центру, действия под ней) */
+dialog.media-viewer {
+  box-sizing: border-box;
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  padding: 64px 20px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  overflow: hidden;
+}
+dialog.media-viewer[open] {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  justify-items: center;
+  align-items: center;
+  gap: 12px;
+  animation: mv-in 220ms var(--ease) both;
+}
+dialog.media-viewer::backdrop { background: #000b; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+dialog.media-viewer.is-closing { animation: mv-out 160ms ease-in both; }
+@keyframes mv-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mv-out { to { opacity: 0; } }
+.mv-close {
+  position: absolute; z-index: 3; top: 14px; right: 16px;
+  display: grid; place-items: center; width: 42px; height: 42px; padding: 0;
+  border: 0; border-radius: 50%; background: #343434; color: #fff; cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.mv-close:hover { background: #505050; }
+.mv-close svg { width: 18px; height: 18px; }
+
+.mv-stage {
+  grid-row: 1; justify-self: stretch; align-self: stretch; min-height: 0; min-width: 0;
+  display: flex; justify-content: safe center; align-items: safe center;
+  overflow: auto; overscroll-behavior: contain;
+}
+.mv-image { display: block; flex: none; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; cursor: zoom-in; user-select: none; }
+.mv-image.is-zoomed { max-width: none; max-height: none; cursor: zoom-out; }
+
+/* файл: карточка с названием, видом и размером, под ней предпросмотр текста */
+.mv-file {
+  display: flex; flex-direction: column; width: min(680px, 100%); max-height: 100%;
+  border: 1px solid #ffffff2a; border-radius: 22px; background: #1b1b1c; color: var(--text); overflow: hidden;
+  box-shadow: 0 24px 70px #0008; animation: mv-card-in 260ms var(--ease) both;
+}
+@keyframes mv-card-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.mv-file > header { display: flex; align-items: center; gap: 14px; padding: 20px 22px; }
+.mv-file-icon { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 14px; background: #ffffff12; color: var(--text); }
+.mv-file-icon svg { width: 22px; height: 22px; }
+.mv-file > header div { min-width: 0; }
+.mv-file h2 { margin: 0; font-size: var(--fs-16); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.mv-file > header p { margin: 3px 0 0; color: var(--muted); font-size: var(--fs-13); }
+.mv-file-body { min-height: 0; max-height: 52dvh; padding: 16px 22px 20px; border-top: 1px solid #ffffff1c; overflow: auto; overscroll-behavior: contain; font-size: var(--fs-14); }
+.mv-file-body pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-13); line-height: 1.5; }
+.mv-file-body.skeleton { height: 140px; background: linear-gradient(90deg, #ffffff08, #ffffff14, #ffffff08) 0 0 / 200% 100%; animation: mv-shimmer 1.4s linear infinite; }
+@keyframes mv-shimmer { to { background-position: -200% 0; } }
+.mv-file-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 26px 22px 32px; border-top: 1px solid #ffffff1c; text-align: center; }
+.mv-file-empty > svg { width: 38px; height: 38px; margin-bottom: 6px; color: var(--muted); }
+.mv-file-empty p { margin: 0; font-size: var(--fs-15); }
+.mv-file-empty span { color: var(--muted); font-size: var(--fs-13); }
+.mv-file-empty .secondary { margin-top: 10px; border-radius: 999px; }
+
+/* действия под изображением */
+.mv-actions { grid-row: 2; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 100%; }
+.mv-actions button, .mv-actions a {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 16px;
+  border: 1px solid #ffffff4a; border-radius: 999px; background: #ffffff16; color: #fff; font: inherit; font-size: var(--fs-14); text-decoration: none; cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease;
+}
+.mv-actions button:hover, .mv-actions a:hover { background: #ffffff2a; border-color: #ffffff80; }
+.mv-actions button:active, .mv-actions a:active { transform: scale(0.97); }
+.mv-actions svg { width: 18px; height: 18px; flex: none; }
+.mv-actions svg.is-filled { fill: currentColor; color: #ff6b88; }
+.mv-actions button:focus-visible, .mv-actions a:focus-visible, .mv-edit textarea:focus-visible, .mv-edit button:focus-visible { outline: 2px solid #74b0ff; outline-offset: 3px; }
+
+/* правка по описанию раскрывается снизу */
+.mv-edit { grid-row: 3; display: grid; grid-template-rows: 0fr; width: min(620px, 100%); min-height: 0; opacity: 0; pointer-events: none; transition: grid-template-rows 280ms var(--ease), opacity 200ms ease; }
+.mv-edit.is-open { grid-template-rows: 1fr; opacity: 1; pointer-events: auto; }
+.mv-edit form { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+.mv-edit textarea { box-sizing: border-box; flex: none; width: 100%; height: 84px; padding: 14px; border: 1px solid #ffffff4a; border-radius: 16px; background: #242424; color: #fff; font: inherit; font-size: var(--fs-14); resize: none; }
+.mv-edit button { display: inline-flex; align-items: center; gap: 8px; align-self: flex-end; flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 999px; background: #fff; color: #111; font: inherit; font-size: var(--fs-14); font-weight: 600; cursor: pointer; transition: background-color 160ms ease, opacity 160ms ease; }
+.mv-edit button svg { width: 16px; height: 16px; }
+.mv-edit button:hover:not(:disabled) { background: #dceaff; }
+.mv-edit button:disabled { opacity: 0.5; cursor: default; }
+
+/* файл в сообщении: плитка и её меню (как «message-file» на сайте) */
+.message-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.message-file-group { position: relative; display: inline-flex; max-width: 100%; }
+.message-file-tile {
+  display: inline-flex; align-items: center; gap: 10px; max-width: 100%; min-height: 46px; padding: 8px 14px 8px 10px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); font: inherit; font-size: var(--fs-14); text-align: left; cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.message-file-tile:hover { background: var(--hover); border-color: var(--line-strong, var(--line)); }
+.message-file-tile .tile-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 9px; background: var(--hover); color: var(--muted); }
+.message-file-tile .tile-icon svg { width: 16px; height: 16px; }
+.message-file-tile .tile-copy { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.message-file-tile .tile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-file-tile .tile-meta { color: var(--muted); font-size: var(--fs-12); }
+/* картинка из ответа, которой нет в тексте: на полную ширину, как на сайте */
+.message-media { display: block; width: fit-content; max-width: 100%; margin: 10px 0; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.message-media img { display: block; max-width: min(100%, 550px); max-height: 540px; border-radius: 16px; object-fit: contain; }

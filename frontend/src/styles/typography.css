@@ -1,0 +1,19 @@
+/* ответ: заметная иерархия заголовков, свободный абзац */
+.message-body h1, .message-body h2, .message-body h3, .message-body h4 { font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+.message-body h1 { font-size: round(calc(var(--base) * 1.75), 1px); margin: 1.5em 0 0.55em; }
+.message-body h2 { font-size: round(calc(var(--base) * 1.42), 1px); margin: 1.4em 0 0.5em; }
+.message-body h3 { font-size: round(calc(var(--base) * 1.2), 1px); margin: 1.3em 0 0.45em; }
+.message-body h4 { font-size: round(calc(var(--base) * 1.05), 1px); margin: 1.2em 0 0.4em; }
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
+.message-body p { line-height: 1.65; margin: 0 0 0.85em; }
+.message-body ul, .message-body ol { line-height: 1.6; margin: 0.4em 0 0.9em; }
+.message-body li + li { margin-top: 0.25em; }
+/* встроенный код - заметная «таблетка», маркеры списков приглушены, ключевые слова читаются */
+.message-body :not(pre) > code { padding: 0.12em 0.42em; border-radius: 6px; background: color-mix(in srgb, var(--text) 9%, transparent); font-size: 0.92em; }
+.message-body li::marker { color: var(--faint); }
+.message-body strong { color: var(--text); font-weight: 650; }
+.message-body hr { margin: 1.4em 0; border: 0; border-top: 1px solid var(--line); }
+:root[data-ui-font="system"] { font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+/* название в заголовке ответа поиска тоже шрифтом Unbounded */
+.ai-response-heading span { font-family: Unbounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-weight: 600; }

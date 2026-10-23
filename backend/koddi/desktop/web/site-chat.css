@@ -1,0 +1,239 @@
+/* Оформление чата и поиска один в один с сайтом Докки (mini_app/assets/style.css, ai-search.css).
+   Подключается после остальных таблиц и задаёт палитру, размеры и поведение общих элементов. */
+:root {
+  --bg: #141414;
+  --side: #101010;
+  --panel: #292929;
+  --field: #2c2c2c;
+  --hover: #343434;
+  --line: #454545;
+  --text: #f5f5f5;
+  --muted: #a3a3a3;
+  --faint: #777;
+  --user: #244b75;
+  --accent: #438dff;
+  --composer-focus-ring: #555555;
+  --chat-width: 760px;
+  --message-size: 16px;
+}
+[data-theme="light"] {
+  --bg: #fff;
+  --side: #f5f5f5;
+  --panel: #eeeeee;
+  --field: #f1f1f1;
+  --hover: #e5e5e5;
+  --line: #d7d7d7;
+  --text: #171717;
+  --muted: #696969;
+  --faint: #888;
+  --composer-focus-ring: #a0a0a0;
+}
+
+/* боковое меню */
+#shell { grid-template-columns: 280px minmax(0, 1fr) 350px; }
+#shell.right-collapsed { grid-template-columns: 280px minmax(0, 1fr) 0; }
+#shell.left-collapsed { grid-template-columns: 0 minmax(0, 1fr) 350px; }
+#shell.left-collapsed.right-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+#left { max-width: 320px; padding: 22px 11px 12px; }
+.sidebar-top { padding: 0 11px 14px; }
+.sidebar-brand { font-size: var(--fs-20); font-weight: 650; letter-spacing: -0.2px; }
+.nav { min-height: 44px; font-size: var(--fs-14); font-weight: 450; padding: 0 11px; border-radius: 11px; gap: 12px; }
+.nav svg { width: 19px; height: 19px; color: var(--text); }
+.nav:hover, .nav.active { background: var(--hover); }
+.product-switch { min-height: 40px; font-size: var(--fs-14); border-radius: 11px; }
+.section { font-size: var(--fs-13); font-weight: 600; color: var(--text); margin: 22px 11px 10px; }
+.item { min-height: 42px; font-size: var(--fs-14); border-radius: 11px; padding: 6px 11px; }
+.sidebar-bottom-actions .new-chat {
+  min-height: 46px;
+  font-size: var(--fs-16);
+  font-weight: 600;
+  border: 1px solid #ffffff38;
+  border-radius: 24px;
+}
+.sidebar-bottom-actions #sidebar-settings { width: 45px; height: 45px; flex-basis: 45px; background: var(--panel); }
+.connection-badge { min-height: 50px; font-size: var(--fs-14); border-radius: 12px; }
+.connection-badge .connection-label { color: var(--text); font-weight: 600; }
+.connection-dot.account-avatar { width: 32px; height: 32px; flex-basis: 32px; font-size: var(--fs-14); }
+
+/* верхняя панель */
+.chat-page > .chat-header { height: 66px; padding: 0 16px; }
+.chat-header .icon-button {
+  width: 46px;
+  height: 46px;
+  flex-basis: 46px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--text);
+}
+.chat-header .icon-button:hover { background: var(--hover); }
+.chat-header .icon-button svg { width: 22px; height: 22px; stroke-width: 1.75; }
+#title { font-size: var(--fs-14); font-weight: 600; max-width: 220px; }
+main.chat-page { --feed-top: 86px; }
+
+/* переключатель «Чат | Поиск» */
+#segmented-mode { grid-column: auto; grid-row: auto; }
+.ai-product-switch {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  top: 13px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: min(244px, calc(100% - 154px));
+  height: 42px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+}
+.ai-product-switch[hidden] { display: none; }
+.ai-product-switch button {
+  z-index: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-15);
+  font-weight: 550;
+  transition: color 0.24s ease;
+}
+.ai-product-switch button[aria-selected="true"] { color: var(--text); }
+.ai-product-indicator {
+  position: absolute;
+  inset: 4px auto 4px 4px;
+  width: calc(50% - 4px);
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: 0 1px 4px #0002;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ai-product-switch[data-product="search"] .ai-product-indicator { transform: translateX(100%); }
+.ai-product-switch button:hover { color: var(--text); background: transparent; }
+
+/* сообщения */
+.feed { padding-left: max(23px, calc((100% - var(--chat-width)) / 2)); padding-right: max(23px, calc((100% - var(--chat-width)) / 2)); }
+.turn-message { margin-bottom: 15px; }
+.message-body { font-size: var(--message-size); line-height: 1.5; }
+.message.user .message-body {
+  max-width: min(85%, 570px);
+  padding: 10px 14px;
+  border-radius: 20px;
+  background: var(--user);
+  color: #fff;
+}
+[data-theme="light"] .message.user .message-body { background: #dbe9fb; color: #171717; }
+.message-body p { margin: 0 0 7px; }
+.message-body h1, .message-body h2, .message-body h3 { margin: 15px 0 7px; line-height: 1.25; font-weight: 650; }
+.message-body h1 { font-size: var(--fs-21); }
+.message-body h2 { font-size: var(--fs-18); }
+.message-body h3 { font-size: var(--fs-16); }
+.message-body ul, .message-body ol { padding-left: 22px; margin: 5px 0; }
+.message-body li { padding: 0; margin: 3px 0; }
+.message-body blockquote { border-left: 2px solid var(--muted); margin: 13px 0; padding: 0 0 0 11px; }
+.message-body a { color: inherit; text-decoration: none; }
+.message.assistant .message-body a::after { content: "↗"; display: inline-block; margin-left: 2px; font-size: 0.72em; font-weight: 600; vertical-align: 0.1em; }
+.message.assistant .message-body a.ai-source-chip::after, .message.assistant .message-body .code-head a::after,
+.message.assistant .message-body a.rich-video-card::after, .message.assistant .message-body a.rich-video-link::after,
+.message.assistant .message-body a.message-file::after, .message.assistant .message-body a:has(> img)::after { content: none; }
+:not(pre) > code { background: #ffffff18; font-size: 0.87em; padding: 2px 4px; }
+[data-theme="light"] :not(pre) > code { background: #00000012; }
+.message-actions { gap: 10px; padding-top: 4px; margin-left: -4px; opacity: 1; }
+.message-actions .icon-button { width: auto; height: 25px; flex-basis: auto; padding: 0 4px; border-radius: 6px; color: var(--faint); }
+.message-actions .icon-button:hover { background: transparent; color: var(--muted); }
+.message-actions svg { width: 15px; height: 15px; stroke-width: 1.7; }
+
+/* поле ввода */
+#composer { width: min(calc(var(--chat-width) + 32px), 100%); padding: 0 16px 16px; }
+.composer-field {
+  min-height: 54px;
+  padding: 6px 7px;
+  border-radius: 27px;
+  gap: 2px;
+  background: var(--field);
+  border: 1px solid var(--line);
+}
+#composer.expanded .composer-field { border-radius: 23px; }
+.composer-field:focus-within { border-color: var(--composer-focus-ring); box-shadow: 0 0 0 1px var(--composer-focus-ring); }
+.composer-icon { width: 38px; height: 38px; flex-basis: 38px; color: var(--text); }
+.composer-icon:hover { background: #ffffff16; }
+[data-theme="light"] .composer-icon:hover { background: #00000010; }
+.composer-icon svg { width: 21px; height: 21px; }
+#prompt { font-size: var(--fs-14); line-height: 24px; padding: 1px 4px; }
+#prompt::placeholder { color: #9a9a9a; }
+#send { background: #575757; color: #dfdfdf; transition: background 0.25s ease, color 0.25s ease, filter 0.2s ease; }
+#send.ready, #send.is-running { background: var(--accent); color: #fff; }
+#send:hover { filter: brightness(1.12); }
+#send svg { width: 20px; height: 20px; stroke-width: 2; }
+.composer-toolbar { padding: 6px 12px 0; }
+[data-product-scope="chat"] .composer-toolbar, [data-product-scope="search"] .composer-toolbar { display: none; }
+.jump-bottom {
+  top: -56px;
+  left: auto;
+  right: 12px;
+  width: 42px;
+  height: 42px;
+  flex-basis: 42px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  box-shadow: 0 7px 22px #0003;
+}
+.jump-bottom svg { width: 20px; height: 20px; }
+
+/* приветствие */
+.empty.welcome { gap: 16px; padding-bottom: 0; transform: translateY(-18px); }
+.welcome .welcome-mascot { position: relative; flex: none; width: 76px; height: 68px; display: grid; place-items: start center; }
+.welcome .welcome-mark { position: absolute; top: 4px; left: 16px; width: 44px; height: 44px; margin: 0; opacity: 0.92; object-fit: contain; }
+.welcome h1, .empty h1 { margin: 0; font-size: var(--fs-20); line-height: 1.45; font-weight: 500; letter-spacing: -0.3px; min-height: 29px; }
+.welcome.typing .welcome-mark { animation: welcomeMarkIn 0.45s var(--ease) both; }
+@keyframes welcomeMarkIn { from { opacity: 0; transform: scale(0.86); } to { opacity: 0.92; transform: none; } }
+.empty:not(.welcome) .welcome-mark { width: 44px; height: 44px; opacity: 0.92; }
+
+/* меню «+» в чате и поиске */
+.composer-actions.mode-menu { width: min(310px, calc(100vw - 40px)); padding: 7px; border-radius: 20px; }
+.composer-actions .mode-back, .composer-actions .mode-choice { padding: 12px; gap: 12px; font-size: var(--fs-14); border-radius: 13px; }
+.composer-actions .mode-label { margin-left: auto; flex: none; color: var(--muted); font-size: var(--fs-13); }
+.composer-actions .mode-option { min-height: 58px; padding: 7px 10px; border-radius: 13px; align-items: center; }
+.composer-actions .mode-option > span { display: block; }
+.composer-actions .mode-option b { display: block; font-size: var(--fs-14); font-weight: 600; }
+.composer-actions .mode-option small { display: block; margin-top: 3px; color: var(--muted); font-size: var(--fs-12); }
+.composer-actions .mode-option svg:last-child { opacity: 0; flex: none; }
+.composer-actions .mode-option[aria-checked="true"] svg:last-child { opacity: 1; }
+.composer-actions .mode-option[aria-checked="true"] { color: var(--text); }
+.composer-actions .mode-option.selected, .composer-actions .mode-option:hover { background: var(--hover); }
+
+@media (max-width: 1100px) {
+  #shell { grid-template-columns: 260px minmax(0, 1fr) 320px; }
+  #shell.right-collapsed { grid-template-columns: 260px minmax(0, 1fr) 0; }
+}
+@media (max-width: 860px) {
+  #shell, #shell.right-collapsed { grid-template-columns: 240px minmax(0, 1fr) 0; }
+  .ai-product-switch { width: min(216px, calc(100% - 140px)); height: 40px; top: 12px; }
+}
+@media (max-width: 720px) {
+  #shell, #shell.right-collapsed, #shell.left-collapsed, #shell.left-collapsed.right-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .chat-page > .chat-header { height: 62px; padding: 0 12px; }
+  .chat-header .icon-button { width: 42px; height: 42px; flex-basis: 42px; }
+  main.chat-page { --feed-top: 80px; }
+  #composer { padding: 0 12px max(12px, env(safe-area-inset-bottom)); }
+}
+
+/* кнопка «Новый чат» всегда акцентная, в том числе когда выбрана */
+.sidebar-bottom-actions .new-chat,
+.sidebar-bottom-actions .new-chat:hover,
+.sidebar-bottom-actions .new-chat.active { background: var(--accent); color: #fff; }
+.sidebar-bottom-actions .new-chat:hover { filter: brightness(1.1); }
+.settings-search input:focus-visible { outline: 0; }
+.settings-search:focus-within { border-color: var(--composer-focus-ring); }
+.local-work .journal-history .message-body, .local-work .journal-history .journal-commentary { font-size: var(--fs-14); }
+.environment-list { grid-template-columns: 112px minmax(0, 1fr); font-size: var(--fs-12); }
+
+/* панели уезжают за край целиком: содержимое не сжимается, лента не прыгает */
+#left > * { min-width: 258px; }
+#right > * { min-width: 322px; }
+#left, #right { overflow-x: hidden; }
+#shell { transition: grid-template-columns 380ms cubic-bezier(0.22, 1, 0.36, 1); }

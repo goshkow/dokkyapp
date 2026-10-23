@@ -1,0 +1,35 @@
+/* библиотека: вкладка на месте чата, сетка вложений с превью */
+.library-page { width: min(1040px, 100%); margin: 0 auto; padding-bottom: 40px; }
+.lib-tabs { display: inline-flex; gap: 4px; margin: 4px 0 18px; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); }
+.lib-tabs button { height: 32px; padding: 0 16px; border-radius: 999px; color: var(--muted); font-size: var(--fs-14); font-weight: 550; transition: background-color 160ms ease, color 160ms ease; }
+.lib-tabs button:hover:not([aria-selected="true"]) { color: var(--text); }
+.lib-tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.lib-card { position: relative; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line-soft); border-radius: 16px; background: color-mix(in srgb, var(--panel) 40%, var(--bg)); overflow: hidden; transition: border-color 160ms ease, translate 200ms var(--ease); animation: status-swap 0.25s ease both; }
+.lib-card:hover { border-color: var(--line); translate: 0 -2px; }
+.lib-open { display: flex; flex-direction: column; width: 100%; padding: 0; border-radius: 0; text-align: left; }
+.lib-preview { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--muted); }
+.lib-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: scale 300ms var(--ease); }
+.lib-card:hover .lib-preview img { scale: 1.04; }
+.lib-preview svg { width: 30px; height: 30px; }
+.lib-preview.is-file { align-content: center; gap: 8px; }
+.lib-preview.is-file b { padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); font-size: var(--fs-11); letter-spacing: 0.4px; }
+.lib-preview.is-loading::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--text) 6%, transparent); animation: sk-pulse 1.5s ease-in-out infinite; }
+.lib-meta { display: grid; gap: 3px; min-width: 0; padding: 11px 12px 12px; }
+.lib-meta b { overflow: hidden; color: var(--text); font-size: var(--fs-14); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta small { overflow: hidden; color: var(--muted); font-size: var(--fs-12); text-overflow: ellipsis; white-space: nowrap; }
+.lib-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; opacity: 0; transition: opacity 160ms ease; }
+.lib-card:hover .lib-actions, .lib-card:focus-within .lib-actions { opacity: 1; }
+.lib-action { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text); }
+.lib-action:hover { background: var(--bg); }
+.lib-action svg { width: 16px; height: 16px; }
+.lib-action[aria-pressed="true"] svg { fill: currentColor; color: #f0c040; }
+.lib-skeleton { pointer-events: none; }
+.lib-skeleton .sk { display: block; border-radius: 8px; background: color-mix(in srgb, var(--text) 8%, transparent); animation: sk-pulse 1.5s ease-in-out infinite; }
+.lib-skeleton .lib-preview { background: none; }
+.lib-skeleton .lib-preview .sk { position: absolute; inset: 0; border-radius: 0; }
+.lib-skeleton .lib-meta i.sk { height: 12px; }
+.lib-empty { display: grid; justify-items: center; gap: 12px; padding: 64px 12px; color: var(--muted); text-align: center; }
+.lib-empty svg { width: 34px; height: 34px; color: var(--faint); }
+.lib-sentinel { height: 1px; }
+@media (hover: none) { .lib-actions { opacity: 1; } }

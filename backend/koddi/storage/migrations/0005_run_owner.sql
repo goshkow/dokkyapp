@@ -1,0 +1,2 @@
+ALTER TABLE turns ADD COLUMN owner_pid INTEGER;
+ALTER TABLE turns ADD COLUMN owner_token TEXT;

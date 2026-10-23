@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- .NET Framework 4.8 встроен в Windows 10/11: установщик - один небольшой exe без распаковщика нативного кода -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DokkySetup</AssemblyName>
+    <RootNamespace>DokkySetup</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\DokkyApp.ico</ApplicationIcon>
+    <Version>0.2.0</Version>
+    <Company>Goshkow</Company>
+    <Product>Докки</Product>
+    <AssemblyTitle>Установка Докки</AssemblyTitle>
+    <Description>Установка Докки</Description>
+    <Copyright>Goshkow</Copyright>
+    <NeutralLanguage>ru-RU</NeutralLanguage>
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <Prefer32Bit>false</Prefer32Bit>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Assets\mark.png" />
+  </ItemGroup>
+</Project>

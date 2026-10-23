@@ -1,0 +1,81 @@
+/* Палитра, размеры текста и анимация. Размеры считаются от одного базового (--base, по умолчанию 14 px,
+   настройка 8-20 px): --fs-N - доля N/14 от базового, округлённая до целого пикселя. */
+:root {
+  color-scheme: dark;
+  --base: 14px;
+  --fs-8: round(calc(var(--base) * 8 / 14), 1px);
+  --fs-9: round(calc(var(--base) * 9 / 14), 1px);
+  --fs-10: round(calc(var(--base) * 10 / 14), 1px);
+  --fs-11: round(calc(var(--base) * 11 / 14), 1px);
+  --fs-12: round(calc(var(--base) * 12 / 14), 1px);
+  --fs-13: round(calc(var(--base) * 13 / 14), 1px);
+  --fs-14: round(calc(var(--base) * 14 / 14), 1px);
+  --fs-15: round(calc(var(--base) * 15 / 14), 1px);
+  --fs-16: round(calc(var(--base) * 16 / 14), 1px);
+  --fs-17: round(calc(var(--base) * 17 / 14), 1px);
+  --fs-18: round(calc(var(--base) * 18 / 14), 1px);
+  --fs-19: round(calc(var(--base) * 19 / 14), 1px);
+  --fs-20: round(calc(var(--base) * 20 / 14), 1px);
+  --fs-21: round(calc(var(--base) * 21 / 14), 1px);
+  --fs-22: round(calc(var(--base) * 22 / 14), 1px);
+  --fs-23: round(calc(var(--base) * 23 / 14), 1px);
+  --fs-24: round(calc(var(--base) * 24 / 14), 1px);
+  --fs-25: round(calc(var(--base) * 25 / 14), 1px);
+  --fs-26: round(calc(var(--base) * 26 / 14), 1px);
+  --fs-27: round(calc(var(--base) * 27 / 14), 1px);
+  --fs-28: round(calc(var(--base) * 28 / 14), 1px);
+  --fs-29: round(calc(var(--base) * 29 / 14), 1px);
+  --fs-30: round(calc(var(--base) * 30 / 14), 1px);
+  --fs-31: round(calc(var(--base) * 31 / 14), 1px);
+  --fs-32: round(calc(var(--base) * 32 / 14), 1px);
+  --fs-33: round(calc(var(--base) * 33 / 14), 1px);
+  --fs-34: round(calc(var(--base) * 34 / 14), 1px);
+  --fs-35: round(calc(var(--base) * 35 / 14), 1px);
+  --fs-36: round(calc(var(--base) * 36 / 14), 1px);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --shell-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --controls-h: 42px;
+  --caption-height: 42px;
+  --cluster-w: 112px;
+  --chat-width: 760px;
+  --message-size: var(--base);
+  --code-font: Consolas, Menlo, "SF Mono", monospace;
+
+  /* поверхность: по умолчанию прежние цвета (меню и чат одного тона); «Тёмный чат» и «Тёмное меню» - в настройках */
+  --bg: #141414;
+  --side: #141414;
+  --panel: #292929;
+  --field: #2c2c2c;
+  --hover: #343434;
+  --line: #454545;
+  --line-soft: color-mix(in srgb, var(--line) 45%, transparent);
+  --text: #f5f5f5;
+  --muted: #a3a3a3;
+  --faint: #777777;
+  --accent: #438dff;
+  --positive: #6fc99b;
+  --danger: #ee7b83;
+  --user: #244b75;
+  --composer-focus-ring: #555555;
+  font: var(--fs-14) / 1.5 Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+:root[data-surface="chat-dark"] { --bg: #0e0e0e; --side: #141414; }
+:root[data-surface="side-dark"] { --bg: #141414; --side: #0a0a0a; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --side: #ffffff;
+  --panel: #eeeeee;
+  --field: #f1f1f1;
+  --hover: #e5e5e5;
+  --line: #d7d7d7;
+  --text: #171717;
+  --muted: #696969;
+  --faint: #888888;
+  --user: #dbe9fb;
+  --composer-focus-ring: #a0a0a0;
+}
+:root[data-theme="light"][data-surface="chat-dark"] { --bg: #f3f3f3; --side: #ffffff; }
+:root[data-theme="light"][data-surface="side-dark"] { --bg: #ffffff; --side: #ececec; }

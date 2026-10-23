@@ -1,0 +1,62 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.20000,0.20000,0.22000,1.00000",
+      "display-p3:0.03000,0.03000,0.04000,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": false,
+          "hidden": false,
+          "image-name": "face.png",
+          "name": "face",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass": true,
+          "hidden": false,
+          "image-name": "bear.png",
+          "name": "bear",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.35
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

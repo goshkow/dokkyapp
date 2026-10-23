@@ -1,0 +1,15 @@
+Откуда взяты встроенные навыки Докки
+
+Навыки в backend/koddi/skills/catalog (api_designer.py, microservices.py, rag_architect.py,
+copywriting.py, page_cro.py, visual_design.py) переписаны по открытым навыкам, которые
+пришли через claudeskills.ru. Тексты заново написаны на русском под инструменты Докки.
+
+Источники и лицензии (снимки на 2026-10-20):
+- jeffallan/claude-skills, 36f3fe8052da7c57083783268c6ea3265d075265, MIT.
+- coreyhaines31/marketingskills, e85f3cbc2e4a79bf33b2a12e9bdd9087d414735b, MIT.
+- anthropics/skills, dbd4588f9e1033efb41dad4bef2f7947c8993d44,
+  skills/canvas-design/LICENSE.txt, Apache-2.0, Copyright 2026 Anthropic, PBC.
+
+Лицензионные тексты лежат рядом без изменений. Какой именно коммит был у архивов, из
+которых брали изначально, неизвестно, так что эти снимки не доказывают версию исходника.
+Шрифты из canvas-design в Докки не входят.

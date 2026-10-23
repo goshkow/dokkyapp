@@ -1,0 +1,129 @@
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtCore import QUrl
+from PySide6.QtWebEngineCore import QWebEnginePage
+
+from koddi.desktop import web_host
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1:8877/ui/", "http://127.0.0.1:8878/ui/",
+    "http://localhost:8877/ui/", "https://evil.example/", "about:blank",
+])
+def test_window_commands_and_frame_handshake_reject_foreign_origin(url):
+    called = []
+    host = SimpleNamespace(
+        api_base="http://127.0.0.1:8877", view=SimpleNamespace(url=lambda: QUrl(url)),
+        _caption_ready=False, window_action=called.append,
+        _window_frame_state=lambda: called.append("state"),
+    )
+    bridge = SimpleNamespace(host=host, view=host.view, role="main", frameChanged=SimpleNamespace(emit=called.append))
+    for action in ("minimize", "maximize", "close", "move", "unknown"):
+        web_host.WindowBridge.command(bridge, action)
+    web_host.WindowBridge.requestState(bridge)
+    assert called == []
+    assert not host._caption_ready
+
+
+def test_window_commands_and_initial_maximized_state_from_trusted_origin(monkeypatch):
+    called = []
+    state = {"mode": "windows-caption-glyph", "maximized": True, "hover": ""}
+    host = SimpleNamespace(
+        api_base="http://127.0.0.1:8877",
+        view=SimpleNamespace(url=lambda: QUrl("http://127.0.0.1:8877/ui/")),
+        _caption_ready=False, window_action=called.append,
+        _window_frame_state=lambda: state,
+    )
+    bridge = SimpleNamespace(host=host, view=host.view, role="main", frameChanged=SimpleNamespace(emit=called.append))
+    monkeypatch.setattr(web_host.QApplication, "mouseButtons", lambda: web_host.Qt.MouseButton.NoButton)
+    for action in ("minimize", "maximize", "close", "move", "unknown"):
+        web_host.WindowBridge.command(bridge, action)
+    web_host.WindowBridge.requestState(bridge)
+    assert called == ["minimize", "maximize", "close", state]
+    assert host._caption_ready
+
+
+def test_native_bridge_only_accepts_local_page_and_http_links(monkeypatch):
+    opened = []
+    monkeypatch.setattr(
+        web_host.QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+    )
+    host = SimpleNamespace(api_base="http://127.0.0.1:8877")
+    host.handle_app_url = lambda url, current: web_host.WebHost.handle_app_url(host, url, current)
+    page = SimpleNamespace(host=host, url=lambda: QUrl("http://127.0.0.1:8877/ui/"))
+    kind = QWebEnginePage.NavigationType.NavigationTypeOther
+    assert not web_host.KoddiPage.acceptNavigationRequest(
+        page, QUrl("koddi://open-url?url=https%3A%2F%2Fexample.com%2Fdoc"), kind, True
+    )
+    assert opened == ["https://example.com/doc"]
+    assert not web_host.KoddiPage.acceptNavigationRequest(
+        page, QUrl("koddi://open-url?url=file%3A%2F%2F%2FC%3A%2Fsecret.txt"), kind, True
+    )
+    assert len(opened) == 1
+    page.url = lambda: QUrl("https://example.com/")
+    assert not web_host.KoddiPage.acceptNavigationRequest(
+        page, QUrl("koddi://open-url?url=https%3A%2F%2Fexample.org"), kind, True
+    )
+    assert len(opened) == 1
+
+
+def test_download_accepts_local_plan_blob_but_not_foreign_origin(monkeypatch):
+    class Download:
+        accepted = False
+        cancelled = False
+
+        def __init__(self, url):
+            self.source = url
+
+        def url(self):
+            return QUrl(self.source)
+
+        def downloadFileName(self):
+            return "plan.md"
+
+        def cancel(self):
+            self.cancelled = True
+
+        def accept(self):
+            self.accepted = True
+
+        def setDownloadDirectory(self, value):
+            self.directory = value
+
+        def setDownloadFileName(self, value):
+            self.filename = value
+
+    monkeypatch.setattr(
+        web_host.QFileDialog, "getSaveFileName", lambda *args: ("C:/test/plan.md", "")
+    )
+    host = SimpleNamespace(api_base="http://127.0.0.1:8877")
+    for url, allowed in [
+        ("blob:http://127.0.0.1:8877/id", True),
+        ("http://127.0.0.1:8877/api/file", True),
+        ("blob:https://evil.example/id", False),
+        ("file:///C:/secret", False),
+    ]:
+        download = Download(url)
+        web_host.WebHost._save_download(host, download)
+        assert download.accepted is allowed
+        assert download.cancelled is not allowed
+
+
+def test_native_view_navigation_policy(monkeypatch):
+    opened = []
+    monkeypatch.setattr(web_host.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    host = SimpleNamespace(api_base="http://127.0.0.1:8877")
+    host.handle_app_url = lambda url, current: web_host.WebHost.handle_app_url(host, url, current)
+    view = SimpleNamespace(url=lambda: QUrl("http://127.0.0.1:8877/ui/"))
+
+    def decide(url, main=True, clicked=False):
+        return web_host.WebHost.decide_navigation(host, view, QUrl(url), main, clicked)
+
+    assert decide("http://127.0.0.1:8877/ui/?role=sidebar")
+    assert not decide("https://example.com/", clicked=True) and opened == ["https://example.com/"]
+    assert not decide("https://example.com/", clicked=False) and len(opened) == 1  # скрипт сам уйти со страницы не может
+    assert decide("https://example.com/", main=False)  # встроенный кадр
+    assert not decide("koddi://open-url?url=https%3A%2F%2Fexample.org") and len(opened) == 2
+    view.url = lambda: QUrl("https://evil.example/")
+    assert not decide("koddi://open-url?url=https%3A%2F%2Fexample.net") and len(opened) == 2

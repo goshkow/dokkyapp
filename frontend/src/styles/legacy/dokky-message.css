@@ -1,0 +1,52 @@
+/* dokky-message.css */
+.table-scroll {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0;
+  overscroll-behavior-x: contain;
+}
+.message table {
+  display: table;
+  width: max-content;
+  max-width: none;
+  border: 1px solid color-mix(in srgb, var(--text) 13%, transparent);
+  border-radius: 17px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-13);
+  line-height: 1.42;
+}
+.message th,
+.message td {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: top;
+  min-width: 0;
+  max-width: 36ch;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.message tr:last-child td {
+  border-bottom: 0;
+}
+.message th {
+  background: color-mix(in srgb, var(--panel) 78%, var(--bg));
+  font-size: var(--fs-11);
+  font-weight: 650;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.message td:first-child {
+  font-weight: 570;
+}
+@media (hover: hover) {
+  .message tbody tr:hover {
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+  }
+}

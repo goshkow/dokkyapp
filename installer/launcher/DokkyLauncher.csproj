@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- лаунчер Dokky.exe над папками версий app-X.Y.Z: на встроенном в Windows .NET Framework 4.8, без зависимостей -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Dokky</AssemblyName>
+    <RootNamespace>DokkyLauncher</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\DokkyApp.ico</ApplicationIcon>
+    <Version>0.2.0</Version>
+    <Company>Goshkow</Company>
+    <Product>Докки</Product>
+    <AssemblyTitle>Докки</AssemblyTitle>
+    <Description>Докки</Description>
+    <Copyright>Goshkow</Copyright>
+    <NeutralLanguage>ru-RU</NeutralLanguage>
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <Prefer32Bit>false</Prefer32Bit>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Runtime.Serialization" />
+  </ItemGroup>
+</Project>

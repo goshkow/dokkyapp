@@ -1,0 +1,169 @@
+name: Release Windows
+
+# тег v<версия> собирает пре-релиз сам; руками: Actions -> Release Windows -> Run workflow.
+# Файлы ложатся в тот же релиз, что и у Release macOS
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза; пусто - v<версия из pyproject.toml>"
+        required: false
+        default: ""
+      draft:
+        description: "Оставить черновиком, чтобы проверить перед публикацией"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Пометить как пре-релиз"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    env:
+      # подпись включается, когда в репозитории есть секрет с сертификатом
+      CAN_SIGN: ${{ secrets.WINDOWS_SIGNING_CERT != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Версия
+        id: version
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Установка и проверки
+        shell: pwsh
+        env:
+          PIP_PREFER_BINARY: "1"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m ruff check .
+          python -m pytest -q
+
+      - name: Браузер агента
+        run: python -m playwright install chromium-headless-shell
+
+      - name: Сборка через Nuitka
+        shell: pwsh
+        # MSVC из Visual Studio на раннере: этим компилятором собирались все проверенные сборки
+        run: .\scripts\build_nuitka.ps1 -Python python -OutputDir dist_nuitka -Compiler msvc -SkipInstall
+
+      - name: Дерево приложения (Dokky.exe, current.json, app-X)
+        run: python scripts/build_installer.py tree --dist dist_nuitka/web_host.dist --out dist_release --version ${{ steps.version.outputs.value }}
+
+      # exe подписываются до упаковки и до манифеста обновления: хеши берутся с итоговых файлов
+      - name: Подпись exe
+        if: env.CAN_SIGN == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          .\scripts\sign_windows.ps1 -Files "dist_release/tree/Dokky.exe", "dist_release/tree/app-$v/DokkyApp.exe", "dist_release/.stub/DokkySetup.exe"
+
+      - name: Без подписи
+        if: env.CAN_SIGN != 'true'
+        run: echo "::warning::Секрета WINDOWS_SIGNING_CERT нет - exe не подписаны, SmartScreen будет предупреждать"
+
+      # дерево версии отдельно: из него строится манифест автообновления
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dokky-windows-x64-app-${{ steps.version.outputs.value }}
+          path: dist_release/tree/app-*
+          if-no-files-found: error
+
+      - name: Установщик и переносная версия
+        run: python scripts/build_installer.py package --out dist_release --version ${{ steps.version.outputs.value }}
+
+      - name: Подпись установщика
+        if: env.CAN_SIGN == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          .\scripts\sign_windows.ps1 -Files "dist_release/Dokky-${{ steps.version.outputs.value }}-Windows-x64-Setup.exe"
+          python scripts/build_installer.py sums --out dist_release --version ${{ steps.version.outputs.value }}
+
+      - name: Проверка установщика
+        run: python scripts/smoke_installer.py dist_release/Dokky-${{ steps.version.outputs.value }}-Windows-x64-Setup.exe
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dokky-windows-x64
+          path: |
+            dist_release/Dokky-${{ steps.version.outputs.value }}-Windows-x64-Setup.exe
+            dist_release/Dokky-${{ steps.version.outputs.value }}-Windows-x64-portable.zip
+            dist_release/SHA256SUMS-windows.txt
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: dokky-windows-x64
+          path: release
+
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_INPUT: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          tag="${TAG_INPUT:-v$VERSION}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "Тег $GITHUB_REF_NAME не совпадает с версией $VERSION в pyproject.toml" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            DRAFT=false
+            PRERELEASE=true
+          fi
+          # релиз мог уже создать Release macOS: тогда только добавляем файлы
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+          else
+            flags=()
+            [ "$DRAFT" = "true" ] && flags+=(--draft)
+            [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+            gh release create "$tag" release/* \
+              --target "$GITHUB_SHA" \
+              --title "Докки $VERSION" \
+              --notes-file CHANGELOG.md \
+              "${flags[@]}" || gh release upload "$tag" release/* --clobber
+          fi

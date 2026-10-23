@@ -1,0 +1,167 @@
+/* Liquid Glass (macOS 26+)
+   Класс html.glass ставит lib/glass.ts. Одно нативное стекло лежит под всем окном и меняется вместе с ним;
+   плитки меню, карточки и поле ввода - полупрозрачные заливки самой страницы, поэтому с анимацией они не расходятся. */
+html.glass {
+  --glass-gap: 8px;
+  --glass-radius: 24px;
+  --tile-fill: color-mix(in srgb, var(--side) 55%, transparent);
+  --tile-edge: rgba(255, 255, 255, 0.11);
+  --tile-light: rgba(255, 255, 255, 0.14);
+  /* светофор стоит правее и ниже: навигация сдвигается вслед за ним */
+  background: transparent;
+  /* при color-scheme: dark холст страницы непрозрачный и закрывал бы стекло */
+  color-scheme: normal;
+}
+html.glass[data-theme="light"] {
+  --tile-fill: color-mix(in srgb, var(--side) 55%, transparent);
+  --tile-edge: rgba(0, 0, 0, 0.07);
+  --tile-light: rgba(255, 255, 255, 0.9);
+}
+/* рабочая область сплошная, как без стекла; меню и карточки справа - полупрозрачные плитки, под ними видно стекло */
+html.glass body, html.glass #shell, html.glass #left, html.glass #right { background: transparent; }
+html.glass #main { background: transparent; }
+
+/* левое меню: плитка с отступами от краёв окна, светофор лежит на стекле */
+html.glass .sidebar-panel {
+  box-sizing: border-box;
+  width: calc(var(--lw-open) - var(--glass-gap) * 2);
+  height: calc(100% - var(--glass-gap) * 2);
+  margin: var(--glass-gap) 0 var(--glass-gap) var(--glass-gap);
+  padding-top: 12px;
+  border: 1px solid var(--tile-edge);
+  border-radius: var(--glass-radius);
+  background: var(--tile-fill);
+  box-shadow: inset 0 1px 0 var(--tile-light);
+}
+html.glass .left-collapsed .sidebar-panel { transform: translateX(calc(-100% - var(--glass-gap) * 2)); }
+html.glass .side-top::before, html.glass .side-bottom::before { display: none; }
+
+/* кнопки навигации опущены к середине светофора; справа 14px до края плитки меню (92px - ширина трёх кнопок) */
+html.glass .shell-controls-left { left: max(var(--controls-left-min), calc(var(--lw) - 114px)); }
+
+/* список чатов растворяется у краёв вместо затемнения */
+html.glass .sidebar-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 78px), transparent calc(100% - 30px));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 78px), transparent calc(100% - 30px));
+}
+html.glass .sidebar-panel::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--footer-h) + 4px);
+  height: 52px;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  -webkit-mask-image: linear-gradient(to top, transparent, #000 60%, transparent);
+  mask-image: linear-gradient(to top, transparent, #000 60%, transparent);
+}
+
+/* правая панель: каждая карточка отдельная стеклянная плитка */
+html.glass .inspector-panel { background: transparent; }
+html.glass .inspector-cards { padding: calc(var(--controls-h) + 12px) var(--glass-gap) var(--glass-gap) 0; gap: var(--glass-gap); }
+html.glass .inspector-card { border: 1px solid var(--tile-edge); border-radius: 20px; background: var(--tile-fill); box-shadow: inset 0 1px 0 var(--tile-light); }
+
+/* лента растворяется у шапки; внизу вместо обрезки - полупрозрачное затемнение: у панели режимов ~90%, у верха поля ввода ~60%,
+   так что под полем ввода стекло поля размывает ленту, а не пустой фон */
+html.glass { --glass-base: color-mix(in srgb, var(--bg) 80%, #000); }
+html.glass[data-theme="light"] { --glass-base: var(--bg); }
+html.glass .chat-edge-fade-top { display: none; }
+html.glass main.chat-page .chat-edge-fade-bottom {
+  display: block;
+  height: calc(var(--feed-bottom, 140px) + 6px);
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--glass-base) 96%, transparent) 0,
+    color-mix(in srgb, var(--glass-base) 94%, transparent) 46px,
+    color-mix(in srgb, var(--glass-base) 76%, transparent) calc(100% - 34px),
+    color-mix(in srgb, var(--glass-base) 36%, transparent) calc(100% - 14px),
+    transparent 100%);
+}
+html.glass #main.chat-page[data-at-bottom] .chat-edge-fade-bottom { height: calc(var(--feed-bottom, 140px) + 6px); }
+html.glass .chat-page > #feed {
+  -webkit-mask-image: linear-gradient(to bottom, transparent calc(var(--feed-top, 84px) - 30px), #000 calc(var(--feed-top, 84px) + 6px));
+  mask-image: linear-gradient(to bottom, transparent calc(var(--feed-top, 84px) - 30px), #000 calc(var(--feed-top, 84px) + 6px));
+}
+
+/* нативные плитки: левое меню живёт в своём виде внутри NSGlassEffectView */
+/* главный вид: колонка меню пуста, плитку рисует хост; кнопки навигации при открытом меню лежат в плитке */
+html.native-tiles:not(.tile) .sidebar-panel { background: none; border: 0; box-shadow: none; }
+html.native-tiles:not(.tile) .shell-controls-left { left: var(--controls-left-min); }
+#shell.tile-left .shell-controls-left { opacity: 0; pointer-events: none; }
+/* вид плитки: страница прозрачна, стекло даёт хост */
+html.tile, html.tile body { background: transparent; margin: 0; overflow: hidden; }
+html.tile .tile-sidebar { position: fixed; inset: 0; display: flex; flex-direction: column; }
+html.tile .sidebar-panel {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-top: 0;
+  transform: none;
+}
+/* центр кнопок на одной линии со светофором: светофор стоит на 30 pt от верха окна, плитка начинается с 8 pt */
+html.tile.platform-mac .shell-controls-left, html.tile .shell-controls-left { position: absolute; top: calc(var(--lights-center, 26px) - var(--glass-gap, 8px) - 15px); left: auto; right: 8px; }
+html.tile .side-top { padding-top: 0; }
+
+/* правая панель - вторая нативная плитка: главный вид оставляет пустую колонку, кнопка панели при открытой плитке прячется */
+html.native-tiles:not(.tile) #right { background: transparent; }
+html.native-tiles:not(.tile) .inspector-panel { background: none; }
+#shell.tile-right .shell-controls-right { opacity: 0; pointer-events: none; }
+html.tile .tile-inspector { position: fixed; inset: 0; display: flex; flex-direction: column; }
+html.tile .inspector-panel { width: 100%; height: 100%; background: transparent; }
+html.tile .inspector-heading { display: flex; padding: 14px 14px 0 16px; margin: 0 0 8px; }
+html.tile .inspector-cards { padding: 0 var(--glass-gap) var(--glass-gap); gap: var(--glass-gap); }
+
+/* поле ввода: нативное стекло лежит под страницей (хост следит за рамкой), своей заливки у поля нет */
+html.glass .composer-field { background: transparent; border-color: transparent; box-shadow: none; }
+html.glass .composer-field:focus-within { border-color: transparent; box-shadow: none; }
+
+/* вид плитки: строка светофора начинается с верха окна, а плитка - с отступа 8 pt */
+html.tile, html.tile.platform-mac { --controls-h: calc((var(--lights-center, 26px) - var(--glass-gap, 8px)) * 2); }
+html.tile .inspector-heading { padding: calc(var(--lights-center, 26px) - var(--glass-gap, 8px) - 15px) 14px 0 16px; }
+
+/* пока окно тянут мышью, страницы пересчитываются на каждом шаге: дорогие эффекты отключены, переходы и анимации не идут */
+html.resizing *, html.resizing *::before, html.resizing *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+/* маска ленты у шапки - единственное, что держит затухание сверху, поэтому её при ресайзе не снимаем (градиент дешёвый) */
+html.glass.resizing .chat-page > #feed {
+  -webkit-mask-image: linear-gradient(to bottom, transparent calc(var(--feed-top, 84px) - 30px), #000 calc(var(--feed-top, 84px) + 6px)) !important;
+  mask-image: linear-gradient(to bottom, transparent calc(var(--feed-top, 84px) - 30px), #000 calc(var(--feed-top, 84px) + 6px)) !important;
+}
+
+/* правая панель: сплошной фон, у каждой карточки своё нативное стекло под страницей - своей заливки у карточки нет */
+html.tile .inspector-card { background: transparent; border: 0; box-shadow: none; }
+
+/* переключатель «Чат / Поиск»: одно нативное стекло под контейнером, как у панели вкладок системы; выбранный пункт - не второе стекло, а плотная заливка внутри него */
+html.glass:not(.tile) .ai-product-switch { background: transparent; border-color: transparent; }
+html.glass:not(.tile) .ai-product-indicator {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+  box-shadow: inset 0 0.5px 0 var(--tile-light), 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* страница поиска: своего сплошного фона нет (иначе он закрывает стекло и отличается от чата), поле запроса - нативное стекло */
+html.glass .ai-search-surface { background: transparent; }
+html.glass .ai-search-form { background: transparent; border-color: transparent; box-shadow: none; }
+html.glass .ai-search-form:focus-within { border-color: transparent; box-shadow: none; }
+/* подложка поля (::before) рисует рамку и фон поверх нативного стекла - под стеклом она не нужна */
+html.glass .ai-search-form::before,
+html.glass .ai-search-form:focus-within::before { background: transparent; border-color: transparent; }
+
+/* поле ввода - третья нативная плитка: стекло лежит над лентой, а поле - его содержимое, поэтому лента под ним размывается самим стеклом.
+   В главном виде на месте поля пустая подложка той же высоты: по её рамке хост ставит плитку и берёт радиус. */
+html.native-tiles:not(.tile) .composer-field.field-slot { pointer-events: none; }
+html.native-tiles:not(.tile) .composer-field.field-slot::after { display: none; }
+.composer-field.expanded { border-radius: 23px; }
+html.tile #composer { position: fixed; inset: 0; width: 100%; max-width: none; justify-self: stretch; padding: 0; margin: 0; }
+html.tile #composer .composer-field { box-sizing: border-box; height: 100%; min-height: 0; }
+html.tile #composer .composer-field::after { inset: auto 24px 0; }

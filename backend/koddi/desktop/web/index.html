@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-src 'none'" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#141414" />
+    <title>Докки</title>
+    <link
+      rel="preload"
+      href="assets/InterVariable.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="work-progress.css" />
+    <link rel="stylesheet" href="local-journal.css" />
+    <link rel="stylesheet" href="dokky-message.css" />
+    <link rel="stylesheet" href="cloud-search.css" />
+    <link rel="stylesheet" href="cloud-media.css" />
+    <link rel="stylesheet" href="cloud-library.css" />
+    <link rel="stylesheet" href="surface-controls.css" />
+    <link rel="stylesheet" href="rich-content.css" />
+    <link rel="stylesheet" href="site-chat.css" />
+    <link rel="stylesheet" href="app-shell.css" />
+  </head>
+  <body class="booting auth-pending">
+    <section id="auth-screen" aria-labelledby="auth-brand">
+      <div class="auth-content">
+        <img src="assets/mark.png" class="auth-mark" alt="" />
+        <h1 id="auth-brand">Докки</h1>
+        <h2>Вход</h2>
+        <button id="auth-login" class="primary" type="button" disabled>Войти с помощью Докки</button>
+        <p id="auth-status" role="status" aria-live="polite">Подключение…</p>
+      </div>
+    </section>
+    <div id="shell" class="right-collapsed" inert aria-hidden="true">
+      <div class="shell-controls shell-controls-left" role="toolbar" aria-label="Навигация">
+        <button id="toggle-left" class="icon-button" type="button" title="Главное меню" aria-label="Главное меню" aria-controls="left" aria-expanded="true"><i data-lucide="panel-left" aria-hidden="true"></i></button>
+        <button id="nav-back" class="icon-button" type="button" title="Назад" aria-label="Назад" disabled><i data-lucide="arrow-left" aria-hidden="true"></i></button>
+        <button id="nav-forward" class="icon-button" type="button" title="Вперёд" aria-label="Вперёд" disabled><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+      </div>
+      <div class="shell-controls shell-controls-right">
+        <button id="toggle-right" class="icon-button" type="button" title="Изменения и файлы" aria-label="Изменения и файлы" aria-controls="right" aria-expanded="false"><i data-lucide="panel-right" aria-hidden="true"></i></button>
+      </div>
+      <aside id="left" class="sidebar" aria-label="Главное меню">
+<div class="panel-inner sidebar-panel">
+        <div class="sidebar-top">
+          <div class="sidebar-brand"><span class="brand-name">Докки</span><span class="brand-badge" hidden>Code</span></div>
+          <button
+            id="close-sidebar"
+            class="icon-button"
+            type="button"
+            title="Закрыть меню"
+            aria-label="Закрыть меню"
+          >
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div id="product-switch" class="product-segment" role="tablist" aria-label="Чат или разработка" data-scope="chat">
+          <span class="product-indicator" aria-hidden="true"></span>
+          <button type="button" role="tab" data-sidebar-scope="chat" aria-selected="true">Чат</button>
+          <button type="button" role="tab" data-sidebar-scope="development" aria-selected="false">Разработка</button>
+        </div>
+        <div class="sidebar-scroll">
+          <nav class="sidebar-nav" aria-label="Разделы">
+            <button data-page="chat" class="nav new-chat active" type="button"><i data-lucide="square-pen" aria-hidden="true"></i><span>Новый чат</span></button>
+            <div id="chat-search-row" class="nav-search">
+              <button id="chat-search" class="nav search-nav" type="button" aria-label="Поиск чатов" aria-expanded="false"><i data-lucide="search" aria-hidden="true"></i><span>Поиск</span></button>
+              <input id="chat-search-input" type="search" placeholder="Поиск чатов" aria-label="Поиск чатов" autocomplete="off" tabindex="-1" />
+              <button id="chat-search-close" class="icon-button" type="button" aria-label="Закрыть поиск" tabindex="-1"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <button id="cloud-library-button" class="nav" type="button" hidden><i data-lucide="images" aria-hidden="true"></i><span>Библиотека</span></button>
+            <button data-page="projects" class="nav" type="button">
+              <i data-lucide="folder" aria-hidden="true"></i
+              ><span>Проекты</span>
+            </button>
+            <button data-page="mission" class="nav" type="button">
+              <i data-lucide="list-checks" aria-hidden="true"></i
+              ><span>Задачи</span>
+            </button>
+            <button data-page="automations" class="nav" type="button">
+              <i data-lucide="calendar-clock" aria-hidden="true"></i
+              ><span>Автоматизации</span>
+            </button>
+            <button data-page="review" class="nav" type="button">
+              <i data-lucide="git-pull-request" aria-hidden="true"></i
+              ><span>Проверка изменений</span>
+            </button>
+            <details class="nav-more">
+              <summary class="nav">
+                <i data-lucide="ellipsis" aria-hidden="true"></i><span>Ещё</span
+                ><i
+                  data-lucide="chevron-down"
+                  class="nav-chevron"
+                  aria-hidden="true"
+                ></i>
+              </summary>
+              <div class="nav-more-items">
+                <button data-page="llm" class="nav" type="button">
+                  <i data-lucide="server" aria-hidden="true"></i
+                  ><span>Аккаунт Докки</span>
+                </button>
+                <button data-page="skills" class="nav" type="button">
+                  <i data-lucide="layers" aria-hidden="true"></i
+                  ><span>Навыки</span>
+                </button>
+                <button data-page="sources" class="nav" type="button">
+                  <i data-lucide="globe" aria-hidden="true"></i
+                  ><span>Источники</span>
+                </button>
+                <button data-page="logs" class="nav" type="button">
+                  <i data-lucide="logs" aria-hidden="true"></i
+                  ><span>Журнал событий</span>
+                </button>
+              </div>
+            </details>
+          </nav>
+          <section class="sidebar-projects" aria-label="Рабочие проекты">
+            <h2 class="section">Проекты</h2>
+            <div
+              id="projects"
+              class="list skeleton loading"
+              aria-busy="true"
+            ></div>
+          </section>
+          <section class="recent-chats" aria-label="Недавние чаты">
+            <h2 class="section">Недавнее</h2>
+            <div
+              id="chats"
+              class="list skeleton loading"
+              aria-busy="true"
+            ></div>
+          </section>
+        </div>
+        <footer class="sidebar-footer">
+          <div class="account-row">
+            <button id="connection-badge" type="button" class="connection-badge" data-state="connecting" aria-label="Аккаунт Докки">
+              <span class="connection-dot" aria-hidden="true"></span
+              ><span class="connection-label">Подключение</span>
+            </button>
+            <button id="account-menu-toggle" class="icon-button" type="button" title="Лимиты и аккаунт" aria-label="Лимиты и аккаунт" aria-haspopup="menu"><i data-lucide="chevrons-up-down" aria-hidden="true"></i></button>
+            <button id="sidebar-settings" data-page="settings" class="icon-button" type="button" title="Настройки" aria-label="Настройки"><i data-lucide="settings" aria-hidden="true"></i></button>
+          </div>
+        </footer>
+      </div>
+</aside>
+      <button
+        id="sidebar-backdrop"
+        class="sidebar-backdrop"
+        type="button"
+        title="Закрыть меню"
+        aria-label="Закрыть меню"
+        tabindex="-1"
+      ></button>
+      <main class="chat-page">
+        <header class="chat-header">
+          <div class="header-start"><b id="title">Новый чат</b></div>
+          <div id="segmented-mode" class="ai-product-switch" data-product="chat" role="tablist" aria-label="Чат или поиск">
+            <button class="active" data-mode="development" type="button" aria-pressed="true">Разработка</button>
+            <button data-mode="chat" type="button" aria-pressed="false">Чат</button>
+          </div>
+          <div class="header-end"></div>
+        </header>
+        <div class="chat-edge-fade chat-edge-fade-top" aria-hidden="true"></div>
+        <div class="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true"></div>
+        <section id="feed" class="feed" aria-label="Диалог" tabindex="0">
+          <section class="empty welcome">
+            <div class="welcome-mascot" aria-hidden="true"><img class="welcome-mark" src="assets/mark.png" alt="" /></div>
+            <h1>Что создадим сегодня?</h1>
+          </section>
+        </section>
+        <section id="composer" aria-label="Новое сообщение">
+          <section id="local-queue" aria-label="Очередь запросов" hidden></section>
+          <button
+            id="jump-bottom"
+            class="icon-button jump-bottom"
+            type="button"
+            title="К последнему сообщению"
+            aria-label="К последнему сообщению"
+            hidden
+          >
+            <i data-lucide="arrow-down" aria-hidden="true"></i>
+          </button>
+          <section
+            id="request-panel"
+            class="request-panel"
+            aria-label="Запрос подтверждения"
+            aria-live="polite"
+            hidden
+          ></section>
+          <div
+            id="attachments"
+            class="attachment-strip"
+            aria-label="Прикреплённые файлы"
+          ></div>
+          <div class="composer-field">
+            <button
+              id="attach"
+              class="composer-icon"
+              type="button"
+              title="Прикрепить файлы"
+              aria-label="Прикрепить файлы"
+            >
+              <i data-lucide="plus" aria-hidden="true"></i>
+            </button>
+            <input
+              id="files"
+              type="file"
+              multiple
+              hidden
+              aria-label="Выбрать файлы"
+            />
+            <textarea
+              id="prompt"
+              rows="1"
+              placeholder="Опишите задачу для проекта"
+              aria-label="Сообщение Докки"
+              autofocus
+            ></textarea>
+            <button
+              id="voice"
+              class="composer-icon"
+              type="button"
+              title="Голосовой ввод"
+              aria-label="Голосовой ввод"
+            >
+              <i data-lucide="mic" aria-hidden="true"></i>
+            </button>
+            <button
+              id="send"
+              class="composer-icon"
+              type="button"
+              title="Отправить сообщение"
+              aria-label="Отправить сообщение"
+            >
+              <i data-lucide="arrow-up" aria-hidden="true"></i>
+            </button>
+          </div>
+          <footer class="composer-toolbar">
+            <button
+              id="workspace-selector"
+              class="workspace-selector chat-control"
+              type="button"
+              title="Выбрать рабочую папку"
+              aria-label="Выбрать рабочую папку"
+              aria-haspopup="dialog"
+            >
+              <i data-lucide="folder" aria-hidden="true"></i
+              ><span>Рабочая папка</span
+              ><i data-lucide="chevron-down" aria-hidden="true"></i>
+            </button>
+            <div class="agent-controls">
+              <select
+                id="model"
+                class="chat-control"
+                title="Модель"
+                aria-label="Модель"
+              >
+                <option value="">Выбрать модель</option>
+              </select>
+              <select
+                id="mode"
+                class="chat-control"
+                title="Режим агента"
+                aria-label="Режим агента"
+              >
+                <option value="development" selected>Разработка</option>
+                <option value="chat">Чат</option>
+                <option value="plan">План</option>
+                <option value="debug">Отладка</option>
+                <option value="review">Проверка</option>
+              </select>
+              <select
+                id="reasoning"
+                class="chat-control"
+                title="Режим разработки"
+                aria-label="Режим разработки"
+              >
+                <option value="light" selected>Light</option>
+                <option value="pro">Pro</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          </footer>
+          <div class="composer-meta" hidden>
+            <span id="status" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </main>
+      <aside id="right" class="inspector" aria-label="Инспектор проекта">
+<div class="panel-inner inspector-panel">
+        <div class="inspector-heading">
+          <h2>Рабочая область</h2>
+          <button id="close-inspector" class="icon-button" type="button" title="Закрыть инспектор" aria-label="Закрыть инспектор"><i data-lucide="x" aria-hidden="true"></i></button>
+        </div>
+        <div id="inspector-content" class="inspector-cards" data-focus="">
+          <section class="inspector-card overview-card" id="card-environment" data-card="environment">
+            <button class="card-head" type="button" aria-expanded="true" aria-controls="card-environment-body"><i data-lucide="folder-git-2" aria-hidden="true"></i><span>Среда</span><i data-lucide="chevron-down" class="card-chevron" aria-hidden="true"></i></button>
+            <div class="card-body" id="card-environment-body"><div class="card-inner">
+              <div id="environment" class="muted skeleton loading" aria-busy="true"></div>
+            </div></div>
+          </section>
+          <section class="inspector-card overview-card" id="card-context" data-card="context">
+            <button class="card-head" type="button" aria-expanded="true" aria-controls="card-context-body"><i data-lucide="gauge" aria-hidden="true"></i><span>Контекст</span><small id="context-percent" class="card-meta">—</small><i data-lucide="chevron-down" class="card-chevron" aria-hidden="true"></i></button>
+            <div class="card-body" id="card-context-body"><div class="card-inner">
+              <div class="context-meter" role="progressbar" aria-label="Заполнено окно контекста" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+              <p id="context-detail" class="muted">Данных об окне контекста пока нет.</p>
+            </div></div>
+          </section>
+          <section class="inspector-card focus-card" id="inspector-diff" data-card="diff">
+            <button id="inspector-tab-diff" data-inspector="diff" class="card-head" type="button" aria-expanded="false" aria-controls="card-diff-body"><i data-lucide="git-compare" aria-hidden="true"></i><span>Изменения</span><small id="changes-count" class="card-meta"></small><i data-lucide="chevron-down" class="card-chevron" aria-hidden="true"></i></button>
+            <div class="card-body" id="card-diff-body"><div class="card-inner">
+              <section id="turn">
+                <div id="change-summary" class="change-summary"></div>
+                <div id="change-files"></div>
+                <div id="diff" class="code-diff"></div>
+                <div class="actions">
+                  <button id="rollback" class="secondary" type="button"><i data-lucide="undo-2" aria-hidden="true"></i><span>Откатить изменения</span></button>
+                </div>
+              </section>
+            </div></div>
+          </section>
+          <section class="inspector-card focus-card" id="inspector-files" data-card="files">
+            <button id="inspector-tab-files" data-inspector="files" class="card-head" type="button" aria-expanded="false" aria-controls="card-files-body"><i data-lucide="files" aria-hidden="true"></i><span>Файлы</span><i data-lucide="chevron-down" class="card-chevron" aria-hidden="true"></i></button>
+            <div class="card-body" id="card-files-body"><div class="card-inner">
+              <nav id="file-tree" class="file-tree" aria-label="Файлы проекта"></nav>
+              <div id="editor-view" class="editor-view" aria-label="Содержимое файла"></div>
+            </div></div>
+          </section>
+          <section class="inspector-card focus-card" id="card-plan" data-card="plan">
+            <button id="inspector-tab-plan" data-inspector="plan" class="card-head" type="button" aria-expanded="false" aria-controls="task-plan"><i data-lucide="list-checks" aria-hidden="true"></i><span>План</span><small id="plan-count" class="card-meta"></small><i data-lucide="chevron-down" class="card-chevron" aria-hidden="true"></i></button>
+            <div class="card-body"><div class="card-inner">
+              <section id="task-plan" class="task-plan"></section>
+            </div></div>
+          </section>
+        </div>
+      </div>
+</aside>
+    </div>
+    <dialog
+      id="modal"
+      aria-labelledby="modal-title"
+      aria-describedby="modal-text"
+    >
+      <article>
+        <h2 id="modal-title"></h2>
+        <div id="modal-text"></div>
+        <div class="actions">
+          <button id="modal-cancel" class="secondary" type="button">
+            Отмена</button
+          ><button id="modal-ok" class="primary" type="button">
+            Продолжить
+          </button>
+        </div>
+      </article>
+    </dialog>
+    <div
+      id="chat-menu"
+      class="context-menu"
+      role="menu"
+      aria-label="Действия с чатом"
+      hidden
+    >
+      <button data-action="rename" type="button" role="menuitem">
+        <i data-lucide="pencil" aria-hidden="true"></i
+        ><span>Переименовать</span>
+      </button>
+      <button data-action="delete" type="button" role="menuitem">
+        <i data-lucide="trash-2" aria-hidden="true"></i><span>Удалить</span>
+      </button>
+    </div>
+    <script src="vendor/lucide.js"></script>
+    <script src="vendor/marked.js"></script>
+    <script src="vendor/purify.js"></script>
+    <script src="vendor/highlight.js"></script>
+    <script src="diff-view.js"></script>
+    <script src="app.js"></script>
+    <script src="surface-controls.js"></script>
+    <script src="work-progress.js"></script>
+    <script src="cloud-progress.js"></script>
+    <script src="rich-content.js"></script>
+    <script src="stream-markdown.js"></script>
+    <script src="local-journal.js"></script>
+    <script src="local-queue.js"></script>
+    <script src="product-ui.js"></script>
+    <script src="cloud-media.js"></script>
+    <script src="cloud-search.js"></script>
+    <script src="site-chat.js"></script>
+    <script src="cloud-library.js"></script>
+    <script src="cloud-actions.js"></script>
+    <script src="app-shell.js"></script>
+    <script src="dokky.js"></script>
+  </body>
+</html>

@@ -1,0 +1,119 @@
+/* размер текста сообщений считается от общего базового, а не от значения сайта */
+:root { --message-size: var(--base); }
+
+/* вложения меняют верхнюю панель, выравнивание строки зависит только от самого текста */
+#composer .composer-field[data-field="live"] { align-items: center; }
+#composer .composer-field[data-field="live"][data-multiline="true"] { align-items: flex-end; }
+#composer .composer-field[data-field="live"] > #prompt {
+  flex: 1 1 0;
+  width: 0;
+  line-height: max(24px, 1.5em);
+  overflow-x: hidden;
+}
+#composer .composer-field[data-field="live"] > #prompt:placeholder-shown { white-space: pre; overflow-y: hidden; }
+
+/* кнопки круглые на страницах и в окнах; в сайдбаре и чате остаются прямоугольными */
+.page-content .primary, .page-content .secondary, dialog .primary, dialog .secondary,
+.cloud-library .secondary, .cloud-artifact .secondary, .settings-window .secondary, .settings-window .primary { border-radius: 999px; }
+.page-content .table-row, .page-content .search-field, .page-content .search-field input { border-radius: 12px; }
+.page-content .icon-button { border-radius: 50%; }
+
+/* заголовок правой панели виден только на узком экране, где она выезжает поверх чата */
+.inspector-heading { display: none; }
+@media (max-width: 860px) {
+  .inspector-heading { display: flex; padding: calc(var(--controls-h) + 4px) 14px 0; margin: 0 0 8px; }
+  .inspector-cards { padding-top: 0; }
+}
+
+/* Панель под полем ввода: списки выбора без рамки, как были в прежнем интерфейсе. */
+.agent-controls .select-trigger {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: var(--fs-12);
+  max-width: 200px;
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.agent-controls .select-trigger:hover:not(:disabled), .agent-controls .select-trigger[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.workspace-selector { border-radius: 6px; }
+.workspace-selector:hover { color: var(--text); }
+.composer-actions .mode-label { margin-left: auto; color: var(--muted); font-size: var(--fs-12); }
+.composer-actions .mode-option { align-items: flex-start; min-height: 48px; }
+.composer-actions .mode-option > span { display: grid; gap: 2px; }
+.composer-actions .mode-option small { color: var(--muted); font-size: var(--fs-12); }
+.composer-actions .mode-option > svg:last-child { opacity: 0; }
+.composer-actions .mode-option[aria-checked="true"] > svg:last-child { opacity: 1; }
+.composer-actions .menu-item[aria-checked="true"] { color: var(--accent); }
+.composer-actions .mode-back { color: var(--muted); }
+
+/* длинная переписка: сообщения далеко за пределами экрана не отрисовываются, пока до них не долистали */
+/* content-visibility рвёт прокрутку (раскладка при входе в экран), поэтому только для очень далёкой истории */
+.feed > .turn-message:nth-last-child(n + 160) { content-visibility: auto; contain-intrinsic-size: auto 420px; }
+
+/* голосовой ввод: во время записи вместо текста волна, готовые куски текста видны над полем */
+#composer.recording textarea { display: none; }
+.voice-wave { flex: 1; min-width: 0; height: 30px; display: flex; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; }
+.voice-wave i { flex: 1; max-width: 5px; height: 100%; border-radius: 3px; background: var(--text); opacity: 0.8; transform: scaleY(0.12); transform-origin: center; will-change: transform; }
+.voice-preview { margin: 0 6px 6px; padding: 8px 14px; max-height: 84px; overflow: auto; border-radius: 14px; background: var(--hover); color: var(--muted); font-size: var(--fs-13); line-height: 1.45; animation: pop-in 160ms var(--ease) both; }
+#composer.transcribing textarea { opacity: 0.55; }
+#composer.transcribing #voice { opacity: 0.5; }
+
+
+/* запрос разрешения: действие человеческими словами, команда моноширинным блоком */
+.approval-action { display: grid; gap: 6px; margin: 8px 0 10px; }
+.approval-title { font-size: var(--fs-13, 13px); font-weight: 600; }
+.approval-target { color: var(--muted); overflow-wrap: anywhere; }
+.approval-detail, .approval-note { margin: 0 !important; white-space: pre-wrap; }
+.approval-note { color: var(--muted); }
+.approval-note.warn { color: var(--danger); }
+.approval-review { max-height: 72px; overflow: auto; }
+.approval-command {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--code-font);
+  font-size: var(--fs-12, 12px);
+}
+.request-panel { max-height: min(360px, 42dvh); overflow-y: auto; overscroll-behavior: contain; }
+.approval-panel { border-radius: 16px; padding: 12px 14px; }
+.approval-panel > b { display: flex; align-items: center; gap: 8px; font-size: var(--fs-13); }
+.approval-panel > b > svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.approval-panel .approval-scope { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-details { margin: 8px 0 12px; }
+.approval-details > summary { color: var(--muted); cursor: pointer; width: fit-content; }
+.approval-details > summary:focus-visible, .approval-details-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.approval-details-scroll { max-height: min(180px, 23dvh); overflow: auto; overscroll-behavior: contain; margin-top: 8px; padding: 0 8px; border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+.approval-details-scroll ul { margin: 0; padding-left: 18px; }
+.approval-panel .approval-question { max-height: 100px; overflow: auto; }
+.approval-panel .actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.approval-panel .actions button { flex: 0 0 auto; width: auto; min-width: 0; min-height: 32px; padding: 6px 12px; font-size: var(--fs-13); }
+.approval-panel .actions button svg { width: 15px; height: 15px; }
+.approval-details > summary { display: flex; align-items: center; gap: 5px; list-style: none; }
+.approval-details > summary::-webkit-details-marker { display: none; }
+.approval-details > summary::marker { content: ''; }
+.approval-details > summary svg { width: 15px; height: 15px; flex: none; }
+.plan-list .plan-status { flex: 0 0 16px; margin-top: 0; color: var(--faint); }
+.plan-list .running .plan-status { color: var(--accent); animation: dokky-progress-spin 0.8s linear infinite; }
+.plan-list .completed .plan-status { color: var(--positive); }
+.plan-list li:is(.cancelled, .failed, .interrupted, .blocked) .plan-status { color: var(--danger); animation: none; }
+.approval-preview { display: grid; gap: 6px; margin: 10px 0; }
+.approval-preview-label { color: var(--muted); font-size: var(--fs-12); }
+.approval-preview pre { white-space: pre; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); }
+.approval-preview code { font-family: var(--code-font, monospace); font-size: var(--fs-12); }
+.approval-preview small { color: var(--muted); }
+.journal-change { margin: 6px 8px 12px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.journal-change > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 10px 12px; list-style: none; font-size: var(--fs-12); }
+.journal-change > summary::-webkit-details-marker { display: none; }
+.journal-change > summary::marker { content: ''; }
+.journal-change > summary span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.journal-change > summary b { font-weight: 500; }
+.journal-change[open] > summary > svg:first-child { transform: rotate(90deg); }
+.journal-change-body { max-height: min(360px, 45dvh); overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); }
+.journal-change .code-diff { max-height: none; border: 0; border-radius: 0; margin: 0; }

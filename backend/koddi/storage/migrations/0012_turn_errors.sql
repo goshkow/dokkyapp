@@ -1,0 +1,1 @@
+ALTER TABLE turns ADD COLUMN error_json TEXT NOT NULL DEFAULT '{}';

@@ -1,0 +1,17 @@
+CREATE TABLE project_grants (
+ owner_id TEXT NOT NULL, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ automatic INTEGER NOT NULL DEFAULT 0, private_network INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(owner_id,project_id)
+);
+CREATE TABLE queued_requests (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+ owner_id TEXT NOT NULL, chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+ project_id INTEGER, payload_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+ status TEXT NOT NULL DEFAULT 'queued', error TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX queued_chat ON queued_requests(chat_id,status,sequence);
+CREATE TABLE queue_state (
+ chat_id INTEGER PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+ paused INTEGER NOT NULL DEFAULT 0
+);

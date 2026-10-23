@@ -1,0 +1,47 @@
+.desktop-window .desktop-window-controls {
+  position:fixed; top:0; right:0; z-index:2000; height:var(--caption-height,42px); display:flex;
+  background:var(--bg,#101010); user-select:none;
+}
+.desktop-window-controls button {
+  width:46px; height:var(--caption-height,42px); padding:0; border:0; border-radius:0;
+  display:grid; place-items:center; color:var(--text,#ddd); background:transparent;
+  font-family:'Segoe Fluent Icons','Segoe MDL2 Assets',sans-serif; font-size:var(--fs-10);
+}
+.desktop-window-controls button:focus-visible { outline:2px solid currentColor; outline-offset:-3px; }
+.desktop-window-controls button:hover,.desktop-window-controls button.native-hover { background:var(--hover,#252525); }
+.desktop-window-controls [data-window-action="close"]:hover,
+.desktop-window-controls [data-window-action="close"].native-hover { background:#c42b1c; color:white; }
+.desktop-window-controls button:active { background:var(--active,#333); }
+.desktop-window-controls [data-window-action="close"]:active { background:#b02519; color:white; }
+.desktop-window .header-end { padding-right:var(--caption-width,138px); }
+.desktop-window #shell:not(.right-collapsed) .header-end { padding-right:0; }
+.desktop-window #shell:not(.right-collapsed) .inspector-heading { min-height:70px; padding-top:var(--caption-height,42px); }
+.desktop-window .chat-header,.desktop-window .sidebar-brand,.desktop-window .inspector-heading { user-select:none; }
+.desktop-window body.auth-required .desktop-window-controls { background:transparent; }
+@media (forced-colors:active) {
+  .desktop-window-controls button { color:ButtonText; }
+  .desktop-window-controls button:hover,.desktop-window-controls button.native-hover {
+    color:HighlightText; background:Highlight;
+  }
+}
+/* macOS: в верхней строке сайдбара стоят системные кнопки окна и навигация, знак с названием и плашкой
+   режима переехали во вторую строку под ними; справа место под кнопки Windows не нужно */
+html.platform-mac {
+  --caption-width: 0px;
+  /* координаты системного светофора хост присылает в --lights-*; пока их нет, подставлены значения macOS 26 */
+  --lights-center: 26px;
+  --lights-left: 19px;
+  --lights-right: 79px;
+  --controls-h: calc(var(--lights-center) * 2);
+  --controls-left-min: calc(var(--lights-right) + 24px);
+  --cluster-w: 182px;
+  --brand-row-h: 38px;
+}
+/* верхняя строка на одной линии со светофором, отступы по краям равны отступу светофора от левого края */
+html.platform-mac .shell-controls { top: calc(var(--lights-center) - 15px); }
+html.platform-mac .shell-controls-right { right: calc(var(--lights-left) - 6px); }
+html.platform-mac .chat-header { padding-inline: var(--lights-left); }
+html.platform-mac .chat-header .ai-product-switch { top: calc(var(--lights-center) - 15px); }
+html.platform-mac .side-top { height: calc(var(--controls-h) + var(--brand-row-h)); align-items: flex-end; padding: 0 4px; }
+html.platform-mac .side-top > .brand { box-sizing: border-box; width: 100%; height: 34px; padding: 0 8px 4px; }
+html.platform-mac .side-top .mode-badge { margin-left: auto; }

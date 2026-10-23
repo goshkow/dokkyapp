@@ -1,0 +1,125 @@
+/* страницы «Задачи», «Автоматизации», «Навыки» и подменю навыков в поле ввода */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.page-hint { margin: -10px 0 18px; padding: 12px 16px; border-radius: 14px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--muted); font-size: var(--fs-13); line-height: 1.55; }
+.page-section-title { margin: 28px 0 12px; font-size: var(--fs-15); font-weight: 650; }
+.page-select, .page-input { box-sizing: border-box; min-height: 38px; padding: 0 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: var(--fs-14); }
+textarea.page-input { padding: 10px 12px; line-height: 1.5; resize: vertical; }
+.page-select:focus, .page-input:focus { outline: none; border-color: var(--muted); }
+.page-input.mono { font-family: var(--code-font); font-size: var(--fs-13); }
+.page-search { display: block; margin-bottom: 8px; }
+.page-search .page-input { width: 100%; }
+.page-heading .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.page-content .primary svg, .page-content .secondary svg { width: 16px; height: 16px; flex: none; }
+
+/* задачи */
+.task-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.task-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 14px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: var(--fs-13); font-weight: 550; transition: background-color 150ms ease, color 150ms ease; }
+.task-tabs button:hover { color: var(--text); }
+.task-tabs button[aria-selected="true"] { background: var(--hover); color: var(--text); box-shadow: 0 1px 2px #0004; }
+.task-tabs .count { min-width: 18px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--text) 12%, transparent); font-size: var(--fs-11); text-align: center; font-variant-numeric: tabular-nums; }
+.task-list { display: grid; gap: 8px; }
+.task-card { display: grid; gap: 8px; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--field); transition: border-color 150ms ease, background-color 150ms ease; }
+.task-card:hover { border-color: var(--line); background: color-mix(in srgb, var(--hover) 55%, var(--field)); }
+.task-main { display: flex; align-items: flex-start; gap: 14px; width: 100%; padding: 14px 16px; text-align: left; }
+.task-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--muted); }
+.task-icon svg { width: 17px; height: 17px; }
+.task-icon[data-status="running"] { color: #8fb8ff; background: color-mix(in srgb, #8fb8ff 16%, transparent); }
+.task-icon[data-status="completed"] { color: var(--positive); background: color-mix(in srgb, var(--positive) 16%, transparent); }
+.task-icon[data-status="failed"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.task-icon .spin { animation: spin 1s linear infinite; }
+.task-copy { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.task-copy b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--fs-14); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.task-copy small { color: var(--muted); font-size: var(--fs-12); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-copy small.task-note { color: var(--danger); white-space: normal; }
+.task-main .badge { flex: none; align-self: center; font-size: var(--fs-12); padding: 4px 10px; border-radius: 999px; }
+.badge.running { color: #8fb8ff; background: color-mix(in srgb, #8fb8ff 16%, transparent); }
+.badge.queued { color: var(--muted); }
+.task-upgrade { justify-self: start; margin: 0 16px 14px 62px; }
+
+/* окна с формой */
+dialog.form-dialog { box-sizing: border-box; width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; border: 1px solid var(--line-soft); border-radius: 20px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0009; }
+dialog.form-dialog.wide { width: min(720px, calc(100vw - 32px)); }
+dialog.form-dialog::backdrop { background: #0008; }
+.form-body { display: grid; gap: 14px; padding: 24px 26px 22px; max-height: calc(100dvh - 48px); overflow: auto; }
+.form-body h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: var(--fs-20); font-weight: 650; }
+.form-body h2 svg { width: 20px; height: 20px; color: #8fb8ff; }
+.form-body label { display: grid; gap: 6px; color: var(--muted); font-size: var(--fs-13); }
+.form-body label small { color: var(--faint); font-size: var(--fs-12); }
+.form-body label small[data-over] { color: var(--danger); }
+.form-body .page-select, .form-body .page-input { width: 100%; color: var(--text); }
+.form-lead { margin: 0; color: var(--muted); font-size: var(--fs-14); line-height: 1.55; }
+.form-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.form-row > label { flex: 1 1 150px; }
+.form-error { margin: 0; color: var(--danger); font-size: var(--fs-13); line-height: 1.45; }
+.form-error .link { color: var(--text); text-decoration: underline; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.form-body .segmented { display: inline-flex; width: max-content; max-width: 100%; padding: 3px; gap: 2px; border-radius: 12px; background: var(--field); }
+.form-body .segmented button { min-height: 32px; padding: 0 14px; border-radius: 9px; color: var(--muted); font-size: var(--fs-13); font-weight: 550; }
+.form-body .segmented button[aria-pressed="true"] { background: var(--hover); color: var(--text); box-shadow: 0 1px 2px #0004; }
+.form-body .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.form-body .chips button { padding: 6px 12px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: var(--fs-12); text-align: left; transition: color 150ms ease, background-color 150ms ease; }
+.form-body .chips button:hover { background: var(--hover); color: var(--text); }
+.form-body .page-hint { margin: 0; }
+
+/* автоматизации */
+.auto-list { display: grid; gap: 10px; }
+.auto-card { display: grid; gap: 8px; padding: 16px 18px; border: 1px solid var(--line-soft); border-radius: 16px; background: var(--field); }
+.auto-card:not([data-enabled]) { opacity: 0.7; }
+.auto-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.auto-kind { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-12); font-weight: 600; }
+.auto-kind svg { width: 14px; height: 14px; }
+.auto-card h3 { margin: 0; font-size: var(--fs-16); font-weight: 650; }
+.auto-body { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin: 0; overflow: hidden; color: var(--muted); font-size: var(--fs-13); line-height: 1.5; }
+.auto-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; color: var(--muted); font-size: var(--fs-12); }
+.auto-meta span { display: inline-flex; align-items: center; gap: 6px; }
+.auto-meta svg { width: 13px; height: 13px; }
+.auto-last { margin: 0; font-size: var(--fs-12); color: var(--muted); }
+.auto-last[data-status="failed"] { color: var(--danger); }
+.auto-last[data-status="completed"] { color: var(--positive); }
+.auto-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.auto-actions .icon-button { margin-left: auto; }
+.auto-actions .icon-button + .icon-button { margin-left: 0; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.template-card { display: grid; align-content: start; gap: 6px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 14px; text-align: left; transition: background-color 150ms ease, border-color 150ms ease; }
+.template-card:hover { background: var(--field); border-color: var(--muted); }
+.template-card b { font-size: var(--fs-14); }
+.template-card span { color: var(--muted); font-size: var(--fs-12); line-height: 1.5; }
+.template-card small { color: var(--faint); font-size: var(--fs-11); }
+
+/* навыки */
+.skill-section { margin-top: 8px; }
+.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.skill-card { display: grid; align-content: start; gap: 8px; padding: 16px 18px; border: 1px solid var(--line-soft); border-radius: 16px; background: var(--field); }
+.skill-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.skill-head h3 { margin: 0; font-size: var(--fs-15); font-weight: 650; }
+.skill-badge { flex: none; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: color-mix(in srgb, var(--accent) 85%, var(--text)); font-size: var(--fs-11); font-weight: 600; }
+.skill-card > p { margin: 0; color: var(--muted); font-size: var(--fs-13); line-height: 1.5; }
+.skill-details summary { cursor: pointer; color: var(--muted); font-size: var(--fs-12); }
+.skill-details summary:hover { color: var(--text); }
+.skill-details pre { max-height: 260px; margin: 8px 0 0; padding: 12px; overflow: auto; border-radius: 10px; background: color-mix(in srgb, var(--text) 5%, transparent); font: inherit; font-size: var(--fs-12); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.skill-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.skill-actions .icon-button:first-of-type { margin-left: auto; }
+
+/* подменю «Навыки» в «+» и подключённые навыки над полем ввода */
+.menu-chevron { margin-left: auto; width: 14px; height: 14px; color: var(--muted); }
+.popover.composer-actions:has(.skill-picker) { width: 380px; max-width: calc(100vw - 16px); }
+.composer-actions .skill-picker { display: grid; gap: 4px; width: 100%; min-width: 0; }
+.skill-search { display: flex; align-items: center; gap: 8px; margin: 2px 6px 4px; padding: 0 10px; height: 34px; border-radius: 10px; background: var(--field); color: var(--muted); }
+.skill-search svg { width: 15px; height: 15px; flex: none; }
+.skill-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-13); outline: none; }
+.skill-list { display: grid; gap: 2px; max-height: min(360px, 50vh); overflow: auto; padding-bottom: 4px; }
+.skill-category { display: block; padding: 8px 12px 4px; color: var(--faint); font-size: var(--fs-11); font-weight: 600; }
+.skill-option { align-items: flex-start; width: 100%; white-space: normal; }
+.skill-option > span { display: grid; gap: 2px; min-width: 0; flex: 1; text-align: left; white-space: normal; }
+.skill-option b { font-size: var(--fs-13); font-weight: 600; }
+.skill-option small { color: var(--muted); font-size: var(--fs-12); line-height: 1.4; white-space: normal; overflow: visible; text-overflow: clip; }
+.skill-option > svg { opacity: 0; margin-top: 2px; }
+.skill-option.selected > svg { opacity: 1; color: var(--accent); }
+.skill-empty { padding: 10px 12px; color: var(--muted); font-size: var(--fs-13); }
+.skill-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 6px 6px; }
+.skill-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, var(--field)); color: var(--text); font-size: var(--fs-12); font-weight: 550; }
+.skill-chip svg { width: 13px; height: 13px; flex: none; color: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+.skill-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-chip button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--muted); }
+.skill-chip button:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
+.skill-chip button svg { width: 11px; height: 11px; color: inherit; }
