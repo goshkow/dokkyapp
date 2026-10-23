@@ -670,8 +670,10 @@ def scenario_motion_rules():
         open_chat(page)
         sample = """async (sel) => { const out = []; let stop = false; const loop = () => { out.push(document.querySelector(sel).getBoundingClientRect().left); if (!stop) requestAnimationFrame(loop); }; requestAnimationFrame(loop); document.querySelector('#toggle-right').click(); await new Promise(r => setTimeout(r, 600)); stop = true; return out; }"""
         lefts = page.evaluate(sample, ".inspector-panel")
-        steps = [abs(b - a) for a, b in zip(lefts, lefts[1:])]
-        check(max(steps) < 0.6 * (max(lefts) - min(lefts)) and max(lefts) - min(lefts) > 200, f"правая панель закрывается рывком: {lefts[:12]}")
+        # считаем промежуточные положения, а не шаг между кадрами: на медленной машине браузер пропускает кадры
+        low, high = min(lefts), max(lefts)
+        between = {round(x) for x in lefts if low + 10 < x < high - 10}
+        check(high - low > 200 and len(between) >= 2, f"правая панель закрывается рывком: {lefts[:12]}")
         page.click("#toggle-right")
         page.wait_for_timeout(600)
         check(page.evaluate("(() => { const f = document.querySelector('#feed'); return f.scrollHeight - f.scrollTop - f.clientHeight <= 2; })()"), "чат открылся не на конце переписки")

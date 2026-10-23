@@ -88,7 +88,8 @@ def main() -> None:
     parser.add_argument("setup", type=Path)
     args = parser.parse_args()
     setup = args.setup.resolve()
-    work = Path(tempfile.gettempdir()) / f"dokky-installer-smoke-{uuid.uuid4().hex[:8]}"
+    # resolve раскрывает короткие имена вроде RUNNER~1: в реестр установщик пишет полный путь
+    work = Path(tempfile.gettempdir()).resolve() / f"dokky-installer-smoke-{uuid.uuid4().hex[:8]}"
     target = work / "Докки с пробелом"
     log = work / "setup.log"
     work.mkdir(parents=True)
