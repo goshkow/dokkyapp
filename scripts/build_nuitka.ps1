@@ -36,7 +36,7 @@ $VersionMatch = Select-String -Path (Join-Path $Root "pyproject.toml") -Pattern 
 if (!$VersionMatch) { throw "Не удалось прочитать версию из pyproject.toml" }
 $Version = $VersionMatch.Matches[0].Groups[1].Value
 $FileVersion = ($Version -split "-")[0] + ".0"
-$env:NUITKA_CACHE_DIR = Join-Path $env:TEMP "koddi-nuitka-cache"
+if (!$env:NUITKA_CACHE_DIR) { $env:NUITKA_CACHE_DIR = Join-Path $env:TEMP "koddi-nuitka-cache" }
 $env:PIP_PREFER_BINARY = "1"
 
 if (!$SkipInstall) {

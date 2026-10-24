@@ -39,6 +39,11 @@ export function Select<T extends string | number>({ value, options, onChange, la
         disabled={disabled}
         onClick={() => setOpen((state) => !state)}
         onKeyDown={(event) => {
+          // удержанный Enter из поля ввода долетает сюда, когда открывается диалог, и щёлкал бы список туда-сюда
+          if (event.key === 'Enter' && event.repeat) {
+            event.preventDefault();
+            return;
+          }
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault();
             setOpen(true);

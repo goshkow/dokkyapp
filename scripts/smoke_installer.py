@@ -70,14 +70,15 @@ def check_launcher(launcher: Path, work: Path) -> None:
     (root / "portable.dokky").write_text("x", encoding="utf-8")
     report = root / "app-1.2.3" / "report.txt"
     env = {k: v for k, v in os.environ.items() if k.upper() != "KODDI_DATA_DIR"}
-    command = f'"{root / "Dokky.exe"}" /d /c "echo koddi://open?chat=1 "a b"> report.txt & set KODDI_DATA_DIR>> report.txt"'
+    # /u: cmd пишет в файл UTF-16, иначе кириллица пути зависит от кодовой страницы системы (на раннерах cp437)
+    command = f'"{root / "Dokky.exe"}" /d /u /c "echo koddi://open?chat=1 "a b"> report.txt & set KODDI_DATA_DIR>> report.txt"'
     subprocess.run(command, env=env, timeout=60, check=True)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        if report.exists() and "KODDI_DATA_DIR" in report.read_text(encoding="oem", errors="replace"):
+        if report.exists() and "KODDI_DATA_DIR" in report.read_text(encoding="utf-16-le", errors="replace"):
             break
         time.sleep(0.2)
-    text = report.read_text(encoding="oem", errors="replace")
+    text = report.read_text(encoding="utf-16-le", errors="replace")
     assert 'koddi://open?chat=1 "a b"' in text, text
     assert f"KODDI_DATA_DIR={root / '.koddi-data'}" in text, text
     print("лаунчер: аргументы и папка данных переносной версии на месте")
