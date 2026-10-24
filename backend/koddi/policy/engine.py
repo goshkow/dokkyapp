@@ -219,6 +219,16 @@ def _decide_browser(tool_name: str, args: dict, workspace: Path | None, profile:
     return Decision("block", f"unknown tool {tool_name}")
 
 
+def _mcp_servers_enabled() -> bool:
+    from koddi.integrations.mcp import _load_servers
+
+    try:
+        servers = _load_servers()
+    except (ValueError, OSError):
+        return False
+    return any(not server.get("disabled", False) for server in servers.values())
+
+
 def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int | None = None) -> Decision:
     from koddi.policy.grants import permission_profile
 
@@ -298,6 +308,9 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         return _confirm(profile, "file outside the project", external=tuple(external))
     if tool_name in READ_ONLY_TOOLS:
         return Decision("allow", "read-only tool")
+    if tool_name == "mcp.tools_list" and not _mcp_servers_enabled():
+        # без включённых серверов список ничего не запускает, спрашивать не о чем
+        return Decision("allow", "no MCP servers configured")
     if profile == "read-only":
         return Decision("block", "read-only permission profile")
     if workspace is None and tool_name not in {

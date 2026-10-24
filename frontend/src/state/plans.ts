@@ -191,7 +191,7 @@ const money = (amount: number, currency = 'RUB'): string => {
 export { money };
 
 /** Подпись главной кнопки карточки по `action` сервера; «Включено в …» называет текущий план человека. */
-export function planButton(plan: Plan, current?: { expiresAt?: string | null; name?: string }): { label: string; disabled: boolean } {
+export function planButton(plan: Plan, current?: { expiresAt?: string | null; name?: string; unlimited?: boolean }): { label: string; disabled: boolean } {
   switch (plan.action) {
     case 'subscribe': return { label: `Купить ${plan.name}`, disabled: false };
     case 'upgrade': return { label: `Улучшить до ${plan.name}`, disabled: false };
@@ -201,7 +201,8 @@ export function planButton(plan: Plan, current?: { expiresAt?: string | null; na
       return { label: until ? `Активно до ${until}` : 'Активно', disabled: true };
     }
     case 'included': return { label: `Включено в ${current?.name || 'ваш план'}`, disabled: true };
-    default: return { label: 'Оплата пока недоступна', disabled: true };
+    // безлимитному доступу платить не за что; старый сервер присылал для него unavailable
+    default: return current?.unlimited ? { label: 'Включено в ваш доступ', disabled: true } : { label: 'Оплата временно недоступна', disabled: true };
   }
 }
 

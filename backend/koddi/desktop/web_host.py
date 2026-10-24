@@ -1470,11 +1470,18 @@ def main() -> None:
         url_handler.activation_requested.connect(activate)
         marker = data_dir() / "dokky-login.signal"
         last_login = marker.stat().st_mtime_ns if marker.exists() else 0
+        quit_marker = data_dir() / "dokky-quit.signal"
+        quit_marker.unlink(missing_ok=True)
 
         def check_backend_and_login():
             nonlocal last_login
             if backend.failed.is_set():
                 app.exit(1)
+                return
+            # помощник обновления уже ждёт выхода: закрываемся штатно, с сохранением окна и остановкой ходов
+            if quit_marker.exists():
+                quit_marker.unlink(missing_ok=True)
+                app.quit()
                 return
             current = marker.stat().st_mtime_ns if marker.exists() else 0
             if current != last_login:

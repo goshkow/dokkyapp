@@ -327,7 +327,7 @@ async def test_recovered_journal_cutoff_does_not_replay_repeated_answers_or_conf
 
 def test_actual_dokky_window_and_server_estimate_have_only_token_threshold():
     assert context_limit({"provider": "dokky"}) == 200000
-    assert context_limit({"provider": "dokky", "context_tokens": 600000}) == 200000
+    assert context_limit({"provider": "dokky", "context_tokens": 600000}) == 600000
     assert context_limit({"provider": "dokky", "context_tokens_limit": 120000}) == 120000
     assert context_limit({"context_tokens": 1000000}) == 600000
     short = [{"role": "assistant", "content": "x"}] * 3200

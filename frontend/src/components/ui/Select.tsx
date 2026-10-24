@@ -1,11 +1,13 @@
 import { ChevronDown } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { Popover } from './Popover';
 
 export interface SelectOption<T extends string | number> {
   value: T;
   label: string;
   disabled?: boolean;
+  /** вид пункта, например образец шрифта */
+  style?: CSSProperties;
 }
 
 interface SelectProps<T extends string | number> {
@@ -50,7 +52,7 @@ export function Select<T extends string | number>({ value, options, onChange, la
           }
         }}
       >
-        <span>{current?.label ?? '—'}</span>
+        <span style={current?.style}>{current?.label ?? '—'}</span>
         <ChevronDown aria-hidden="true" />
       </button>
       <Popover open={open} anchor={trigger} onClose={() => setOpen(false)} role="listbox" label={label} side={side} className="select-menu" minWidth="anchor">
@@ -67,7 +69,7 @@ export function Select<T extends string | number>({ value, options, onChange, la
               if (option.value !== value) onChange(option.value);
             }}
           >
-            <span>{option.label}</span>
+            <span style={option.style}>{option.label}</span>
           </button>
         ))}
       </Popover>

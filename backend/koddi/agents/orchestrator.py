@@ -276,8 +276,9 @@ class AgentOrchestrator:
             )
             turn_id = int(
                 conn.execute(
-                    "INSERT INTO turns(chat_id,status,owner_pid,owner_token,queued_request_id) VALUES (?,'running',?,?,?)",
-                    (chat_id, *current_owner(), queued_request_id),
+                    "INSERT INTO turns(chat_id,status,owner_pid,owner_token,queued_request_id,history_from) "
+                    "VALUES (?,'running',?,?,?,(SELECT COALESCE(MAX(id),0) FROM agent_history WHERE chat_id=?))",
+                    (chat_id, *current_owner(), queued_request_id, chat_id),
                 ).lastrowid
             )
             conn.execute(
@@ -315,6 +316,10 @@ class AgentOrchestrator:
                 "agent.input_required",
                 {**payload, "call_id": payload.get("id"), "id": request_id, "kind": kind},
             )
+            # поток хода могут не читать (очередь, переподключение окна): окно узнаёт о запросе из общей шины
+            from koddi.events import event_bus
+
+            await event_bus.publish("agent.request.created", {"chat_id": chat_id, "request_id": request_id, "kind": kind})
             while True:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
@@ -672,7 +677,7 @@ class AgentOrchestrator:
                 if config.get("provider") == "dokky" and not pending_followup:
                     from koddi.dokky.context import transition
 
-                    if force_compaction or measured_context >= min(180_000, context_limit(active_config) * 0.9):
+                    if force_compaction or measured_context >= context_limit(active_config) * 0.9:
                         current_context = compose_coding_context(
                             project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth,
                         )

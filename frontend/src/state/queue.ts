@@ -63,6 +63,10 @@ export async function refreshQueue(): Promise<void> {
   if (changed && previous && (running || queue.wasRunning)) {
     queue.wasRunning = running;
     await hooks.sync();
+  }
+  // ход из очереди запускает сервер: подключаемся к нему, даже если момент смены статуса пропущен
+  if (running && !ctl.stream && !stale(version, chatId)) {
+    if (!chat.get().running) await hooks.sync();
     if (!stale(version, chatId) && chat.get().running && !ctl.stream) void hooks.attach(chatId);
   }
 }

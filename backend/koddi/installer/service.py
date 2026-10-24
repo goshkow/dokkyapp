@@ -6,11 +6,13 @@ import platform
 import sqlite3
 import sys
 
+from koddi import __version__
 from koddi.config import data_dir, is_packaged_build
 from koddi.remote import remote_config
 
 
-BUILD_NUMBER = "20261016.2"
+# номер сборки совпадает с версией: одна строка в koddi/__init__.py, pyproject и установщиках
+BUILD_NUMBER = __version__
 
 
 async def diagnostics() -> dict:
@@ -52,9 +54,6 @@ async def diagnostics() -> dict:
 
 
 def update_check() -> dict:
-    return {
-        "ok": True,
-        "status": "disabled",
-        "reason": "unconfigured",
-        "external_gates": ["pinned_update_key", "release_https_url", "publisher_certificate"],
-    }
+    from koddi.updates import updater
+
+    return {"ok": True, **updater.status()}

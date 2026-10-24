@@ -6,6 +6,7 @@
 .koddi-dev-server*.log
 dist/
 dist_*/
+release_mac/
 build/
 build_*/
 *.egg-info/

@@ -531,7 +531,10 @@ def test_settings_endpoints_and_sharing(tmp_path, monkeypatch):
     with TestClient(app) as client:
         chat = client.post("/api/chats", json={"title": "Локальный"}).json()["id"]
         state = client.get("/api/remote-control").json()
-        assert state["enabled"] is False and state["state"] == "off" and state["prevent_sleep"] == "working"
+        # пока человек не выбирал, доступ включается сам; выключение запоминается
+        assert state["enabled"] is True and state["prevent_sleep"] == "working"
+        state = client.put("/api/remote-control", json={"enabled": False}).json()
+        assert state["enabled"] is False and state["state"] == "off"
         assert client.put("/api/remote-control", json={"prevent_sleep": "always"}).status_code == 422
         assert client.put("/api/remote-control", json={"unknown": 1}).status_code == 422
         assert client.put("/api/remote-control", json={"prevent_sleep": "off"}).json()["prevent_sleep"] == "off"
@@ -543,13 +546,27 @@ def test_settings_endpoints_and_sharing(tmp_path, monkeypatch):
             client.get("/api/remote-control")
             asyncio.run(asyncio.sleep(0.02))
         register = next(call for call in server.calls if call[1] == ("hosts",))
-        assert register[2]["state"]["prevent_sleep_enabled"] is False and len(register[2]["install_id"]) >= 16
+        assert len(register[2]["install_id"]) >= 16
         assert client.get("/api/remote-control").json()["shared"][str(chat)] is True
         assert client.put(f"/api/chats/{chat}/remote", json={"shared": "no"}).status_code == 422
         assert client.put(f"/api/chats/{chat}/remote", json={"shared": False}).json() == {"chat_id": chat, "shared": False}
         assert client.put("/api/chats/999999/remote", json={"shared": True}).status_code == 404
         assert client.put("/api/remote-control", json={"enabled": False}).json()["state"] == "off"
     assert remote_control.supervisor is None
+    with TestClient(create_app()) as client:
+        assert client.get("/api/remote-control").json()["enabled"] is False
+
+
+def test_windows_default_computer_name_becomes_readable(monkeypatch):
+    from koddi.remote_control import bridge
+
+    monkeypatch.setattr(bridge.sys, "platform", "win32")
+    monkeypatch.setattr(bridge.os, "name", "nt")
+    monkeypatch.setenv("COMPUTERNAME", "DESKTOP-7F3K2QL")
+    monkeypatch.setenv("USERNAME", "Иван")
+    assert bridge._computer_name() == "ПК Иван"
+    monkeypatch.setenv("COMPUTERNAME", "Игровой")
+    assert bridge._computer_name() == "Игровой"
 
 
 def test_redaction_hides_secrets_in_any_format():

@@ -8,7 +8,7 @@
     <RootNamespace>DokkyLauncher</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\assets\DokkyApp.ico</ApplicationIcon>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Company>Goshkow</Company>
     <Product>Докки</Product>
     <AssemblyTitle>Докки</AssemblyTitle>

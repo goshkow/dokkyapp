@@ -1,3 +1,4 @@
+import { codeFontStack } from '../lib/codeFonts';
 import { createStore, useStore } from '../lib/store';
 
 export type Theme = 'dark' | 'light';
@@ -24,7 +25,7 @@ export const ui = createStore<UiState>({
   surface: 'classic',
   baseSize: 14,
   uiFont: 'inter',
-  codeFont: 'Consolas',
+  codeFont: 'system',
   motion: 'full',
   chatWidth: 'standard',
   scope: 'development',
@@ -42,8 +43,6 @@ export function applyAppearance(state: UiState = ui.get()): void {
   root.dataset.motion = state.motion;
   root.dataset.uiFont = state.uiFont;
   root.style.setProperty('--base', `${Math.min(20, Math.max(8, state.baseSize))}px`);
-  // название шрифта идёт в CSS в кавычках: лишние символы вырезаются, запасные шрифты остаются
-  const name = state.codeFont.replace(/[^A-Za-z0-9 ._,-]/g, '').trim();
-  root.style.setProperty('--code-font', name && name !== 'monospace' ? `"${name}", Consolas, Menlo, monospace` : 'Consolas, Menlo, monospace');
+  root.style.setProperty('--code-font', codeFontStack(state.codeFont));
   root.style.setProperty('--chat-width', `${CHAT_WIDTH[state.chatWidth]}px`);
 }

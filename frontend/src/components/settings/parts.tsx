@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../../lib/api';
 import { Select } from '../ui/Select';
 
@@ -45,13 +45,13 @@ function useSaved<T>(value: T, save: (value: T) => Promise<unknown>, say: Say) {
   return { current, busy, commit };
 }
 
-export function Pick<T extends string | number>({ title, detail, options, value, save, say }: {
-  title: string; detail?: ReactNode; options: Array<[T, string]>; value: T; save: (value: T) => Promise<unknown>; say: Say;
+export function Pick<T extends string | number>({ title, detail, options, value, save, say, optionStyle }: {
+  title: string; detail?: ReactNode; options: Array<[T, string]>; value: T; save: (value: T) => Promise<unknown>; say: Say; optionStyle?: (value: T) => CSSProperties;
 }) {
   const { current, busy, commit } = useSaved(value, save, say);
   return (
     <Row title={title} detail={detail}>
-      <Select label={title} value={current} disabled={busy} options={options.map(([id, label]) => ({ value: id, label }))} onChange={commit} />
+      <Select label={title} value={current} disabled={busy} options={options.map(([id, label]) => ({ value: id, label, style: optionStyle?.(id) }))} onChange={commit} />
     </Row>
   );
 }

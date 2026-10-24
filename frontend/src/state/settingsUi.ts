@@ -1,6 +1,6 @@
 import { createStore, useStore } from '../lib/store';
 
-export type SettingsSection = 'general' | 'account' | 'billing' | 'usage' | 'conversation' | 'development' | 'remote' | 'system' | 'about';
+export type SettingsSection = 'general' | 'account' | 'billing' | 'usage' | 'conversation' | 'development' | 'remote' | 'system' | 'updates' | 'about';
 
 interface SettingsUiState { open: boolean; section: SettingsSection; /** План, чья вкладка открывается на экране подписки (из приглашения или подсказки). */ plan: string }
 

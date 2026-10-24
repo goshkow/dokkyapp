@@ -149,6 +149,8 @@ class Api:
             return [{"id": key, "name": key} for key in ("development", "chat", "plan")]
         if path == "/api/app/diagnostics":
             return {"build_number": "test"}
+        if path == "/api/updates/status":
+            return {"status": "disabled", "reason": "dev", "current": "0.2.1", "platform": None, "kind": None, "method": "dev", "auto_download": True, "error": "", "available": None, "progress": None}
         if path == "/api/remote-control" and method == "GET":
             return {"enabled": False, "state": "off", "message": "", "name": "Компьютер", "prevent_sleep": "working", "prevent_sleep_active": False,
                     "power": "ac", "pending": 0, "new_session_project_id": None, "shared": {}, "site": "https://dokky.goshkow.com"}

@@ -21,7 +21,7 @@ a:hover { text-decoration: underline; }
 ::selection { background: color-mix(in srgb, var(--text) 22%, transparent); color: var(--text); }
 
 /* выделяется только содержимое: сообщения, комментарии, код, поля ввода */
-html, body { -webkit-user-select: none; user-select: none; }
+html, body, dialog, [popover] { -webkit-user-select: none; user-select: none; }
 img, svg, canvas { -webkit-user-drag: none; }
 .selectable, .selectable *, input, textarea, pre, pre *, code,
 .message-body, .message-body *, .journal-commentary, .journal-commentary *, .plan-document-body, .plan-document-body *,

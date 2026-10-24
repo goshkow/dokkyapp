@@ -76,7 +76,7 @@ function buildEntries(target: Element): Entry[] {
   const entries: Entry[] = [];
   if (href) {
     entries.push({ label: 'Открыть ссылку', run: () => openLink(href) });
-    entries.push({ label: 'Копировать ссылку', run: (event) => copyText(href, event as MouseEvent, 'Ссылка скопирована') });
+    entries.push({ label: 'Копировать ссылку', run: async (event) => { await copyText(href, event as MouseEvent, 'Ссылка скопирована'); } });
   }
   if (editable) {
     const readOnly = (editable as HTMLInputElement).readOnly || (editable as HTMLInputElement).disabled;

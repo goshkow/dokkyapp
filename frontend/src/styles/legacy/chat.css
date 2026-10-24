@@ -707,21 +707,21 @@ main:not(.chat-page) #segmented-mode {
 [data-theme="light"] .diff-line.removed {
   background: #ffe0e0;
 }
-[data-theme="light"] .code-diff .hljs-keyword {
+[data-theme="light"] .hljs-keyword {
   color: #7a2d8c;
 }
-[data-theme="light"] .code-diff .hljs-string {
+[data-theme="light"] .hljs-string {
   color: #216536;
 }
-[data-theme="light"] .code-diff .hljs-number,
-[data-theme="light"] .code-diff .hljs-literal {
+[data-theme="light"] .hljs-number,
+[data-theme="light"] .hljs-literal {
   color: #94571a;
 }
-[data-theme="light"] .code-diff .hljs-title,
-[data-theme="light"] .code-diff .hljs-function {
+[data-theme="light"] .hljs-title,
+[data-theme="light"] .hljs-function {
   color: #1b5e9a;
 }
-[data-theme="light"] .code-diff .hljs-comment {
+[data-theme="light"] .hljs-comment {
   color: #5d666e;
 }
 .diff-line.hunk {

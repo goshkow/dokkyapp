@@ -268,3 +268,22 @@ async def test_manual_mode_never_calls_reviewer(places):
     assert client.reviews == 0
     request = next(item for item in events if isinstance(item, dict))
     assert request["action"]["title"] == "Создать файл" and request["review"] is None
+
+
+def test_mcp_list_without_servers_needs_no_approval(places, tmp_path, monkeypatch):
+    import koddi.integrations.mcp as mcp
+
+    workspace, _ = places
+    config = tmp_path / "servers.json"
+    monkeypatch.setattr(mcp, "mcp_config_path", lambda: config)
+    profile("ask")
+    # без файла настроек и без включённых серверов запускать нечего
+    assert decide("mcp.tools_list", {}, workspace).action == "allow"
+    config.write_text(json.dumps({"servers": {"gh": {"command": "gh-mcp", "disabled": True}}}), encoding="utf-8")
+    assert decide("mcp.tools_list", {}, workspace).action == "allow"
+    config.write_text("{broken", encoding="utf-8")
+    assert decide("mcp.tools_list", {}, workspace).action == "allow"
+    # включённый сервер - это запуск процесса, решение по режиму
+    config.write_text(json.dumps({"servers": {"gh": {"command": "gh-mcp"}}}), encoding="utf-8")
+    assert decide("mcp.tools_list", {}, workspace).action == "ask"
+    assert decide("mcp.tool_call", {"server": "gh", "name": "x", "arguments": {}}, workspace).action == "ask"

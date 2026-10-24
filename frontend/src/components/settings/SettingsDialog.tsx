@@ -1,4 +1,4 @@
-import { CircleUserRound, Code2, CreditCard, Info, MessagesSquare, Monitor, Search, Settings, Smartphone, X, type LucideIcon } from 'lucide-react';
+import { CircleUserRound, Code2, CreditCard, Info, MessagesSquare, Monitor, RefreshCw, Search, Settings, Smartphone, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { closeSettings, openSettings, useSettingsUi, type SettingsSection } from '../../state/settingsUi';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
@@ -10,6 +10,8 @@ import { GeneralPage } from './GeneralPage';
 import { RemoteControlPage } from './RemoteControlPage';
 import { AboutPage, SystemPage } from './SystemPages';
 import { ConversationPage } from './UsageConversationPages';
+import { UpdatesPage } from './UpdatesPage';
+import { hasUpdate, useUpdates } from '../../state/updates';
 
 interface Entry {
   id: SettingsSection;
@@ -40,6 +42,7 @@ const groups: Array<{ title: string; items: Entry[] }> = [
     title: 'Этот компьютер',
     items: [
       { id: 'system', title: 'Система', Icon: Monitor, keywords: 'запуск вместе с windows автозапуск аппаратное ускорение видеокарта отрисовка очистить кэш журнал сбросить внешний вид сборка' },
+      { id: 'updates', title: 'Обновления', Icon: RefreshCw, keywords: 'обновление новая версия проверить обновления скачать установить перезапустить автоматически' },
       { id: 'about', title: 'О приложении', Icon: Info, keywords: 'версия сайт лицензии сторонние компоненты помощь open source licenses' },
     ],
   },
@@ -79,6 +82,7 @@ export function SettingsDialog() {
     return () => window.clearTimeout(timer);
   }, [needle, section, open]);
   const goto = (id: SettingsSection) => openSettings(id);
+  const update = useUpdates(hasUpdate);
   return (
     <PlainDialog open={open} onClose={closeSettings} className="settings-window" label="Настройки" closeDelay={140}>
       <div className="settings-layout">
@@ -97,6 +101,7 @@ export function SettingsDialog() {
                   {items.map(({ id, title, Icon }) => (
                     <button key={id} type="button" data-settings-section={id} aria-current={id === section ? 'page' : 'false'} onClick={() => goto(id)}>
                       <Icon aria-hidden="true" /><span>{title}</span>
+                      {id === 'updates' && update && <i className="update-dot" aria-label="Доступно обновление" />}
                     </button>
                   ))}
                 </div>
@@ -119,6 +124,7 @@ export function SettingsDialog() {
             {section === 'development' && <DevelopmentPage say={setFeedback} />}
             {section === 'remote' && <RemoteControlPage say={setFeedback} />}
             {section === 'system' && <SystemPage say={setFeedback} />}
+            {section === 'updates' && <UpdatesPage say={setFeedback} />}
             {section === 'about' && <AboutPage />}
            </ErrorBoundary>
           </div>

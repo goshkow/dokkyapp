@@ -137,9 +137,9 @@ export function QueuePanel() {
   if (!queue || !items.length) return <section id="local-queue" aria-label="Очередь запросов" hidden />;
   const waiting = items.filter((item) => item.status === 'queued').length;
   const visible = expanded ? items : items.slice(0, QUEUE_LIMIT);
-  const title = queue.paused ? 'Очередь приостановлена' : working ? 'Агент работает' : 'Запросы в очереди';
+  const title = queue.paused ? 'Очередь приостановлена' : working ? 'Агент работает, дальше по очереди' : 'Очередь';
   return (
-    <section id="local-queue" aria-label="Очередь запросов">
+    <section id="local-queue" aria-label="Очередь запросов" data-state={queue.paused ? 'paused' : working ? 'working' : 'waiting'}>
       <div className="queue-header">
         <strong>{title}{waiting ? ` · ${waiting} в очереди` : ''}</strong>
         {queue.paused && waiting > 0 && <button type="button" onClick={guarded(resumeQueue)}>Продолжить</button>}
@@ -152,7 +152,7 @@ export function QueuePanel() {
           <article key={item.id} className="queue-row" data-status={item.status}>
             <span className="queue-index" aria-hidden="true">{index + 1}</span>
             <span className="queue-copy">
-              <strong>{item.status === 'failed' ? 'Не выполнен, проверьте результат' : `№ ${index + 1} в очереди`}</strong>
+              <strong>{item.status === 'failed' ? 'Не выполнен - проверьте результат' : index === 0 && working ? 'Следующий' : `№ ${index + 1} в очереди`}</strong>
               <span title={item.content}>{item.content}</span>
             </span>
             {item.status === 'queued' && (

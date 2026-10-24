@@ -10,7 +10,7 @@ export async function showRequests(): Promise<void> {
   if (id == null) return;
   const requests = await api<AgentRequest[]>('/api/agent/requests');
   if (currentChatId() !== id) return;
-  chat.set({ requests: requests.filter((request) => request.chat_id === undefined || request.chat_id === id) });
+  chat.set({ requests: requests.filter((request) => request.chat_id === undefined || String(request.chat_id) === String(id)) });
 }
 
 export async function respondRequest(request: AgentRequest, payload: { approved?: boolean; answer?: string }): Promise<void> {

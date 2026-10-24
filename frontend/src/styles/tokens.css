@@ -39,7 +39,7 @@
   --cluster-w: 112px;
   --chat-width: 760px;
   --message-size: var(--base);
-  --code-font: Consolas, Menlo, "SF Mono", monospace;
+  --code-font: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
 
   /* поверхность: по умолчанию прежние цвета (меню и чат одного тона); «Тёмный чат» и «Тёмное меню» - в настройках */
   --bg: #141414;

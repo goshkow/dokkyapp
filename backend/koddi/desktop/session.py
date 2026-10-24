@@ -43,7 +43,7 @@ def register_protocol():
     import winreg
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\koddi") as key:
-        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:Koddi")
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:Dokky")
         winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
     with winreg.CreateKey(
         winreg.HKEY_CURRENT_USER, r"Software\Classes\koddi\shell\open\command"

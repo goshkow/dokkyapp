@@ -5,14 +5,21 @@
 .plans-head p { margin: 5px 0 0; color: var(--muted); font-size: var(--fs-13); }
 .plans-head .plan-badge { font-size: inherit; }
 
-.plan-tabs { display: flex; width: 100%; max-width: 460px; padding: 3px; gap: 2px; border-radius: 999px; background: var(--field); }
-.plan-tabs button { flex: 1; min-height: 36px; padding: 0 10px; border-radius: 999px; transition: background-color 160ms ease; }
-.plan-tabs button:hover { background: color-mix(in srgb, var(--hover) 55%, transparent); }
-.plan-tabs button[aria-selected="true"] { background: var(--hover); box-shadow: 0 1px 2px #0004; }
+.plan-tabs { position: relative; display: flex; width: 100%; max-width: 460px; padding: 3px; border-radius: 23px; background: var(--field); user-select: none; }
+.plan-tab-indicator { position: absolute; z-index: 0; top: 3px; bottom: 3px; left: 0; width: 0; border-radius: 20px; background: var(--hover); box-shadow: 0 1px 2px #0003; transition: transform .32s cubic-bezier(.25,.75,.25,1), width .32s cubic-bezier(.25,.75,.25,1); }
+.plan-tabs button { position: relative; z-index: 1; flex: 1; min-width: 0; height: 40px; padding: 0 6px; border-radius: 20px; background: transparent; color: var(--muted); transition: color .24s ease; }
+.plan-tabs button:hover { background: transparent; color: var(--text); }
+.plan-tabs button[aria-selected="true"] { background: transparent; color: var(--text); box-shadow: none; }
 .plan-tabs .plan-badge { font-size: var(--fs-14); }
 
-.plan-detail { box-sizing: border-box; width: 100%; max-width: 460px; padding: 22px 24px 18px; border: 1px solid var(--line-soft); border-radius: 18px; background: var(--field); animation: pop-in 200ms var(--ease) both; }
-.plan-detail h4 { margin: 0 0 4px; font-size: var(--fs-20); }
+/* сцена перелистывания: активная карточка задаёт высоту, соседние уезжают за край и обрезаются */
+.plan-stage { position: relative; width: 100%; max-width: 460px; overflow: hidden; overflow-anchor: none; border-radius: 23px; transition: height .32s cubic-bezier(.25,.75,.25,1); }
+.plan-detail { position: absolute; inset: 0 auto auto 0; box-sizing: border-box; width: 100%; padding: 23px 22px 18px; border: 1px solid var(--line-soft); border-radius: 23px; background: var(--field); visibility: hidden; opacity: 0; }
+.plan-detail.active { position: relative; z-index: 2; visibility: visible; opacity: 1; }
+.plan-detail.active.entering { position: absolute; will-change: transform; }
+.plan-detail.leaving { z-index: 1; visibility: visible; opacity: 1; pointer-events: none; will-change: transform; }
+.plan-detail.owned-plan { background: color-mix(in srgb, var(--field) 82%, var(--text) 4%); }
+.plan-detail h4 { margin: 0 0 5px; font-size: var(--fs-20); font-weight: 650; }
 .plan-detail h4 .plan-badge { font-size: inherit; }
 .plan-tagline { margin: 0 0 14px; color: var(--muted); font-size: var(--fs-13); line-height: 1.45; }
 .plan-price { margin-bottom: 14px; }
@@ -22,7 +29,11 @@
 .plan-price-line em { padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--positive) 22%, transparent); color: var(--positive); font-size: var(--fs-12); font-style: normal; font-weight: 650; }
 .plan-price > span { color: var(--muted); font-size: var(--fs-12); }
 .plan-cta { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid var(--line-soft); }
-.plan-buy { width: 100%; min-height: 46px; }
+.plan-buy { width: 100%; min-height: 46px; border: 0; border-radius: 23px; background: var(--text); color: var(--bg); font-size: var(--fs-15); font-weight: 650; cursor: pointer; transition: opacity .2s ease, scale .22s var(--ease); }
+.plan-buy:hover:not(:disabled) { opacity: .9; }
+.plan-buy:active:not(:disabled) { scale: .985; }
+.plan-buy:disabled { cursor: default; opacity: .55; }
+.plan-buy.is-owned, .plan-buy.is-owned:disabled { border: 1px solid var(--line); background: transparent; color: var(--text); opacity: 1; }
 .plan-buy-price { margin-left: 6px; opacity: 0.75; font-weight: 500; }
 .plan-note { margin: 0; color: var(--muted); font-size: var(--fs-12); line-height: 1.45; text-align: center; }
 .plan-foot { margin: 0; max-width: 460px; color: var(--faint); font-size: var(--fs-12); line-height: 1.45; text-align: center; }

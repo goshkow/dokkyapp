@@ -1,4 +1,4 @@
-import { ChartNoAxesColumn, CircleUserRound, CreditCard, Gauge, Settings, SquarePen } from 'lucide-react';
+import { ChartNoAxesColumn, CircleUserRound, CreditCard, Gauge, RefreshCw, Settings, SquarePen } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cloudPath } from '../../lib/api';
 import type { Limits } from '../../lib/types';
@@ -8,6 +8,7 @@ import { planName, usePlans } from '../../state/plans';
 import { loadLimits, newChat, openBilling, openSettings } from '../../state/remote';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
+import { hasUpdate, useUpdates } from '../../state/updates';
 import { Popover } from '../ui/Popover';
 
 const avatarCache = new Map<string, string>();
@@ -98,6 +99,7 @@ export function AccountRow() {
   const development = useUi((state) => state.scope === 'development');
   const project = useView((state) => state.project);
   const [open, setOpen] = useState(false);
+  const update = useUpdates((state) => (hasUpdate(state) ? state : null));
   const toggle = useRef<HTMLButtonElement>(null);
   const letter = Array.from(name)[0]?.toLocaleUpperCase() ?? 'Д';
   // в разработке важнее более строгий из двух лимитов, в чате остаток подписки, как на сайте
@@ -111,6 +113,7 @@ export function AccountRow() {
         <div className="side-id">
           <button id="connection-badge" type="button" className="side-account" data-state={account?.authenticated ? 'ready' : 'offline'} aria-label="Открыть настройки" onClick={() => openSettings('general')}>
             <span className="avatar">{avatar ? <img src={avatar} alt="" draggable={false} /> : letter}</span>
+            {update && <i className="update-dot" data-state={update.status} role="img" aria-label="Доступно обновление" />}
             <span className="account-name"><b>{name}</b></span>
           </button>
           <button
@@ -136,6 +139,11 @@ export function AccountRow() {
       </div>
       <Popover open={open} anchor={toggle} onClose={() => setOpen(false)} label="Аккаунт" side="above" className="account-menu">
         <strong className="account-menu-name">{account?.user?.display_name || 'Аккаунт Докки'}</strong>
+        {update && (
+          <button type="button" role="menuitem" className="menu-item update-item" onClick={() => { setOpen(false); openSettings('updates'); }}>
+            <RefreshCw aria-hidden="true" /><span>{update.status === 'ready' ? `Обновить до ${update.available?.version}` : `Доступна версия ${update.available?.version}`}</span>
+          </button>
+        )}
         <section className="account-limits" aria-label="Оставшийся лимит">
           <h3><Gauge aria-hidden="true" /><span>Оставшийся лимит</span></h3>
           <LimitRows limits={limits} loading={loading} error={error} />

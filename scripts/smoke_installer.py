@@ -1,6 +1,6 @@
 """Проверка установщика Windows: тихая установка, обновление поверх, удаление и лаунчер Dokky.exe.
 
-python scripts/smoke_installer.py dist_release/Dokky-0.2.0-Windows-x64-Setup.exe
+python scripts/smoke_installer.py dist_release/Dokky-0.2.1-Windows-x64-Setup.exe
 
 Режим --smoke: свой ключ реестра и ярлык «Докки (проверка)», настоящая установка не затрагивается.
 С правами администратора (как в GitHub Actions) дополнительно проверяется установка в Program Files для всех.

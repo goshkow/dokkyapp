@@ -100,6 +100,11 @@ def _computer_name() -> str:
         name = os.environ.get("COMPUTERNAME", "") if os.name == "nt" else ""
     if not name:
         name = platform.node().split(".", 1)[0]
+    # Windows по умолчанию называет компьютер DESKTOP-7F3K2QL: в списке чатов на телефоне это ни о чём не говорит
+    if not name or re.fullmatch(r"(?:DESKTOP|LAPTOP|WIN|PC|USER)-[A-Z0-9]{4,}", name, re.IGNORECASE):
+        user = (os.environ.get("USERNAME") or os.environ.get("USER") or "").strip()
+        kind = "Mac" if sys.platform == "darwin" else "ПК"
+        name = f"{kind} {user}" if user else name
     name = " ".join(name.split())[:NAME_LIMIT]
     return name or "Компьютер"
 
@@ -218,11 +223,11 @@ class RemoteControl:
                 raise HTTPException(422, "enabled: true или false")
             if payload["enabled"]:
                 _owner()
-                self._update(enabled=1)
+                self._update(enabled=1, configured=1)
                 self._enabled = True
                 self.launch()
             else:
-                self._update(enabled=0)
+                self._update(enabled=0, configured=1)
                 self._enabled = False
                 await self.halt()
         return self.status()
@@ -245,7 +250,12 @@ class RemoteControl:
         self._beat = asyncio.Event()
         if self.on_run not in agent_runs.listeners:
             agent_runs.listeners.append(self.on_run)
-        self._enabled = bool(self.config()["enabled"])
+        config = self.config()
+        if not config["enabled"] and not config.get("configured"):
+            # пока человек сам не выбирал: чаты компьютера видны на сайте и телефоне сразу после входа
+            self._update(enabled=1)
+            config["enabled"] = 1
+        self._enabled = bool(config["enabled"])
         if self._enabled:
             self.launch()
 
@@ -767,7 +777,11 @@ class RemoteControl:
             row = conn.execute(
                 "SELECT t.chat_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id WHERE r.id=?", (request_id,)
             ).fetchone()
-        key = outbox.shared_key(row["chat_id"]) if row else None
+        if row is None:
+            return
+        # ответ из любого места закрывает карточку во всех окнах, даже если чат не открыт на телефоне
+        self._threadsafe(self._publish, "agent.request.resolved", {"chat_id": row["chat_id"], "request_id": request_id})
+        key = outbox.shared_key(row["chat_id"])
         if not key:
             return
         if kind == "approval":
@@ -777,8 +791,6 @@ class RemoteControl:
             answer = clean_text(payload.get("answer") or "", None, 500)
             outbox.event(key, "question_resolved", data={"request_id": f"ar-{request_id}", "answer": answer})
         self.wake()
-        # ответили с телефона: открытое окно убирает карточку запроса, не дожидаясь следующего события хода
-        self._threadsafe(self._publish, "agent.request.resolved", {"chat_id": row["chat_id"], "request_id": request_id})
 
     def _publish(self, kind: str, data: dict) -> None:
         from koddi.events import event_bus

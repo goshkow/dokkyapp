@@ -16,7 +16,7 @@ class CpuRate(ctypes.Structure):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Сборка Кодди с ограничением CPU")
+    parser = argparse.ArgumentParser(description="Сборка Докки с ограничением CPU")
     parser.add_argument("--cpu-percent", type=int, default=75)
     parser.add_argument("--output", default="dist_koddi_test")
     parser.add_argument("--compiler", choices=["msvc", "gcc"], default="msvc")

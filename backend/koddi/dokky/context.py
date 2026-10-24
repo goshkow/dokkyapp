@@ -77,7 +77,7 @@ def should_compact(value: dict, config: dict, *, boundary: bool) -> bool:
     live = route_context(value).get("limit_tokens")
     if type(live) is int and live >= 8192:
         limit = min(limit, live)
-    if size >= min(180_000, int(limit * 0.9)):
+    if size >= int(limit * 0.9):
         return True
     if not boundary or size < 20_000:
         return False

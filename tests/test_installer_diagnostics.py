@@ -58,9 +58,8 @@ async def test_diagnostics_errors_do_not_disclose_exception_or_profile(monkeypat
     assert "private" not in json.dumps(result)
 
 
-def test_update_channel_is_honestly_disabled_without_architecture_claim():
+def test_update_check_is_disabled_outside_packaged_build():
     result = service.update_check()
     assert result["status"] == "disabled"
-    assert result["reason"] == "unconfigured"
-    assert "architecture_ready" not in result
-    assert set(result["external_gates"]) == {"pinned_update_key", "release_https_url", "publisher_certificate"}
+    assert result["reason"] == "dev"
+    assert result["current"] == service.BUILD_NUMBER

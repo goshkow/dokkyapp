@@ -14,6 +14,7 @@ import httpx
 from koddi.storage.db import get_setting, set_setting
 
 CONTEXT_CEILING = 600_000
+DOKKY_CONTEXT_LIMIT = 1_000_000
 
 
 class RemoteAIError(RuntimeError):
@@ -65,10 +66,10 @@ def remote_config() -> dict[str, Any]:
             "base_url": API,
             "model": selected,
             "models": models,
-            "context_tokens": min(200_000, context)
+            "context_tokens": min(DOKKY_CONTEXT_LIMIT, context)
             if type(context) is int and context >= 4096
             else 200_000,
-            "context_ceiling_tokens": 200_000,
+            "context_ceiling_tokens": DOKKY_CONTEXT_LIMIT,
             "api_key_env": "",
         }
     saved = get_setting("remote_ai", {})
@@ -359,7 +360,7 @@ class RemoteAIClient:
                         advertised_limit = response.headers.get("x-dokky-context-limit", "")
                         if advertised_limit.isdecimal() and int(advertised_limit) >= 4096:
                             self.config["context_tokens_limit"] = min(
-                                min(CONTEXT_CEILING, 200_000) if self.config.get("provider") == "dokky" else CONTEXT_CEILING, int(advertised_limit)
+                                DOKKY_CONTEXT_LIMIT if self.config.get("provider") == "dokky" else CONTEXT_CEILING, int(advertised_limit)
                             )
                         finish_reason, done_marker = None, False
                         async for data in sse_payloads(response):
@@ -399,7 +400,7 @@ class RemoteAIClient:
                                 advertised_limit = usage.get("context_tokens_limit")
                                 if type(advertised_limit) is int and advertised_limit >= 4096:
                                     self.config["context_tokens_limit"] = min(
-                                        min(CONTEXT_CEILING, 200_000) if self.config.get("provider") == "dokky" else CONTEXT_CEILING, advertised_limit
+                                        DOKKY_CONTEXT_LIMIT if self.config.get("provider") == "dokky" else CONTEXT_CEILING, advertised_limit
                                     )
                             for choice in payload.get("choices", []):
                                 if choice.get("index", 0) != 0:

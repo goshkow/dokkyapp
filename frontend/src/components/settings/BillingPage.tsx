@@ -21,9 +21,11 @@ function UsageSummary() {
   const loading = useLimits((state) => state.loading);
   const error = useLimits((state) => state.error);
   const cached = useChat((state) => (state.usage?.dokky?.usage ?? state.coding?.last_usage?.dokky?.usage)?.cached_tokens);
+  // без данных и без загрузки (безлимит, вход не выполнен) вечный скелет только сбивает с толку
+  if (!limits && !loading && !error) return null;
   if (!limits) return <Section>
     {error ? <Row title="Не удалось загрузить использование"><button type="button" className="pref-button" onClick={() => void loadLimits()}>Повторить</button></Row>
-      : <div className="settings-loading skeleton" aria-label={loading ? 'Загрузка использования' : 'Использование пока недоступно'} />}
+      : <div className="settings-loading skeleton" aria-label="Загрузка использования" />}
   </Section>;
   return <div className="billing-usage" aria-label="Использование подписки">
     <div className="billing-limit" data-setting="Лимит разработки 5 часов">

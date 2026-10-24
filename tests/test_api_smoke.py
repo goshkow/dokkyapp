@@ -54,7 +54,7 @@ def test_create_empty_project(tmp_path, monkeypatch) -> None:
     assert response.status_code == 200
     project = response.json()
     assert project["name"] == "Demo Project"
-    assert (tmp_path / "Documents" / "Koddi Projects" / "Demo Project").exists()
+    assert (tmp_path / "Documents" / "Dokky Projects" / "Demo Project").exists()
 
 
 def test_browser_sessions_endpoint() -> None:

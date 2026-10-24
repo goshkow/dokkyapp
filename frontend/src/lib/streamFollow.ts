@@ -22,6 +22,8 @@ export interface Follower {
   stop(): void;
   /** Жест пользователя, который не прошёл через само поле (колесо над шапкой, например). */
   gesture(event?: Event): void;
+  /** Программный переход вверх (навигатор, варианты ответа): лента не возвращается к концу, пока не прокрутят вниз. */
+  release(): void;
   enabled(): boolean;
   /** Сбрасывает «начало ответа» при открытии другого чата. */
   reset(): void;
@@ -158,6 +160,11 @@ export function createFollower(options: FollowOptions): Follower {
     },
     stop,
     gesture,
+    release() {
+      // без этого кадр спустя position() видит, что лента ещё внизу, и возвращает её к концу посреди перехода
+      leaving = true;
+      gesture();
+    },
     enabled: () => enabled,
     reset() {
       manual = false;

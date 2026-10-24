@@ -5,16 +5,22 @@ from collections.abc import Callable
 
 
 CONTEXT_CEILING = 600_000
-DOKKY_CONTEXT_LIMIT = 200_000
+# потолок только от опечаток; реальное окно и порог по режимам задаёт сервер Докки
+DOKKY_CONTEXT_LIMIT = 1_000_000
+DOKKY_FALLBACK_LIMIT = 200_000
 
 
 def context_limit(config: dict) -> int:
-    limits = [DOKKY_CONTEXT_LIMIT if config.get("provider") == "dokky" else CONTEXT_CEILING]
+    dokky = config.get("provider") == "dokky"
+    limits = [DOKKY_CONTEXT_LIMIT if dokky else CONTEXT_CEILING]
     for key in ("context_tokens", "context_tokens_limit"):
         value = config.get(key)
         if type(value) is int and value >= 4096:
             limits.append(value)
-    return min(limits) if len(limits) > 1 or config.get("provider") == "dokky" else 32768
+    if dokky and len(limits) == 1:
+        # сервер окно не сообщил: берём прежнее безопасное значение
+        return DOKKY_FALLBACK_LIMIT
+    return min(limits) if len(limits) > 1 else 32768
 
 
 def context_size(messages: list[dict], tools: list[dict], *, dokky: bool = False) -> int:

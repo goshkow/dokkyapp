@@ -166,7 +166,9 @@ def _safe_project_name(name: str) -> str:
 
 
 def project_directory() -> Path:
-    return Path.home() / "Documents" / "Koddi Projects"
+    # у кого проекты уже лежат в старой папке, там и остаются
+    legacy = Path.home() / "Documents" / "Koddi Projects"
+    return legacy if legacy.is_dir() else Path.home() / "Documents" / "Dokky Projects"
 
 
 async def until_disconnect(request: Request, coroutine):
@@ -215,6 +217,9 @@ def create_app() -> FastAPI:
         scheduler = asyncio.create_task(run_scheduler(launch_automation_agent), name="automation-scheduler")
         request_queue.recover()
         await remote_control.start()
+        from koddi.updates import updater
+
+        await updater.start()
         loop = asyncio.get_running_loop()
         from koddi.browser import set_notifier
 
@@ -228,6 +233,7 @@ def create_app() -> FastAPI:
             yield
         finally:
             set_notifier(None)
+            await updater.stop()
             monitor.cancel()
             scheduler.cancel()
             await asyncio.gather(monitor, scheduler, return_exceptions=True)
@@ -242,7 +248,7 @@ def create_app() -> FastAPI:
 
             await asyncio.to_thread(browser_close_all)
 
-    app = FastAPI(title="Докки API", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Докки API", version="0.2.1", lifespan=lifespan)
     from koddi.desktop.transport import DesktopTransportGuard
 
     app.add_middleware(DesktopTransportGuard)
@@ -262,7 +268,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True, "app": "Koddi"}
+        return {"ok": True, "app": "Dokky"}
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -343,7 +349,7 @@ def create_app() -> FastAPI:
             "text_size": get_setting("text_size", 14),
             "ui_surface": get_setting("ui_surface", "classic"),
             "render_mode": _saved_render_mode(),
-            "code_font": get_setting("code_font", "Consolas"),
+            "code_font": get_setting("code_font", "system"),
             "ui_font": get_setting("ui_font", "inter"),
             "dev_instructions": get_setting("dev_instructions", ""),
             "launch_at_login": _autostart_enabled(),
@@ -1315,8 +1321,24 @@ def create_app() -> FastAPI:
             ).fetchone()
         return {"active": agent_runs.active(chat_id), "turn": dict(row) if row else None}
 
+    @app.get("/api/chats/{chat_id}/messages/{message_id}/rewind")
+    def message_rewind_preview(chat_id: int, message_id: int) -> dict:
+        from koddi.agents.rewind import preview
+
+        return preview(chat_id, message_id)
+
+    @app.post("/api/chats/{chat_id}/messages/{message_id}/rewind")
+    def message_rewind(chat_id: int, message_id: int, payload: dict) -> dict:
+        from koddi.agents.rewind import rewind
+
+        if "files" in payload and type(payload["files"]) is not bool:
+            raise HTTPException(422, "files: true или false")
+        result = rewind(chat_id, message_id, files=payload.get("files") is True)
+        return result
+
     @app.put("/api/chats/{chat_id}/messages/{message_id}")
     def message_update(chat_id: int, message_id: int, payload: dict[str, str]) -> dict:
+        require_chat(chat_id)
         with db() as conn:
             has_context = conn.execute("SELECT 1 FROM agent_history WHERE chat_id=? LIMIT 1", (chat_id,)).fetchone()
         if has_context or agent_runs.active(chat_id):
@@ -1338,6 +1360,7 @@ def create_app() -> FastAPI:
 
     @app.delete("/api/chats/{chat_id}/messages/{message_id}")
     def message_delete(chat_id: int, message_id: int) -> dict:
+        require_chat(chat_id)
         with db() as conn:
             has_context = conn.execute("SELECT 1 FROM agent_history WHERE chat_id=? LIMIT 1", (chat_id,)).fetchone()
         if has_context or agent_runs.active(chat_id):
@@ -1444,7 +1467,7 @@ def create_app() -> FastAPI:
     @app.get("/api/logs/export")
     def logs_export(limit: int = 1000) -> JSONResponse:
         return JSONResponse(
-            {"generated_by": "Koddi", "logs": list_logs(limit)},
+            {"generated_by": "Dokky", "logs": list_logs(limit)},
             headers={"Content-Disposition": "attachment; filename=koddi-logs.json"},
         )
 
@@ -1835,6 +1858,78 @@ def create_app() -> FastAPI:
     @app.get("/api/app/update-check")
     def app_update_check() -> dict:
         return update_check()
+
+    def update_failure(exc: Exception) -> HTTPException:
+        code = getattr(exc, "code", "failed")
+        return HTTPException(503 if code in {"network", "unavailable"} else 409, str(exc))
+
+    @app.get("/api/updates/status")
+    def updates_status() -> dict:
+        from koddi.updates import updater
+
+        return updater.status()
+
+    @app.post("/api/updates/check")
+    async def updates_check() -> dict:
+        from koddi.updates import UpdateError, updater
+
+        try:
+            return await updater.check(manual=True)
+        except UpdateError as exc:
+            raise update_failure(exc) from exc
+
+    @app.post("/api/updates/download")
+    async def updates_download() -> dict:
+        from koddi.updates import updater
+
+        if not updater.state.get("available"):
+            raise HTTPException(409, "Новой версии нет")
+        updater.start_download()
+        return updater.status()
+
+    @app.post("/api/updates/cancel")
+    async def updates_cancel() -> dict:
+        from koddi.updates import updater
+
+        await updater.cancel_download()
+        return updater.status()
+
+    @app.post("/api/updates/skip")
+    async def updates_skip() -> dict:
+        from koddi.updates import updater
+
+        available = updater.state.get("available")
+        if not available:
+            raise HTTPException(409, "Новой версии нет")
+        if updater.state.get("status") in {"preparing", "installing"}:
+            raise HTTPException(409, "Обновление уже готовится, дождитесь окончания")
+        updater._save(skipped=available["version"])
+        await updater.cancel_download()
+        await updater._set(status="skipped")
+        return updater.status()
+
+    @app.put("/api/updates/settings")
+    def updates_settings(payload: dict) -> dict:
+        from koddi.updates import updater
+
+        if set(payload) - {"auto_download"} or type(payload.get("auto_download", True)) is not bool:
+            raise HTTPException(422, "auto_download: true или false")
+        if "auto_download" in payload:
+            updater._save(auto_download=payload["auto_download"])
+        return updater.status()
+
+    @app.post("/api/updates/install")
+    def updates_install(payload: dict | None = None) -> dict:
+        from koddi.updates import UpdateError, updater
+
+        payload = payload or {}
+        busy = agent_runs.active_ids()
+        if busy and payload.get("force") is not True:
+            raise HTTPException(409, "Агент ещё работает. Дождитесь конца задачи или остановите её")
+        try:
+            return updater.install()
+        except UpdateError as exc:
+            raise update_failure(exc) from exc
 
     from koddi.remote.mock_server import create_mock_app
 

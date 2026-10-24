@@ -118,7 +118,21 @@
 .billing-cache p { margin-bottom: 0; }
 .settings-window .plan-tabs { box-sizing: border-box; max-width: 100%; overflow-x: auto; }
 .settings-window .plan-tabs button { flex: 1 0 auto; }
-.settings-window .plan-detail { max-width: 100%; animation: settings-plan-in 220ms var(--ease) both; }
-@keyframes settings-plan-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.settings-window .plan-stage, .settings-window .plan-foot { max-width: 100%; }
+.settings-window .plan-detail { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) { .settings-window .plan-detail { animation: none; } }
 html[data-motion="reduced"] .settings-window .plan-detail { animation: none; }
+
+/* обновления: точка у аккаунта и в списке разделов, прогресс загрузки */
+.update-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #3b82f6); box-shadow: 0 0 0 2px var(--side, var(--bg)); }
+.update-dot[data-state="downloading"], .update-dot[data-state="preparing"] { animation: update-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes update-dot-pulse { 50% { opacity: .45; } }
+.side-account { position: relative; }
+.side-account > .update-dot { position: absolute; top: 5px; left: 35px; }
+.settings-nav button .update-dot { margin-left: auto; box-shadow: none; }
+.update-progress { display: inline-flex; align-items: center; gap: 10px; min-width: 160px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.update-progress .pref-meter { flex: 1; }
+.update-error { color: var(--danger, #e5484d); }
+.pref-button .spin { animation: update-spin 1s linear infinite; }
+@keyframes update-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .update-dot, .pref-button .spin { animation: none; } }

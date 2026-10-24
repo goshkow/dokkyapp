@@ -96,7 +96,7 @@ export const defaultSettings: AppSettings = {
   text_size: 14,
   ui_surface: 'classic',
   render_mode: 'gpu',
-  code_font: 'Consolas',
+  code_font: 'system',
   ui_font: 'inter',
   dev_instructions: '',
   launch_at_login: false,

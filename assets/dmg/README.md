@@ -33,7 +33,7 @@ SHA-256 `fonts/Unbounded.ttf`:
 build_dmg_tools/venv/bin/python -m pip install -r requirements-dmg.txt
 build_dmg_tools/venv/bin/python scripts/build_macos_dmg.py \
   'dist_macos/Докки.app' \
-  --output dist_dmg/Dokky-0.2.0-macOS-arm64-design.dmg
+  --output dist_dmg/Dokky-0.2.1-macOS-arm64-design.dmg
 ```
 
 Выходной файл и JSON должны иметь новые имена: существующие артефакты не

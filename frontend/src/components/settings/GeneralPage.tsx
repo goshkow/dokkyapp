@@ -1,15 +1,30 @@
 import { useData, saveSettings } from '../../state/data';
 import type { AppSettings } from '../../lib/types';
-import { Pick, Row, Section, Segmented, TextRow, Toggle, type Say } from './parts';
+import hljs from 'highlight.js/lib/common';
+import { Pick, Row, Section, Segmented, Toggle, type Say } from './parts';
 import { glassActive, glassCapable, setGlassEnabled } from '../../lib/glass';
 import { isMac, osName } from '../../lib/platform';
+import { codeFontStack, installedCodeFonts, SYSTEM_CODE_FONT } from '../../lib/codeFonts';
 
 export const saveKey = <K extends keyof AppSettings>(key: K, convert: (value: never) => AppSettings[K] = (value) => value as AppSettings[K]) =>
   (value: unknown) => saveSettings({ [key]: convert(value as never) } as Partial<AppSettings>);
 
-const CODE_SAMPLE = `function greet(name: string) {
-  return \`Привет, \${name}!\`; // 0O 1lI
+const CODE_SAMPLE = `// 0O 1lI {} [] => !== ===
+function greet(name: string): string {
+  const count = 42;
+  return \`Привет, \${name}! Задач: \${count}\`;
 }`;
+
+// образец постоянный, а highlight.js сам экранирует текст, поэтому вставлять его как HTML безопасно
+const SAMPLE_HTML = hljs.highlight(CODE_SAMPLE, { language: 'typescript', ignoreIllegals: true }).value;
+
+/** Системный вариант, найденные в системе шрифты и сохранённый ранее, даже если его уже удалили. */
+function codeFontOptions(saved: string): Array<[string, string]> {
+  const fonts = installedCodeFonts();
+  const options: Array<[string, string]> = [[SYSTEM_CODE_FONT, 'Как в системе'], ...fonts.map((name) => [name, name] as [string, string])];
+  if (saved && saved !== SYSTEM_CODE_FONT && !fonts.includes(saved)) options.push([saved, `${saved} (не найден)`]);
+  return options;
+}
 
 export function GeneralPage({ say }: { say: Say }) {
   const settings = useData((s) => s.settings);
@@ -31,21 +46,28 @@ export function GeneralPage({ say }: { say: Say }) {
         <Pick title="Анимации" detail="Учитывается системная настройка уменьшения движения." options={[['system', 'Как в системе'], ['full', 'Включены'], ['reduced', 'Минимальные']]} value={settings.ui_motion} save={saveKey('ui_motion')} say={say} />
       </Section>
       <Section title="Код">
-        <TextRow
+        <Pick
           title="Шрифт кода"
-          detail={`Моноширинный шрифт для кода и терминала. Название должно совпадать с установленным в системе.`}
-          value={settings.code_font}
-          placeholder="напр. JetBrains Mono"
+          detail="Для блоков кода, изменений в файлах и терминала. В списке только шрифты, установленные на этом компьютере."
+          options={codeFontOptions(settings.code_font)}
+          value={settings.code_font || SYSTEM_CODE_FONT}
+          optionStyle={(name) => ({ fontFamily: codeFontStack(name) })}
           save={saveKey('code_font')}
           say={say}
-          width={220}
         />
         <Row title="Предпросмотр" stack>
-          <pre className="pref-preview" aria-label="Образец шрифта кода"><code>{CODE_SAMPLE}</code></pre>
+          <pre className="pref-preview" aria-label="Образец шрифта кода"><code dangerouslySetInnerHTML={{ __html: SAMPLE_HTML }} /></pre>
         </Row>
       </Section>
       <Section title="Ввод">
-        <Toggle title="Отправка по Enter" detail={`Shift+Enter добавляет строку. При отключении сообщение отправляется по ${isMac() ? "⌘Enter" : "Ctrl+Enter"}.`} checked={settings.enter_sends !== false} save={saveKey('enter_sends')} say={say} />
+        <Segmented
+          title="Отправка сообщения"
+          detail={settings.enter_sends !== false ? 'Shift+Enter переносит строку.' : 'Enter и Shift+Enter переносят строку.'}
+          options={[['enter', 'Enter'], ['mod', isMac() ? '⌘Enter' : 'Ctrl+Enter']]}
+          value={settings.enter_sends !== false ? 'enter' : 'mod'}
+          save={saveKey('enter_sends', (value: string) => value === 'enter')}
+          say={say}
+        />
       </Section>
     </>
   );

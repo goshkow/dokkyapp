@@ -1,10 +1,12 @@
-import { Download, Eraser, RotateCcw } from 'lucide-react';
+import { Download, Eraser, RefreshCw, RotateCcw } from 'lucide-react';
 import { isMac, isWindows } from '../../lib/platform';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { cacheClear } from '../../lib/cache';
 import { openExternal, SITE } from '../../lib/external';
 import { saveSettings, useData } from '../../state/data';
+import { openSettings } from '../../state/settingsUi';
+import { hasUpdate, useUpdates } from '../../state/updates';
 import { confirmDialog, guarded } from '../../state/overlay';
 import { saveKey } from './GeneralPage';
 import { Action, Pick, Row, Section, Toggle, type Say } from './parts';
@@ -17,7 +19,7 @@ function useBuild(): string {
   return build;
 }
 
-const APPEARANCE_DEFAULTS = { theme: 'dark', ui_surface: 'classic', ui_font: 'inter', text_size: 14, chat_width: 'standard', ui_motion: 'system', code_font: 'Consolas' } as const;
+const APPEARANCE_DEFAULTS = { theme: 'dark', ui_surface: 'classic', ui_font: 'inter', text_size: 14, chat_width: 'standard', ui_motion: 'system', code_font: 'system' } as const;
 
 export function SystemPage({ say }: { say: Say }) {
   const settings = useData((s) => s.settings);
@@ -69,7 +71,7 @@ export function SystemPage({ say }: { say: Say }) {
         />
       </Section>
       <Section title="Сборка">
-        <Row title="Номер сборки"><span className="pref-value">{build || '…'}</span></Row>
+        <Row title="Версия"><span className="pref-value">{build || '…'}</span></Row>
       </Section>
     </>
   );
@@ -114,12 +116,17 @@ export function OpenSourceLicenses() {
 
 export function AboutPage() {
   const build = useBuild();
+  const update = useUpdates((state) => state);
+  const line = update?.status === 'ready' ? `Версия ${update.available?.version} готова к установке`
+    : update && hasUpdate(update) ? `Доступна версия ${update.available?.version}`
+    : update?.status === 'up_to_date' ? 'Установлена последняя версия' : 'Проверка, скачивание и установка новых версий.';
   return (
     <>
       <Section title="Докки">
         <Row title="Приложение для Windows и macOS" detail="Чаты, поиск и разработка с Докки на вашем компьютере.">
-          <span className="pref-value">Сборка {build || '…'}</span>
+          <span className="pref-value">Версия {build || '…'}</span>
         </Row>
+        <Action title="Обновления" detail={line} label="Открыть" icon={<RefreshCw aria-hidden="true" />} onClick={() => openSettings('updates')} />
         <Action title="Сайт Докки" detail="Аккаунт, подписка, правила использования и помощь." label="Открыть сайт" onClick={() => openExternal(SITE)} />
       </Section>
       <OpenSourceLicenses />

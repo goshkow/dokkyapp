@@ -11,10 +11,10 @@ import {
   chat, ctl, currentChatId, hooks, isDevelopment, pinFeed, resetChat, selectedLocalModel, setRunning, setStatus, stale,
 } from './chatCore';
 import { cloudCursor, applyMessages, clearStreamState, consume } from './chatStream';
-import type { PlanSnapshot } from './chatTypes';
+import type { Attachment, PlanSnapshot } from './chatTypes';
 import type { Change } from './chatTypes';
 import { loadCodingSession, resetCodingRequests } from './codingSession';
-import { attachmentsReady, clearAttachments, composer, draftContent, releaseAttachments, type AgentMode } from './composer';
+import { attachmentsReady, clearAttachments, composer, draftContent, focusComposer, releaseAttachments, type AgentMode } from './composer';
 import { beginProgress, bindProgress, clearProgress, finishProgress, progress } from './cloudProgress';
 import { data, isReady, login, revoke, saveSettings, setScope } from './data';
 import { clearBodies } from './stream';
@@ -172,6 +172,8 @@ export async function syncLocal(): Promise<void> {
   setChanges(changes);
   setRunning(turn.active);
   if (!turn.active) chat.set({ optimistic: null });
+  // ход мог начаться без подключённого потока (очередь, телефон): карточка подтверждения не должна теряться
+  if (turn.active || chat.get().requests.length) await showRequests();
   await loadCodingSession(current.id, version);
   await refreshQueue();
 }
@@ -605,19 +607,56 @@ export const reloadChat = (): void => {
 };
 
 /* сообщения */
-export async function editMessage(item: Message): Promise<void> {
-  if (chat.get().running) return notify('Сначала остановите выполнение');
+interface RewindResult { content: string; attachments: Attachment[]; files_rolled_back: number; files_failed: number }
+
+/** Правка в разработке, как в Claude Code: чат откатывается к сообщению, а его текст возвращается в поле ввода. */
+async function rewindToMessage(item: Message): Promise<void> {
   const chatId = currentChatId();
   const version = view.get().version;
+  if (chatId == null) return;
+  const base = `/api/chats/${chatId}/messages/${item.id}/rewind`;
+  const preview = await api<{ messages_after: number; file_changes: number }>(base);
+  const later = preview.messages_after ? ' Это сообщение и всё, что после него, удалятся из чата.' : ' Сообщение удалится из чата.';
+  let files = false;
+  if (preview.file_changes) {
+    const choice = await choiceDialog(
+      'Изменить сообщение?',
+      `Чат вернётся к моменту, когда вы его отправили.${later} Текст появится в поле ввода, его можно поправить и отправить заново.\n\nПосле этого сообщения агент менял файлы проекта. Их можно оставить как есть или вернуть к прежнему виду.`,
+      'Откатить только чат',
+      'Откатить чат и файлы',
+    );
+    if (choice === null) return;
+    files = choice === 'alternative';
+  } else if (!(await confirmDialog(
+    'Изменить сообщение?',
+    `Чат вернётся к моменту, когда вы его отправили.${later} Текст появится в поле ввода, его можно поправить и отправить заново.`,
+    'Изменить',
+  ))) return;
+  if (stale(version, chatId) || chat.get().running) return notify('Чат изменился. Откройте нужное сообщение заново');
+  const result = await post<RewindResult>(base, { files });
+  if (stale(version, chatId)) return;
+  const draft = composer.get();
+  const kept = draft.attachments.filter((value) => !result.attachments.some((next) => String(next.id) === String(value.id)));
+  composer.set({ text: result.content, attachments: [...kept, ...result.attachments] });
+  await syncChat();
+  focusComposer();
+  if (result.files_failed) notify(`Не удалось вернуть часть файлов (${result.files_failed}). Проверьте изменения проекта`, true);
+  else if (result.files_rolled_back) notify('Чат и файлы возвращены к этому сообщению');
+}
+
+export async function editMessage(item: Message): Promise<void> {
+  if (chat.get().running) return notify('Сначала остановите выполнение');
   const scope = ui.get().scope;
+  if (scope === 'development') return rewindToMessage(item);
+  const chatId = currentChatId();
+  const version = view.get().version;
   const value = await inputDialog('Изменить сообщение', [{ name: 'content', label: 'Сообщение', type: 'textarea', value: item.content, required: true }]);
   if (!value) return;
   if (stale(version, chatId) || ui.get().scope !== scope) return notify('Чат изменился. Откройте нужное сообщение заново');
-  const cloud = scope !== 'development';
-  const path = `${cloud ? cloudPath(`chats/${encodeURIComponent(String(chatId))}`) : `/api/chats/${chatId}`}/messages/${item.id}`;
+  const path = `${cloudPath(`chats/${encodeURIComponent(String(chatId))}`)}/messages/${item.id}`;
   await api(path, {
-    method: cloud ? 'PATCH' : 'PUT',
-    body: JSON.stringify({ ...value, ...(cloud && item.version ? { expected_version: item.version } : {}) }),
+    method: 'PATCH',
+    body: JSON.stringify({ ...value, ...(item.version ? { expected_version: item.version } : {}) }),
   });
   if (!stale(version, chatId)) await syncChat();
 }

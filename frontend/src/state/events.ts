@@ -3,11 +3,12 @@
 import { onBrowserSession } from './browser';
 import { attachLocal, syncLocal } from './chat';
 import { showRequests } from './chatAgent';
-import { ctl, currentChatId, isDevelopment } from './chatCore';
+import { chat, ctl, currentChatId, isDevelopment } from './chatCore';
 import { data, loadCloud, loadLocal, revoke } from './data';
 import { loadLimits } from './limits';
 import { refreshRemote } from './remoteControl';
 import { ui } from './ui';
+import { announceReady, applyUpdateState, loadUpdates } from './updates';
 
 let source: EventSource | null = null;
 let timer = 0;
@@ -67,10 +68,24 @@ function listen(): void {
   // новый чат с телефона появляется в списке сразу
   source.addEventListener('remote.chats', () => { void loadLocal(false).catch(() => undefined); refreshRemote(); });
   source.addEventListener('remote.status', refreshRemote);
+  // агент ждёт ответа: карточка появляется, даже если окно не читает поток этого хода (очередь, переподключение)
+  source.addEventListener('agent.request.created', (event) => {
+    const chatId = chatOf(event);
+    if (chatId === null || !isDevelopment() || String(currentChatId()) !== String(chatId)) return;
+    void showRequests().catch(() => undefined);
+    if (!ctl.stream) void remoteTurn(event).catch(() => undefined);
+  });
   // на запрос агента ответили с телефона: карточка в открытом чате закрывается
   source.addEventListener('agent.request.resolved', (event) => {
     const chatId = chatOf(event);
     if (chatId !== null && isDevelopment() && String(currentChatId()) === String(chatId)) void showRequests().catch(() => undefined);
+  });
+  // обновление приложения: состояние для настроек и точки у аккаунта
+  source.addEventListener('update.state', (event) => {
+    try { applyUpdateState(JSON.parse((event as MessageEvent<string>).data)); } catch { /* повреждённое событие */ }
+  });
+  source.addEventListener('update.ready', (event) => {
+    try { announceReady(String((JSON.parse((event as MessageEvent<string>).data) as { version?: unknown }).version ?? '')); } catch { /* повреждённое событие */ }
   });
   // оплата или смена плана на сайте приходят событиями аккаунта: лимиты и план перечитываются почти сразу
   for (const kind of ['dokky.quota.updated', 'dokky.profile.updated']) source.addEventListener(kind, refreshLimits);
@@ -81,9 +96,15 @@ export function startEvents(): void {
   if (started) return;
   started = true;
   refreshRemote();
+  void loadUpdates().catch(() => undefined);
   document.addEventListener('visibilitychange', () => sweep());
   window.addEventListener('focus', () => sweep());
   window.setInterval(() => sweep(true), 60_000);
+  // страховка: если событие о запросе потерялось (сон, обрыв шины), карточка всё равно появится
+  window.setInterval(() => {
+    if (document.visibilityState !== 'visible' || !isDevelopment() || !chat.get().running || chat.get().requests.length) return;
+    void showRequests().catch(() => undefined);
+  }, 4000);
   window.addEventListener('beforeunload', () => source?.close(), { once: true });
 }
 

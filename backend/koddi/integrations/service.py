@@ -69,8 +69,16 @@ def terminal_open(workspace: str | None = None) -> dict:
         proc = subprocess.run(["open", "-a", "Terminal", cwd], capture_output=True, text=True, timeout=10, check=False)
         return {"ok": proc.returncode == 0, "cwd": cwd, **({} if proc.returncode == 0 else {"error": proc.stderr.strip()})}
     if os.name == "nt":
-        subprocess.Popen(["wt", "-d", cwd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return {"ok": True, "cwd": cwd}
+        from koddi.hidden_process import CREATE_NEW_CONSOLE
+
+        # терминал - единственное окно, которое человек просил открыть явно
+        for terminal in (["wt", "-d", cwd], ["cmd", "/K", "cd", "/d", cwd]):
+            try:
+                subprocess.Popen(terminal, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CREATE_NEW_CONSOLE)
+                return {"ok": True, "cwd": cwd}
+            except OSError:
+                continue
+        return {"ok": False, "cwd": cwd, "error": "терминал не найден"}
     for terminal in (["x-terminal-emulator"], ["gnome-terminal", f"--working-directory={cwd}"], ["konsole", "--workdir", cwd]):
         try:
             subprocess.Popen(terminal, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

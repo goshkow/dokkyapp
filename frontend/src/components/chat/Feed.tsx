@@ -46,7 +46,7 @@ function useFeedScroll(node: React.RefObject<HTMLElement | null>) {
     registerFeed({
       follow: () => instance.update(),
       pin: () => instance.bottom(),
-      release: () => instance.gesture(),
+      release: () => instance.release(),
       following: () => instance.enabled(),
     });
     // колесо над шапкой, полем ввода и полосой перетаскивания листает чат, как под прозрачным краем

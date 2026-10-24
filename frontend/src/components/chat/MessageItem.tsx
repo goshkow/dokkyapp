@@ -1,6 +1,6 @@
 import { MessageBlocks, type Block } from './MessageBlocks';
-import { ChevronLeft, ChevronRight, Copy, Pencil, Smartphone } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, Copy, Pencil, Smartphone } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { copyText } from '../../lib/clipboard';
 import { attachCitations } from '../../lib/citations';
 import type { CloudFile } from '../../lib/cloud';
@@ -23,6 +23,12 @@ interface Variant {
 }
 
 function Actions({ message, editable, variant }: { message: Message; editable: boolean; variant?: Variant }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   const select = (index: number) => {
     if (!variant) return;
     releaseFeed();
@@ -37,9 +43,9 @@ function Actions({ message, editable, variant }: { message: Message; editable: b
           <button type="button" className="icon-button" title="Следующий вариант" aria-label="Следующий вариант" disabled={variant.index === variant.ids.length - 1} onClick={() => select(variant.index + 1)}><ChevronRight aria-hidden="true" /></button>
         </span>
       )}
-      <button type="button" className="icon-button" title="Скопировать сообщение" aria-label="Скопировать сообщение" onClick={(event) => void copyText(message.content, event, 'Сообщение скопировано')}>
-        <Copy aria-hidden="true" />
-        {message.role !== 'user' && <span className="copy-label">Скопировать</span>}
+      <button type="button" className="icon-button" data-copied={copied || undefined} title="Скопировать сообщение" aria-label={copied ? 'Скопировано' : 'Скопировать сообщение'} onClick={(event) => void copyText(message.content, event, 'Сообщение скопировано').then(setCopied)}>
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {message.role !== 'user' && <span className="copy-label">{copied ? 'Скопировано' : 'Скопировать'}</span>}
       </button>
       {message.role === 'user' && editable && (
         <button type="button" className="icon-button" title="Изменить сообщение" aria-label="Изменить сообщение" onClick={guarded(() => editMessage(message))}>

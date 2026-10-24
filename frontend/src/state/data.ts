@@ -89,7 +89,7 @@ export function applySettings(settings: AppSettings, first = false): void {
     surface: settings.ui_surface === 'side-dark' || settings.ui_surface === 'chat-dark' ? settings.ui_surface : 'classic',
     baseSize: settings.text_size || 14,
     uiFont: settings.ui_font === 'system' ? 'system' : 'inter',
-    codeFont: settings.code_font || 'Consolas',
+    codeFont: settings.code_font || 'system',
     motion: reduced ? 'reduced' : 'full',
     chatWidth: settings.chat_width ?? 'standard',
   });

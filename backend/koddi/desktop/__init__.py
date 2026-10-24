@@ -1,4 +1,4 @@
-"""Настольная оболочка Koddi на Python."""
+"""Настольная оболочка Докки на Python."""
 
 from __future__ import annotations
 
