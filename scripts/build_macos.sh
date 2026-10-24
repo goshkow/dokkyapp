@@ -48,6 +48,8 @@ rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_h
 
 "$PYTHON" scripts/build_computer_helper.py
 
+# pygments и numpy тянутся только из консольной утилиты httpx и необязательных импортов PIL и pytesseract,
+# а это пятая часть всего C-кода; LTO на скомпилированном Python почти ничего не даёт, а линковку тормозит
 "$PYTHON" -m nuitka \
   --standalone \
   --macos-create-app-bundle \
@@ -62,7 +64,11 @@ rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_h
   --jobs="$JOBS" \
   --output-dir="$OUT" \
   --output-filename=DokkyApp \
+  --lto=no \
   --include-package=koddi \
+  --nofollow-import-to=httpx._main \
+  --nofollow-import-to=pygments \
+  --nofollow-import-to=numpy \
   --include-package-data=certifi \
   --include-module=_socket \
   --include-module=_ssl \
