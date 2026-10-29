@@ -1723,7 +1723,48 @@ def scenario_chat_without_project():
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
+def scenario_update_notice():
+    for status in ("available", "downloading", "ready", "error"):
+        api = development_api()
+        state = {"status": status, "current": "0.2.2", "platform": "windows-x86_64", "kind": "setup", "method": "setup", "auto_download": False, "error": "Ошибка загрузки" if status == "error" else "", "available": {"version": "0.2.3", "name": "Dokky-0.2.3-Windows-x64-Setup.exe", "size": 100}, "progress": {"done": 50, "total": 100} if status == "downloading" else None}
+        api.extra["/api/updates/status"] = lambda m, p, b, q: state
+        api.extra["/api/updates/download"] = lambda m, p, b, q: {**state, "status": "downloading", "progress": {"done": 50, "total": 100}}
+        api.extra["/api/updates/install"] = lambda m, p, b, q: {"ok": True}
+        with browser_page(api, viewport=(1280, 700)) as page:
+            notice = page.locator(".side-update")
+            notice.wait_for()
+            check(notice.is_visible(), f"карточка не видна: {status}")
+            check(not page.evaluate("document.documentElement.scrollWidth > innerWidth"), f"горизонтальная прокрутка: {status}")
+            if status == "downloading":
+                check(notice.get_by_role("progressbar").get_attribute("aria-valuenow") == "50", "прогресс загрузки")
+            elif status == "ready":
+                notice.get_by_role("button", name="Перезапустить").click()
+                check(any(call[1] == "/api/updates/install" for call in api.calls), "запрос установки")
+            else:
+                notice.get_by_role("button").click()
+                check(notice.get_by_role("progressbar").get_attribute("aria-valuenow") == "50", f"запуск загрузки: {status}")
+            check(not page.errors, f"ошибки карточки: {page.errors}")
+
+
+def scenario_update_busy_agent():
+    api = development_api()
+    state = {"status": "ready", "current": "0.2.2", "platform": "windows-x86_64", "kind": "setup", "method": "setup", "auto_download": False, "error": "", "available": {"version": "0.2.3", "name": "Dokky-0.2.3-Windows-x64-Setup.exe", "size": 100}, "progress": None}
+    api.extra["/api/updates/status"] = lambda m, p, b, q: state
+    api.extra["/api/updates/install"] = lambda m, p, b, q: (409, {"detail": "Агент ещё работает"}) if not (b or {}).get("force") else {"ok": True}
+    with browser_page(api) as page:
+        page.locator(".side-update").get_by_role("button", name="Перезапустить").click()
+        dialog = page.get_by_role("dialog")
+        dialog.wait_for()
+        check("Агент ещё работает" in dialog.inner_text(), "нет предупреждения о работающем агенте")
+        dialog.get_by_role("button", name="Перезапустить").click()
+        page.wait_for_timeout(200)
+        calls = [call for call in api.calls if call[1] == "/api/updates/install"]
+        check(len(calls) == 2 and (calls[1][2] or {}).get("force") is True, f"подтверждение перезапуска: {calls}")
+        check(not page.errors, f"ошибки перезапуска: {page.errors}")
+
+
 SCENARIOS = [
+    scenario_update_notice, scenario_update_busy_agent,
     scenario_boot_and_open, scenario_send_stream, scenario_requests_queue_plan, scenario_permission_modes, scenario_inspector, scenario_project_map, scenario_quality_card,
     scenario_settings_pages_library, scenario_cloud, scenario_cloud_send, scenario_search, scenario_attachments_and_mode,
     scenario_live_stream, scenario_shell_stability, scenario_audit_items,

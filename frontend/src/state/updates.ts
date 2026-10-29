@@ -1,7 +1,7 @@
 /* Автообновление: состояние приходит с локального сервера (`/api/updates/*`) и событиями `update.state`. */
-import { api, post } from '../lib/api';
+import { ApiError, api, post } from '../lib/api';
 import { createStore, useStore } from '../lib/store';
-import { notify } from './overlay';
+import { confirmDialog, notify } from './overlay';
 
 export type UpdateStatus = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'skipped' | 'downloading' | 'preparing' | 'ready' | 'installing' | 'error';
 export type UpdateMethod = 'bundle' | 'portable' | 'setup' | 'setup_elevated' | 'manual' | 'move_to_applications' | 'dev' | 'unsupported';
@@ -71,4 +71,15 @@ export function announceReady(version: string): void {
   if (!version || announced === version) return;
   announced = version;
   notify(`Обновление ${version} готово. Перезапустите Докки в настройках, раздел «Обновления»`);
+}
+
+export async function restartForUpdate(): Promise<void> {
+  try {
+    await installUpdate();
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 409 || !/Агент/.test(error.message)) throw error;
+    if (!(await confirmDialog('Агент ещё работает', 'Перезапуск остановит текущую задачу. Сделанное сохранится, задачу можно будет продолжить после обновления.', 'Перезапустить'))) return;
+    await installUpdate(true);
+  }
+  notify('Докки перезапустится через пару секунд');
 }

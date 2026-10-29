@@ -18,7 +18,7 @@ const katexWoff2Only: Plugin = {
   },
 };
 
-// Сборка складывается рядом со старым интерфейсом: `KODDI_UI=next` включает её в приложении.
+// Собранный интерфейс используется приложением из каталога web-next.
 export default defineConfig({
   base: '/ui/',
   plugins: [react(), katexWoff2Only],

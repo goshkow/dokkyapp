@@ -88,7 +88,6 @@ if ($Compiler -eq "msvc") {
   --include-data-dir=backend/koddi/licenses=koddi/licenses `
   --include-data-dir=prompts=prompts `
   --include-data-dir=locales=locales `
-  --include-data-dir=backend/koddi/desktop/web=koddi/desktop/web `
   --include-data-dir=backend/koddi/desktop/web-next=koddi/desktop/web-next `
   --include-data-dir=backend/koddi/storage/migrations=koddi/storage/migrations `
   backend/koddi/desktop/web_host.py

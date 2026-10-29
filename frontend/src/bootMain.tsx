@@ -17,13 +17,14 @@ import { limitsStore } from './state/limits';
 import { plansStore } from './state/plans';
 import './state/remote';
 import { nav, view } from './state/view';
+import { updates } from './state/updates';
 import { chat } from './state/chatCore';
 import { startFieldMirror } from './state/field';
 import { startSiteField } from './state/siteField';
 import { applyAppearance, ui } from './state/ui';
 
 // плитки Liquid Glass (виды sidebar) показывают зеркало этого состояния
-for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav]] as const) exposeStore(name, store as never);
+for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav], ['updates', updates]] as const) exposeStore(name, store as never);
 // правой панели из состояния чата нужны план, изменения, выбранное изменение, сессия и расход
 exposeStore('chat', chat, ['plan', 'changes', 'changeSelection', 'coding', 'usage', 'running', 'stopping']);
 startFieldMirror();

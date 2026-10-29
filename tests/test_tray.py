@@ -10,7 +10,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QPushButton, QWidgetAction
 
 from koddi import __version__
-from koddi.desktop import native_web, tray, web_host
+from koddi.desktop import tray, web_host
 
 NOW = 1_800_000_000.0
 
@@ -170,6 +170,12 @@ def test_bridge_accepts_only_main_local_page():
         assert foreign == []
     bridge.host.tray = None
     web_host.WindowBridge.tray(bridge, payload())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="нативный мост есть только на macOS")
+def test_mac_bridge_exposes_tray():
+    from koddi.desktop import native_web
+
     assert "tray" in native_web.BRIDGE_METHODS
 
 

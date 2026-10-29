@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "platform": "darwin",
+  "platform": "win32",
   "components": [
     {
       "id": "dokky-notices",
@@ -48,7 +48,7 @@
           "id": "cb222618f12c0be9",
           "name": "OFL-Unbounded.txt",
           "path": "notices/font-unbounded/cb222618f12c0be9.txt",
-          "sha256": "674822569b1e8d69cc3f1c96d8e88a938d5226bd61104fb57c15149892148c00"
+          "sha256": "285e814678d11c680797f628f2c4ad468f081cbe5e642b79b50ac13394d6fc51"
         }
       ],
       "status": "notice_collected"
@@ -90,9 +90,9 @@
     {
       "id": "npm-dompurify",
       "name": "dompurify",
-      "version": "3.4.16",
+      "version": "3.4.17",
       "license": "(MPL-2.0 OR Apache-2.0)",
-      "source": "https://www.npmjs.com/package/dompurify/v/3.4.16",
+      "source": "https://www.npmjs.com/package/dompurify/v/3.4.17",
       "usage": "frontend_runtime",
       "notices": [
         {
@@ -249,15 +249,15 @@
     {
       "id": "py-annotated-doc",
       "name": "annotated-doc",
-      "version": "0.0.5",
+      "version": "0.0.4",
       "license": "MIT",
-      "source": "https://pypi.org/project/annotated-doc/0.0.5/",
+      "source": "https://pypi.org/project/annotated-doc/0.0.4/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "ee27fe4541b5ea35",
+          "id": "49ab5a950b346d4c",
           "name": "LICENSE",
-          "path": "notices/py-annotated-doc/ee27fe4541b5ea35.txt",
+          "path": "notices/py-annotated-doc/49ab5a950b346d4c.txt",
           "sha256": "fff170779a6acbf65abdb405c087f1cee1786691e4a96a4034517e4a504a0cdf"
         }
       ],
@@ -266,15 +266,15 @@
     {
       "id": "py-annotated-types",
       "name": "annotated-types",
-      "version": "0.8.0",
-      "license": "MIT",
-      "source": "https://pypi.org/project/annotated-types/0.8.0/",
+      "version": "0.7.0",
+      "license": "OSI Approved :: MIT License",
+      "source": "https://pypi.org/project/annotated-types/0.7.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "289bfef3a422b5d7",
+          "id": "a2cdc108dff17b08",
           "name": "LICENSE",
-          "path": "notices/py-annotated-types/289bfef3a422b5d7.txt",
+          "path": "notices/py-annotated-types/a2cdc108dff17b08.txt",
           "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d"
         }
       ],
@@ -283,15 +283,15 @@
     {
       "id": "py-anyio",
       "name": "anyio",
-      "version": "4.15.1",
+      "version": "4.14.2",
       "license": "MIT",
-      "source": "https://pypi.org/project/anyio/4.15.1/",
+      "source": "https://pypi.org/project/anyio/4.14.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "320fb46da982dd20",
+          "id": "9ef47b44f26fc01b",
           "name": "LICENSE",
-          "path": "notices/py-anyio/320fb46da982dd20.txt",
+          "path": "notices/py-anyio/9ef47b44f26fc01b.txt",
           "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0"
         }
       ],
@@ -310,23 +310,6 @@
           "name": "LICENSE",
           "path": "notices/py-attrs/0d26a74c4cd409f1.txt",
           "sha256": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-backports-tarfile",
-      "name": "backports.tarfile",
-      "version": "1.2.0",
-      "license": "OSI Approved :: MIT License",
-      "source": "https://pypi.org/project/backports-tarfile/1.2.0/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "a06af90415b88a5e",
-          "name": "LICENSE",
-          "path": "notices/py-backports-tarfile/a06af90415b88a5e.txt",
-          "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741"
         }
       ],
       "status": "notice_collected"
@@ -351,15 +334,15 @@
     {
       "id": "py-certifi",
       "name": "certifi",
-      "version": "2026.10.18",
+      "version": "2026.10.23",
       "license": "MPL-2.0",
-      "source": "https://pypi.org/project/certifi/2026.10.18/",
+      "source": "https://pypi.org/project/certifi/2026.10.23/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "262db11ef1735925",
+          "id": "4473d41c5e511ca3",
           "name": "LICENSE",
-          "path": "notices/py-certifi/262db11ef1735925.txt",
+          "path": "notices/py-certifi/4473d41c5e511ca3.txt",
           "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
         }
       ],
@@ -368,15 +351,15 @@
     {
       "id": "py-cffi",
       "name": "cffi",
-      "version": "2.1.1",
+      "version": "2.1.0",
       "license": "MIT-0",
-      "source": "https://pypi.org/project/cffi/2.1.1/",
+      "source": "https://pypi.org/project/cffi/2.1.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "2e2d841f3829cb8c",
+          "id": "1d6f9106fb93f3c3",
           "name": "LICENSE",
-          "path": "notices/py-cffi/2e2d841f3829cb8c.txt",
+          "path": "notices/py-cffi/1d6f9106fb93f3c3.txt",
           "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63"
         }
       ],
@@ -385,16 +368,33 @@
     {
       "id": "py-click",
       "name": "click",
-      "version": "8.5.0",
+      "version": "8.4.2",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/click/8.5.0/",
+      "source": "https://pypi.org/project/click/8.4.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "1c294ee0ed0fe5a4",
+          "id": "ade461900a5b9f5e",
           "name": "LICENSE.txt",
-          "path": "notices/py-click/1c294ee0ed0fe5a4.txt",
+          "path": "notices/py-click/ade461900a5b9f5e.txt",
           "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+        }
+      ],
+      "status": "notice_collected"
+    },
+    {
+      "id": "py-colorama",
+      "name": "colorama",
+      "version": "0.4.6",
+      "license": "OSI Approved :: BSD License",
+      "source": "https://pypi.org/project/colorama/0.4.6/",
+      "usage": "python_runtime",
+      "notices": [
+        {
+          "id": "9cbd6b2bcad1331c",
+          "name": "LICENSE.txt",
+          "path": "notices/py-colorama/9cbd6b2bcad1331c.txt",
+          "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318"
         }
       ],
       "status": "notice_collected"
@@ -402,27 +402,27 @@
     {
       "id": "py-cryptography",
       "name": "cryptography",
-      "version": "50.0.2",
+      "version": "50.0.0",
       "license": "Apache-2.0 OR BSD-3-Clause",
-      "source": "https://pypi.org/project/cryptography/50.0.2/",
+      "source": "https://pypi.org/project/cryptography/50.0.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "8e9b59db150b8b29",
+          "id": "6d80562f27a61f96",
           "name": "LICENSE",
-          "path": "notices/py-cryptography/8e9b59db150b8b29.txt",
+          "path": "notices/py-cryptography/6d80562f27a61f96.txt",
           "sha256": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb"
         },
         {
-          "id": "22cdd958c280cb3f",
+          "id": "8e2b6c34e55b1e19",
           "name": "LICENSE.APACHE",
-          "path": "notices/py-cryptography/22cdd958c280cb3f.txt",
+          "path": "notices/py-cryptography/8e2b6c34e55b1e19.txt",
           "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe"
         },
         {
-          "id": "33a7c36a4f64f214",
+          "id": "6c9eca34ce4b1c11",
           "name": "LICENSE.BSD",
-          "path": "notices/py-cryptography/33a7c36a4f64f214.txt",
+          "path": "notices/py-cryptography/6c9eca34ce4b1c11.txt",
           "sha256": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb"
         }
       ],
@@ -454,15 +454,15 @@
     {
       "id": "py-fastapi",
       "name": "fastapi",
-      "version": "0.146.0",
+      "version": "0.139.0",
       "license": "MIT",
-      "source": "https://pypi.org/project/fastapi/0.146.0/",
+      "source": "https://pypi.org/project/fastapi/0.139.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "310058f61255ffe8",
+          "id": "d0d3955458575ef8",
           "name": "LICENSE",
-          "path": "notices/py-fastapi/310058f61255ffe8.txt",
+          "path": "notices/py-fastapi/d0d3955458575ef8.txt",
           "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e"
         }
       ],
@@ -471,22 +471,22 @@
     {
       "id": "py-greenlet",
       "name": "greenlet",
-      "version": "3.5.6",
+      "version": "3.5.3",
       "license": "MIT AND PSF-2.0",
-      "source": "https://pypi.org/project/greenlet/3.5.6/",
+      "source": "https://pypi.org/project/greenlet/3.5.3/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "bf5d6db456507d2b",
+          "id": "5f23aa1a10293633",
           "name": "LICENSE",
-          "path": "notices/py-greenlet/bf5d6db456507d2b.txt",
-          "sha256": "769831d6e5dfaf2c20802faccff1fafb4c2025dd8f6253dfa47fcad59d4d0979"
+          "path": "notices/py-greenlet/5f23aa1a10293633.txt",
+          "sha256": "ab977b654605670319509481ece49198f405a129372ac38c96f51cd96c2f452e"
         },
         {
-          "id": "765ed4780b223d7b",
+          "id": "5d9fbfb42908f511",
           "name": "LICENSE.PSF",
-          "path": "notices/py-greenlet/765ed4780b223d7b.txt",
-          "sha256": "e5ff3c23c110e494cd7d736c10fd96d462457bafeca310840db6527298c7d46b"
+          "path": "notices/py-greenlet/5d9fbfb42908f511.txt",
+          "sha256": "69efa689cc7aec7736236d3039c1d665e4b0c734a5bfea5abf633023abb2fff4"
         }
       ],
       "status": "notice_collected"
@@ -528,28 +528,28 @@
     {
       "id": "py-httptools",
       "name": "httptools",
-      "version": "0.9.0",
+      "version": "0.8.0",
       "license": "MIT",
-      "source": "https://pypi.org/project/httptools/0.9.0/",
+      "source": "https://pypi.org/project/httptools/0.8.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "063f75078c0c27db",
+          "id": "fff8c15577475d31",
           "name": "LICENSE",
-          "path": "notices/py-httptools/063f75078c0c27db.txt",
-          "sha256": "f4573e7cb7676745fb5b8d36fa548aa93e391cfb6872ddacd65130c45ea6a92d"
+          "path": "notices/py-httptools/fff8c15577475d31.txt",
+          "sha256": "1c028b059d7a58e14ccda38cabced698c591fe614ffbe4f721430446e86c8d69"
         },
         {
-          "id": "c88b21c07812e485",
+          "id": "bbe5e134da46488d",
           "name": "LICENSE-MIT",
-          "path": "notices/py-httptools/c88b21c07812e485.txt",
-          "sha256": "79e6ba8b687cb54786207342b9b6fcee0ac10218453ed9009b84d949b2233cc0"
+          "path": "notices/py-httptools/bbe5e134da46488d.txt",
+          "sha256": "5cd1b682c0ccbac0cb31b86a9a1104c3e2e7b1377a282b8169d2694b400db7c2"
         },
         {
-          "id": "6fb1388ae5aa0a9d",
+          "id": "d426ae529d1fd67d",
           "name": "LICENSE",
-          "path": "notices/py-httptools/6fb1388ae5aa0a9d.txt",
-          "sha256": "628168d68bb5a8a17e0bbefb3bd74e326e1edc20583d76f52f457c82c921867d"
+          "path": "notices/py-httptools/d426ae529d1fd67d.txt",
+          "sha256": "279012e02a10acfd59a3f2d8f13a497332535d871c2b27c89988985b06a3a438"
         }
       ],
       "status": "notice_collected"
@@ -591,84 +591,16 @@
     {
       "id": "py-idna",
       "name": "idna",
-      "version": "3.20",
+      "version": "3.18",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/idna/3.20/",
+      "source": "https://pypi.org/project/idna/3.18/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "d91c8e1dcc4f21a2",
+          "id": "658ecc06ed0c0e26",
           "name": "LICENSE.md",
-          "path": "notices/py-idna/d91c8e1dcc4f21a2.txt",
+          "path": "notices/py-idna/658ecc06ed0c0e26.txt",
           "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-importlib-metadata",
-      "name": "importlib_metadata",
-      "version": "9.0.1",
-      "license": "Apache-2.0",
-      "source": "https://pypi.org/project/importlib-metadata/9.0.1/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "c17e31be1f83ce1f",
-          "name": "LICENSE",
-          "path": "notices/py-importlib-metadata/c17e31be1f83ce1f.txt",
-          "sha256": "e2f7bb0557e7a381499f15baa7c1d776d83d6616599179d71d3109b8e39f7b25"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-jaraco-classes",
-      "name": "jaraco.classes",
-      "version": "3.4.0",
-      "license": "OSI Approved :: MIT License",
-      "source": "https://pypi.org/project/jaraco-classes/3.4.0/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "0f09abb2c063e10f",
-          "name": "LICENSE",
-          "path": "notices/py-jaraco-classes/0f09abb2c063e10f.txt",
-          "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-jaraco-context",
-      "name": "jaraco.context",
-      "version": "6.1.2",
-      "license": "MIT",
-      "source": "https://pypi.org/project/jaraco-context/6.1.2/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "0c162bbfaad1452e",
-          "name": "LICENSE",
-          "path": "notices/py-jaraco-context/0c162bbfaad1452e.txt",
-          "sha256": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-jaraco-functools",
-      "name": "jaraco.functools",
-      "version": "4.6.0",
-      "license": "MIT",
-      "source": "https://pypi.org/project/jaraco-functools/4.6.0/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "af5093f633bcdc03",
-          "name": "LICENSE",
-          "path": "notices/py-jaraco-functools/af5093f633bcdc03.txt",
-          "sha256": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683"
         }
       ],
       "status": "notice_collected"
@@ -708,35 +640,18 @@
       "status": "notice_collected"
     },
     {
-      "id": "py-keyring",
-      "name": "keyring",
-      "version": "25.7.0",
-      "license": "MIT",
-      "source": "https://pypi.org/project/keyring/25.7.0/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "6dd4c4e5a3a60971",
-          "name": "LICENSE",
-          "path": "notices/py-keyring/6dd4c4e5a3a60971.txt",
-          "sha256": "5a57cb4db85e2a2dd88c290628908add57e3451449e0a9a71fdfb38776fd759d"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
       "id": "py-lxml",
       "name": "lxml",
-      "version": "6.1.3",
+      "version": "6.1.1",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/lxml/6.1.3/",
+      "source": "https://pypi.org/project/lxml/6.1.1/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "792e684ee6cc99fa",
+          "id": "fdea3e221605347d",
           "name": "LICENSE.txt",
-          "path": "notices/py-lxml/792e684ee6cc99fa.txt",
-          "sha256": "8fc2b568133516e46845d2147917adeee1648e70ae9ab5ed6c5417afef4ce855"
+          "path": "notices/py-lxml/fdea3e221605347d.txt",
+          "sha256": "e7c3ce8d76331b0101cc46790ab43958ea90a364bcf962ed8763d5a818340e69"
         }
       ],
       "status": "notice_collected"
@@ -759,23 +674,6 @@
       "status": "notice_collected"
     },
     {
-      "id": "py-more-itertools",
-      "name": "more-itertools",
-      "version": "11.2.1",
-      "license": "MIT",
-      "source": "https://pypi.org/project/more-itertools/11.2.1/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "f7c7748f4a23b6af",
-          "name": "LICENSE",
-          "path": "notices/py-more-itertools/f7c7748f4a23b6af.txt",
-          "sha256": "09f1c8c9e941af3e584d59641ea9b87d83c0cb0fd007eb5ef391a7e2643c1a46"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
       "id": "py-openpyxl",
       "name": "openpyxl",
       "version": "3.1.5",
@@ -793,46 +691,29 @@
       "status": "notice_collected"
     },
     {
-      "id": "py-opentelemetry-api",
-      "name": "opentelemetry-api",
-      "version": "1.45.1",
-      "license": "Apache-2.0",
-      "source": "https://pypi.org/project/opentelemetry-api/1.45.1/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "9c79d8cc8df9abaf",
-          "name": "LICENSE",
-          "path": "notices/py-opentelemetry-api/9c79d8cc8df9abaf.txt",
-          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
       "id": "py-packaging",
       "name": "packaging",
-      "version": "26.3",
+      "version": "26.2",
       "license": "Apache-2.0 OR BSD-2-Clause",
-      "source": "https://pypi.org/project/packaging/26.3/",
+      "source": "https://pypi.org/project/packaging/26.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "11c854e2fea5c3c3",
+          "id": "0ec826ce54482aa2",
           "name": "LICENSE",
-          "path": "notices/py-packaging/11c854e2fea5c3c3.txt",
+          "path": "notices/py-packaging/0ec826ce54482aa2.txt",
           "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48"
         },
         {
-          "id": "e9a5bac8b5a01882",
+          "id": "78c0d59f78fae390",
           "name": "LICENSE.APACHE",
-          "path": "notices/py-packaging/e9a5bac8b5a01882.txt",
+          "path": "notices/py-packaging/78c0d59f78fae390.txt",
           "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
         },
         {
-          "id": "ef96a0844cda24cd",
+          "id": "0f165ff130da70ec",
           "name": "LICENSE.BSD",
-          "path": "notices/py-packaging/ef96a0844cda24cd.txt",
+          "path": "notices/py-packaging/0f165ff130da70ec.txt",
           "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5"
         }
       ],
@@ -850,7 +731,7 @@
           "id": "2bdf3a55261735cc",
           "name": "LICENSE",
           "path": "notices/py-pillow/2bdf3a55261735cc.txt",
-          "sha256": "dda12a98c1979cf3d94df1cff45d27a4cb3f04a60c76f76902ac54cac03ec0ce"
+          "sha256": "988ffe8ab3480b0f4e9a0ab2702bffd73d9fb6b47198043fb3ba101a62fac236"
         }
       ],
       "status": "notice_collected"
@@ -858,22 +739,22 @@
     {
       "id": "py-playwright",
       "name": "playwright",
-      "version": "1.64.0",
+      "version": "1.61.0",
       "license": "Apache-2.0",
-      "source": "https://pypi.org/project/playwright/1.64.0/",
+      "source": "https://pypi.org/project/playwright/1.61.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "1e89f9369d63be5f",
+          "id": "c3ddd4cd138b84a9",
           "name": "LICENSE",
-          "path": "notices/py-playwright/1e89f9369d63be5f.txt",
+          "path": "notices/py-playwright/c3ddd4cd138b84a9.txt",
           "sha256": "7fab1461b41970ff376f1c9303a637076bfaaeb71cd12dd3a1c44aaf59a1a2b9"
         },
         {
           "id": "b79b34d3b069c1a8",
           "name": "LICENSE",
           "path": "notices/py-playwright/b79b34d3b069c1a8.txt",
-          "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace"
+          "sha256": "8efdacdc1cfa3460aeb7fe98e3c54337b971d5da70e6eee292b73b981acb220c"
         },
         {
           "id": "059985e4d18f428d",
@@ -893,16 +774,16 @@
     {
       "id": "py-pycparser",
       "name": "pycparser",
-      "version": "3.11",
+      "version": "3.0",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/pycparser/3.11/",
+      "source": "https://pypi.org/project/pycparser/3.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "be2a90351fed500f",
+          "id": "b4cf246d7037e3e5",
           "name": "LICENSE",
-          "path": "notices/py-pycparser/be2a90351fed500f.txt",
-          "sha256": "0a9e78156ae8b96caf1b4f11ac2df424b83de29736f9e757630548a6272fdf90"
+          "path": "notices/py-pycparser/b4cf246d7037e3e5.txt",
+          "sha256": "0c846399369ea76ddd7b5c44fe6d16497415fcf015f5cbb508c24bf98b81c5b1"
         }
       ],
       "status": "notice_collected"
@@ -910,15 +791,15 @@
     {
       "id": "py-pydantic",
       "name": "pydantic",
-      "version": "2.14.1",
+      "version": "2.13.4",
       "license": "MIT",
-      "source": "https://pypi.org/project/pydantic/2.14.1/",
+      "source": "https://pypi.org/project/pydantic/2.13.4/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "cec8cb3f59dacddf",
+          "id": "c44c058410386535",
           "name": "LICENSE",
-          "path": "notices/py-pydantic/cec8cb3f59dacddf.txt",
+          "path": "notices/py-pydantic/c44c058410386535.txt",
           "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3"
         }
       ],
@@ -927,16 +808,16 @@
     {
       "id": "py-pydantic-core",
       "name": "pydantic_core",
-      "version": "2.50.1",
+      "version": "2.46.4",
       "license": "MIT",
-      "source": "https://pypi.org/project/pydantic-core/2.50.1/",
+      "source": "https://pypi.org/project/pydantic-core/2.46.4/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "cd9fb53779b41952",
+          "id": "7e0fe711609875fb",
           "name": "LICENSE",
-          "path": "notices/py-pydantic-core/cd9fb53779b41952.txt",
-          "sha256": "2afdd30d54b4d62b6f488a6bcc1546e84ec5061f13f4209c03d012348783795a"
+          "path": "notices/py-pydantic-core/7e0fe711609875fb.txt",
+          "sha256": "fbe7f615f18d135c07000e5a86325db27f42c7729699ef166ac1f7a3f4586bf4"
         }
       ],
       "status": "notice_collected"
@@ -944,15 +825,15 @@
     {
       "id": "py-pydantic-settings",
       "name": "pydantic-settings",
-      "version": "2.16.0",
+      "version": "2.14.2",
       "license": "MIT",
-      "source": "https://pypi.org/project/pydantic-settings/2.16.0/",
+      "source": "https://pypi.org/project/pydantic-settings/2.14.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "e0e49202d8a8aef0",
+          "id": "f3270b198107ebd7",
           "name": "LICENSE",
-          "path": "notices/py-pydantic-settings/e0e49202d8a8aef0.txt",
+          "path": "notices/py-pydantic-settings/f3270b198107ebd7.txt",
           "sha256": "eb355a753e020346d33d83bf9769135b89fc610568ac531a01c295bcee7fd998"
         }
       ],
@@ -978,68 +859,16 @@
     {
       "id": "py-pyjwt",
       "name": "PyJWT",
-      "version": "2.15.1",
+      "version": "2.15.0",
       "license": "MIT",
-      "source": "https://pypi.org/project/pyjwt/2.15.1/",
+      "source": "https://pypi.org/project/pyjwt/2.15.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "d94ac33ee6c5b99c",
+          "id": "7235dcd0f303acb6",
           "name": "LICENSE",
-          "path": "notices/py-pyjwt/d94ac33ee6c5b99c.txt",
+          "path": "notices/py-pyjwt/7235dcd0f303acb6.txt",
           "sha256": "797a7a20231d4c433e9f1911db1731d06b5828b98f499819a034f7c0f56f5ce5"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-pyobjc-core",
-      "name": "pyobjc-core",
-      "version": "12.2.2",
-      "license": "MIT",
-      "source": "https://pypi.org/project/pyobjc-core/12.2.2/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "bd308d6fa1c88d1e",
-          "name": "Info.plist",
-          "path": "notices/py-pyobjc-core/bd308d6fa1c88d1e.txt",
-          "sha256": "92d3bf80fec4f03868d475561543c361f05ca3562796a14cf0530fecad709e49"
-        },
-        {
-          "id": "c41bc5a99bf54934",
-          "name": "copying.cpython-311-darwin.so",
-          "path": "notices/py-pyobjc-core/c41bc5a99bf54934.txt",
-          "sha256": "e44da6781a6046eb9789bd4c67525e280a8171d6ef7199036ee322ad44a6df3a"
-        },
-        {
-          "id": "784e609d4dc090f9",
-          "name": "copying.cpython-311-darwin.so.yml",
-          "path": "notices/py-pyobjc-core/784e609d4dc090f9.txt",
-          "sha256": "1de5ea6e1bb1b232102b8cffc0e7c86bad65883b8ad5021eb04dbb48597ca733"
-        },
-        {
-          "id": "a739a8a38580fe76",
-          "name": "copying.cpython-311-darwin.so.yml",
-          "path": "notices/py-pyobjc-core/a739a8a38580fe76.txt",
-          "sha256": "86295dfb33134a38e5bdfdc2bf1a29a1d40a6d354ca8ebbc9197e80f2a449faf"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-pyobjc-framework-cocoa",
-      "name": "pyobjc-framework-Cocoa",
-      "version": "12.2.2",
-      "license": "MIT",
-      "source": "https://pypi.org/project/pyobjc-framework-cocoa/12.2.2/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "65e184eb09498d66",
-          "name": "LICENSE.txt",
-          "path": "notices/py-pyobjc-framework-cocoa/65e184eb09498d66.txt",
-          "sha256": "0ca04b07928d4872b9d9bb22187ca0426dd8bfab08f26eada0999a71dc81aaff"
         }
       ],
       "status": "notice_collected"
@@ -1047,9 +876,9 @@
     {
       "id": "py-pyside6",
       "name": "PySide6",
-      "version": "6.12.0",
+      "version": "6.11.1",
       "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/pyside6/6.12.0/",
+      "source": "https://pypi.org/project/pyside6/6.11.1/",
       "usage": "python_runtime",
       "notices": [],
       "status": "review_required"
@@ -1057,9 +886,9 @@
     {
       "id": "py-pyside6-addons",
       "name": "PySide6_Addons",
-      "version": "6.12.0",
+      "version": "6.11.1",
       "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/pyside6-addons/6.12.0/",
+      "source": "https://pypi.org/project/pyside6-addons/6.11.1/",
       "usage": "python_runtime",
       "notices": [],
       "status": "review_required"
@@ -1067,29 +896,9 @@
     {
       "id": "py-pyside6-essentials",
       "name": "PySide6_Essentials",
-      "version": "6.12.0",
+      "version": "6.11.1",
       "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/pyside6-essentials/6.12.0/",
-      "usage": "python_runtime",
-      "notices": [],
-      "status": "review_required"
-    },
-    {
-      "id": "py-pyside6-pdf",
-      "name": "PySide6_Pdf",
-      "version": "6.12.0.140",
-      "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/pyside6-pdf/6.12.0.140/",
-      "usage": "python_runtime",
-      "notices": [],
-      "status": "review_required"
-    },
-    {
-      "id": "py-pyside6-webengine",
-      "name": "PySide6_WebEngine",
-      "version": "6.12.0.140",
-      "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/pyside6-webengine/6.12.0.140/",
+      "source": "https://pypi.org/project/pyside6-essentials/6.11.1/",
       "usage": "python_runtime",
       "notices": [],
       "status": "review_required"
@@ -1131,15 +940,15 @@
     {
       "id": "py-python-dotenv",
       "name": "python-dotenv",
-      "version": "1.2.4",
+      "version": "1.2.2",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/python-dotenv/1.2.4/",
+      "source": "https://pypi.org/project/python-dotenv/1.2.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "6ee341f79804040b",
+          "id": "adf847c3eda028cd",
           "name": "LICENSE",
-          "path": "notices/py-python-dotenv/6ee341f79804040b.txt",
+          "path": "notices/py-python-dotenv/adf847c3eda028cd.txt",
           "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9"
         }
       ],
@@ -1158,6 +967,101 @@
           "name": "LICENSE.txt",
           "path": "notices/py-python-multipart/ca8b44050606bf3f.txt",
           "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "status": "notice_collected"
+    },
+    {
+      "id": "py-pywin32",
+      "name": "pywin32",
+      "version": "312",
+      "license": "PSF",
+      "source": "https://pypi.org/project/pywin32/312/",
+      "usage": "python_runtime",
+      "notices": [
+        {
+          "id": "7f00f05027a6f1b3",
+          "name": "license.txt",
+          "path": "notices/py-pywin32/7f00f05027a6f1b3.txt",
+          "sha256": "5ea2f23c7f00c3006bacf267183e816d8d4b6dc95ea57a4ddb0ff81de6d8719e"
+        },
+        {
+          "id": "c2a4985aa4145fc3",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/c2a4985aa4145fc3.txt",
+          "sha256": "a74d826efb242db087b850348e20abbfd591b51e2081f2048735290913872924"
+        },
+        {
+          "id": "1445ad867b84e928",
+          "name": "LICENSE.txt",
+          "path": "notices/py-pywin32/1445ad867b84e928.txt",
+          "sha256": "a0fa1e7b8a4230055685e796548ac084a6c0eea395294574093bba72efd9191b"
+        },
+        {
+          "id": "ff463f305e7e68dc",
+          "name": "license.txt",
+          "path": "notices/py-pywin32/ff463f305e7e68dc.txt",
+          "sha256": "5ea2f23c7f00c3006bacf267183e816d8d4b6dc95ea57a4ddb0ff81de6d8719e"
+        },
+        {
+          "id": "ae73a46638a88910",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/ae73a46638a88910.txt",
+          "sha256": "fad39c18fc3825fa278db1c86fd52cf88d7c525b3c2fbf7817fa383cbae4d423"
+        },
+        {
+          "id": "1b588beb4a04f4c3",
+          "name": "LICENSE",
+          "path": "notices/py-pywin32/1b588beb4a04f4c3.txt",
+          "sha256": "1c4cf44d2fb8bf2d10214d6da80cc9e05502824cc4460f35be4c7bcb4cde53da"
+        },
+        {
+          "id": "6300165282b47172",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/6300165282b47172.txt",
+          "sha256": "a74d826efb242db087b850348e20abbfd591b51e2081f2048735290913872924"
+        },
+        {
+          "id": "6eec8b7b9c778ef7",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/6eec8b7b9c778ef7.txt",
+          "sha256": "57ec79bbeab4fd1cf7460a7ad450d2ab01471810459aeae9e75e4c66b472095f"
+        },
+        {
+          "id": "dc8527163d427906",
+          "name": "LICENSE.txt",
+          "path": "notices/py-pywin32/dc8527163d427906.txt",
+          "sha256": "a0fa1e7b8a4230055685e796548ac084a6c0eea395294574093bba72efd9191b"
+        },
+        {
+          "id": "d04b9dead3df9f2b",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/d04b9dead3df9f2b.txt",
+          "sha256": "a74d826efb242db087b850348e20abbfd591b51e2081f2048735290913872924"
+        },
+        {
+          "id": "3c06ee52d5d89b25",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/3c06ee52d5d89b25.txt",
+          "sha256": "a74d826efb242db087b850348e20abbfd591b51e2081f2048735290913872924"
+        },
+        {
+          "id": "cf5cae3ab668ac79",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/cf5cae3ab668ac79.txt",
+          "sha256": "fad39c18fc3825fa278db1c86fd52cf88d7c525b3c2fbf7817fa383cbae4d423"
+        },
+        {
+          "id": "881f648ef42a607c",
+          "name": "License.txt",
+          "path": "notices/py-pywin32/881f648ef42a607c.txt",
+          "sha256": "fad39c18fc3825fa278db1c86fd52cf88d7c525b3c2fbf7817fa383cbae4d423"
+        },
+        {
+          "id": "6fbb090f28b7d9d7",
+          "name": "NOTICE.md",
+          "path": "notices/py-pywin32/6fbb090f28b7d9d7.txt",
+          "sha256": "dedf997c8f5568a0e0aff57d009f501226ea30c401323d67912b6a8f8735a825"
         }
       ],
       "status": "notice_collected"
@@ -1208,7 +1112,7 @@
           "id": "0fb05a2e9284070c",
           "name": "LICENSE.txt",
           "path": "notices/py-regex/0fb05a2e9284070c.txt",
-          "sha256": "bff55ef4cdcc8c14ce259f8e8ab60e264418440d6335f4dc138273fbd506144d"
+          "sha256": "3d220c06594b826bbabf110312f60f385f99e57e529fa4b9e536f79091f8b4c7"
         }
       ],
       "status": "notice_collected"
@@ -1216,16 +1120,16 @@
     {
       "id": "py-rpds-py",
       "name": "rpds-py",
-      "version": "2026.9.1",
+      "version": "2026.6.3",
       "license": "MIT",
-      "source": "https://pypi.org/project/rpds-py/2026.9.1/",
+      "source": "https://pypi.org/project/rpds-py/2026.6.3/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "a986a35c022586ce",
+          "id": "fcd0c1933c03449f",
           "name": "LICENSE",
-          "path": "notices/py-rpds-py/a986a35c022586ce.txt",
-          "sha256": "314e4e91be3baa93c0fb4bccc9e4e97cd643eb839b065af921782c2175fe9909"
+          "path": "notices/py-rpds-py/fcd0c1933c03449f.txt",
+          "sha256": "8bcb72c82ea8ae74802293c41d93ad7d51434001b0ae45a603a5af0f507aee0a"
         }
       ],
       "status": "notice_collected"
@@ -1233,9 +1137,9 @@
     {
       "id": "py-shiboken6",
       "name": "shiboken6",
-      "version": "6.12.0",
+      "version": "6.11.1",
       "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
-      "source": "https://pypi.org/project/shiboken6/6.12.0/",
+      "source": "https://pypi.org/project/shiboken6/6.11.1/",
       "usage": "python_runtime",
       "notices": [],
       "status": "review_required"
@@ -1243,15 +1147,15 @@
     {
       "id": "py-soupsieve",
       "name": "soupsieve",
-      "version": "2.10",
+      "version": "2.9",
       "license": "MIT",
-      "source": "https://pypi.org/project/soupsieve/2.10/",
+      "source": "https://pypi.org/project/soupsieve/2.9/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "b84ec6e0beed3e96",
+          "id": "d2f1be10a086974f",
           "name": "LICENSE.md",
-          "path": "notices/py-soupsieve/b84ec6e0beed3e96.txt",
+          "path": "notices/py-soupsieve/d2f1be10a086974f.txt",
           "sha256": "76a0acdb98c3a63681e20b6f096699ef8cad5fb35d56eef8387e0fa71d797a9a"
         }
       ],
@@ -1260,15 +1164,15 @@
     {
       "id": "py-sse-starlette",
       "name": "sse-starlette",
-      "version": "3.5.0",
+      "version": "3.4.5",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/sse-starlette/3.5.0/",
+      "source": "https://pypi.org/project/sse-starlette/3.4.5/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "e453abd81b5ad12e",
+          "id": "ccde814393abf135",
           "name": "LICENSE",
-          "path": "notices/py-sse-starlette/e453abd81b5ad12e.txt",
+          "path": "notices/py-sse-starlette/ccde814393abf135.txt",
           "sha256": "80af6bfccbebd2c14d4aab96695cab9950e177190cc80f5ef819e99996883e8e"
         }
       ],
@@ -1277,15 +1181,15 @@
     {
       "id": "py-starlette",
       "name": "starlette",
-      "version": "1.9.0",
+      "version": "1.3.1",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/starlette/1.9.0/",
+      "source": "https://pypi.org/project/starlette/1.3.1/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "17e4d1d76e00bcf8",
+          "id": "37364e4d6aabea31",
           "name": "LICENSE.md",
-          "path": "notices/py-starlette/17e4d1d76e00bcf8.txt",
+          "path": "notices/py-starlette/37364e4d6aabea31.txt",
           "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf"
         }
       ],
@@ -1311,15 +1215,15 @@
     {
       "id": "py-typing-inspection",
       "name": "typing-inspection",
-      "version": "0.4.4",
+      "version": "0.4.2",
       "license": "MIT",
-      "source": "https://pypi.org/project/typing-inspection/0.4.4/",
+      "source": "https://pypi.org/project/typing-inspection/0.4.2/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "215ebb8580f197a8",
+          "id": "997b7381a5c406ba",
           "name": "LICENSE",
-          "path": "notices/py-typing-inspection/215ebb8580f197a8.txt",
+          "path": "notices/py-typing-inspection/997b7381a5c406ba.txt",
           "sha256": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3"
         }
       ],
@@ -1328,39 +1232,16 @@
     {
       "id": "py-uvicorn",
       "name": "uvicorn",
-      "version": "0.54.0",
+      "version": "0.51.0",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/uvicorn/0.54.0/",
+      "source": "https://pypi.org/project/uvicorn/0.51.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "b645068efededc15",
+          "id": "8917b32013d25142",
           "name": "LICENSE.md",
-          "path": "notices/py-uvicorn/b645068efededc15.txt",
+          "path": "notices/py-uvicorn/8917b32013d25142.txt",
           "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-uvloop",
-      "name": "uvloop",
-      "version": "0.23.0",
-      "license": "MIT License",
-      "source": "https://pypi.org/project/uvloop/0.23.0/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "4e7b7b8064622faa",
-          "name": "LICENSE-APACHE",
-          "path": "notices/py-uvloop/4e7b7b8064622faa.txt",
-          "sha256": "377025287798f9dcd819e1f826fa5fc5e2f382528691ab0528c5cf8c8c282c27"
-        },
-        {
-          "id": "eb9ab79a38a476fe",
-          "name": "LICENSE-MIT",
-          "path": "notices/py-uvloop/eb9ab79a38a476fe.txt",
-          "sha256": "6dd4c399f26de043d77a2ad7e31db4cb5bf08ea8368b0a42d6e158635cc8ab62"
         }
       ],
       "status": "notice_collected"
@@ -1391,16 +1272,16 @@
     {
       "id": "py-watchfiles",
       "name": "watchfiles",
-      "version": "1.3.0",
+      "version": "1.2.0",
       "license": "MIT",
-      "source": "https://pypi.org/project/watchfiles/1.3.0/",
+      "source": "https://pypi.org/project/watchfiles/1.2.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "cb5860f4ed45cac4",
+          "id": "8c9eb21e5282bbda",
           "name": "LICENSE",
-          "path": "notices/py-watchfiles/cb5860f4ed45cac4.txt",
-          "sha256": "4fd78355b67ce2677ede9fb6f63a250f377bb7e22088136a5f4699adb4bc069f"
+          "path": "notices/py-watchfiles/8c9eb21e5282bbda.txt",
+          "sha256": "2d40a03346bded8daa4bd22d23825a6f2568a0820fbef76ac05bae534421e189"
         }
       ],
       "status": "notice_collected"
@@ -1408,33 +1289,16 @@
     {
       "id": "py-websockets",
       "name": "websockets",
-      "version": "17.2",
+      "version": "16.0",
       "license": "BSD-3-Clause",
-      "source": "https://pypi.org/project/websockets/17.2/",
+      "source": "https://pypi.org/project/websockets/16.0/",
       "usage": "python_runtime",
       "notices": [
         {
-          "id": "10e312629a1ad865",
+          "id": "7964c75f221c65e5",
           "name": "LICENSE",
-          "path": "notices/py-websockets/10e312629a1ad865.txt",
-          "sha256": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8"
-        }
-      ],
-      "status": "notice_collected"
-    },
-    {
-      "id": "py-zipp",
-      "name": "zipp",
-      "version": "4.1.1",
-      "license": "MIT",
-      "source": "https://pypi.org/project/zipp/4.1.1/",
-      "usage": "python_runtime",
-      "notices": [
-        {
-          "id": "d9285459ab62e316",
-          "name": "LICENSE",
-          "path": "notices/py-zipp/d9285459ab62e316.txt",
-          "sha256": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683"
+          "path": "notices/py-websockets/7964c75f221c65e5.txt",
+          "sha256": "0f44514998aca209d3482d10204a8adf2aa4296ff157a36a5c0922f2280632d3"
         }
       ],
       "status": "notice_collected"
@@ -1442,7 +1306,7 @@
     {
       "id": "qt-chromium",
       "name": "Qt / Chromium: вложенные компоненты",
-      "version": "6.12.0",
+      "version": "6.11.1",
       "license": "LGPL-3.0 и лицензии вложенных компонентов",
       "source": "https://doc.qt.io/qt-6/qtwebengine-licensing.html",
       "usage": "native_runtime",

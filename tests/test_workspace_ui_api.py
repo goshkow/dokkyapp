@@ -53,3 +53,31 @@ def test_test_dokky_config_and_chat_workspace_assignment(tmp_path):
         == project["id"]
     )
     assert client.get(f"/api/chats/{chat['id']}/export").status_code == 200
+
+
+def test_legacy_override_cannot_switch_ui(monkeypatch):
+    monkeypatch.setenv("KODDI_UI", "legacy")
+    client = TestClient(create_app())
+    page = client.get("/ui/")
+    assert page.status_code == 200
+    assert '<div id="root">' in page.text
+
+
+def test_missing_react_does_not_fall_back_to_legacy(tmp_path, monkeypatch):
+    import importlib
+
+    module = importlib.import_module("koddi.api.app")
+    legacy = tmp_path / "koddi/desktop/web"
+    legacy.mkdir(parents=True)
+    (legacy / "index.html").write_text("legacy", encoding="utf-8")
+    monkeypatch.setattr(module, "app_dir", lambda: tmp_path)
+    monkeypatch.setattr(module, "__file__", str(tmp_path / "koddi/api/app.py"))
+    assert TestClient(module.create_app()).get("/ui/").status_code == 404
+
+
+def test_ui_assets_are_not_cached():
+    client = TestClient(create_app())
+    for path in ("/ui/", "/ui/app.js", "/ui/app.css", "/ui/chunk-overlayScroll.js"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"

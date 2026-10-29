@@ -318,3 +318,17 @@ def test_window_buttons_use_native_system_commands(action, maximized, expected):
     )
     web_host.WebHost.window_action(host, action)
     assert sent == [expected]
+
+
+def test_webengine_cache_is_separate_per_version(tmp_path):
+    from koddi.desktop import webengine_cache_path
+
+    legacy = tmp_path / "cache"
+    legacy.mkdir()
+    (legacy / "old").write_text("cached", encoding="utf-8")
+    first = webengine_cache_path(tmp_path, "0.2.2")
+    second = webengine_cache_path(tmp_path, "0.2.3")
+    assert first != second and first != legacy and second != legacy
+    assert (legacy / "old").read_text(encoding="utf-8") == "cached"
+    with pytest.raises(ValueError):
+        webengine_cache_path(tmp_path, "../../outside")

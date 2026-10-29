@@ -54,7 +54,7 @@ NAME_RE = re.compile(r"^Dokky-\d+\.\d+\.\d+(?:-beta\.\d+)?-[A-Za-z0-9_-]+\.(?:dm
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_SIZE = 4 * 1024**3
 EXTENSIONS = {"dmg": ".dmg", "setup": ".exe", "portable": ".zip"}
-FIRST_CHECK = (45, 120)
+FIRST_CHECK = (1, 4)
 CHECK_EVERY = 6 * 3600
 MANUAL_GAP = 10
 READY_SECONDS = 120
@@ -186,7 +186,7 @@ class Updater:
             "platform": platform_id(),
             "kind": kind,
             "method": method,
-            "auto_download": prefs.get("auto_download", True) is not False,
+            "auto_download": prefs.get("auto_download") is True,
             "checked_at": prefs.get("checked_at"),
             "skipped": prefs.get("skipped"),
             **self.state,
@@ -326,7 +326,7 @@ class Updater:
             if time.monotonic() - self._last_manual < MANUAL_GAP:
                 return self.status()
             self._last_manual = time.monotonic()
-        if self.state["status"] in {"downloading", "installing"}:
+        if self.state["status"] in {"downloading", "preparing", "installing"}:
             return self.status()
         previous = self.state["status"]
         await self._set(status="checking", error="")
@@ -358,7 +358,7 @@ class Updater:
             return self.status()
         ready = self.prepared and self.prepared.get("version") == entry["version"]
         await self._set(status="ready" if ready else "available", available=entry)
-        if not ready and method in {"bundle", "portable", "setup", "setup_elevated"} and prefs.get("auto_download", True) is not False:
+        if not ready and method in {"bundle", "portable", "setup", "setup_elevated"} and prefs.get("auto_download") is True:
             self.start_download()
         return self.status()
 

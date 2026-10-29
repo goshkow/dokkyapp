@@ -106,3 +106,12 @@ def test_optional_computer_helpers_and_license_notices_are_verified(package):
     (directory / 'koddi/licenses/payload.txt').write_bytes(b'modified notice')
     with pytest.raises(ValueError):
         inventory.verify(directory, sources)
+
+
+def test_rejects_legacy_interface(package):
+    directory, sources = package
+    legacy = directory / "koddi/desktop/web/index.html"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("legacy", encoding="utf-8")
+    with pytest.raises(ValueError, match="Старый интерфейс"):
+        inventory.verify(directory, sources)

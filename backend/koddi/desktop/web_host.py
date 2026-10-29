@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from koddi.desktop import software_rendering
+from koddi.desktop import software_rendering, webengine_cache_path
 from koddi.desktop import server as desktop_server
 
 
@@ -698,7 +698,9 @@ class WebHost(QMainWindow):
         storage.mkdir(parents=True, exist_ok=True)
         self.web_profile = QWebEngineProfile("DokkyApp", self)
         self.web_profile.setPersistentStoragePath(str(storage / "storage"))
-        self.web_profile.setCachePath(str(storage / "cache"))
+        from koddi import __version__
+
+        self.web_profile.setCachePath(str(webengine_cache_path(storage, __version__)))
         self.web_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         self.view.setPage(KoddiPage(self.web_profile, self))
         profile = self.view.page().profile()

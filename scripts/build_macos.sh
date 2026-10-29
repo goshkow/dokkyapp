@@ -80,7 +80,6 @@ rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_h
   --include-data-dir=backend/koddi/licenses=koddi/licenses \
   --include-data-dir=prompts=prompts \
   --include-data-dir=locales=locales \
-  --include-data-dir=backend/koddi/desktop/web=koddi/desktop/web \
   --include-data-dir=backend/koddi/desktop/web-next=koddi/desktop/web-next \
   --include-data-dir=backend/koddi/storage/migrations=koddi/storage/migrations \
   backend/koddi/desktop/web_host.py

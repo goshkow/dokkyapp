@@ -16,6 +16,7 @@ import { restoreTurn as realRestoreTurn, rollbackChange as realRollbackChange, s
 import type { Change } from './chatTypes';
 import { openBilling as realOpenBilling, openSettings as realOpenSettings } from './settingsUi';
 import { startChat, surfaceActions } from './surface';
+import { downloadUpdate as realDownloadUpdate, restartForUpdate as realRestartForUpdate } from './updates';
 import { goBack as realGoBack, goForward as realGoForward, newChat as realNewChat, openChat as realOpenChat, openPage as realOpenPage, view } from './view';
 
 /** Убрать проект из списка: подтверждение показывает главный вид, папка на диске остаётся. */
@@ -31,6 +32,8 @@ const realRollback = (id: Change['id'], fileCount: number): Promise<void> => rea
 const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncChat);
 
 const table = {
+  downloadUpdate: realDownloadUpdate,
+  restartForUpdate: realRestartForUpdate,
   openChat: realOpenChat,
   newChat: startChat,
   openPage: realOpenPage,
@@ -78,3 +81,6 @@ export const togglePanel = remote('togglePanel', realTogglePanel);
 export const selectChange = remote('selectChange', realSelectChange);
 export const rollbackChange = remote('rollbackChange', realRollback);
 export const restoreTurn = remote('restoreTurn', realRestore);
+
+export const downloadUpdate = remote('downloadUpdate', realDownloadUpdate);
+export const restartForUpdate = remote('restartForUpdate', realRestartForUpdate);

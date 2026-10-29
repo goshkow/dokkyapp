@@ -10,7 +10,6 @@ from pathlib import Path, PurePosixPath
 
 
 ASSET_ROOTS = {
-    "backend/koddi/desktop/web/": "koddi/desktop/web/",
     "backend/koddi/desktop/web-next/": "koddi/desktop/web-next/",
     "backend/koddi/storage/migrations/": "koddi/storage/migrations/",
     "backend/koddi/codeintel/native/": "koddi/codeintel/native/",
@@ -58,6 +57,8 @@ def verify(directory: Path, source_manifest: Path) -> dict:
             continue
         relative = path.relative_to(directory).as_posix()
         name = path.name.lower()
+        if relative.startswith("koddi/desktop/web/"):
+            raise ValueError("Старый интерфейс попал в поставку: " + relative)
         if (
             name.startswith((".env", "koddi.sqlite", "tokens."))
             or name.endswith((".db", ".sqlite", ".sqlite3", ".log", ".key"))

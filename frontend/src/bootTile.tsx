@@ -12,9 +12,10 @@ import { limitsStore } from './state/limits';
 import { plansStore } from './state/plans';
 import { applyAppearance, ui } from './state/ui';
 import { nav, view } from './state/view';
+import { updates } from './state/updates';
 import { openFile, selectInspector } from './state/workspace';
 
-for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav]] as const) mirrorStore(name, store as never);
+for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav], ['updates', updates]] as const) mirrorStore(name, store as never);
 mirrorStore('chat', chat);
 mirrorStore('fieldMirror', fieldMirror);
 mirrorStore('fieldHost', fieldHost);

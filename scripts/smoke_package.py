@@ -48,10 +48,12 @@ def isolated_env(output, profile, port, debug_port):
     return env
 
 
-def check_default_ui(exe, output):
+def check_default_ui(exe, output, workspace):
     """Основной интерфейс поставки (React): страница загрузилась, кнопки окна на месте, ошибок нет, выход штатный."""
     port, debug_port = free_port(), free_port()
     env = isolated_env(output, "profile-next", port, debug_port)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["KODDI_UI"] = "legacy"
     with (output / "next-stdout.log").open("wb") as stdout, (output / "next-stderr.log").open("wb") as stderr:
         process = subprocess.Popen(
             [str(exe)], cwd=exe.parent, env=env, stdout=stdout, stderr=stderr,
@@ -76,11 +78,36 @@ def check_default_ui(exe, output):
                 assert page.locator(".desktop-window-controls button").count() == 3
                 assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
                 page.wait_for_timeout(1500)
+                assert page.evaluate("!!window.koddiDesktop")
+                def request(path, method="GET", body=None):
+                    return page.evaluate("""async ({path, method, body}) => {
+                        const response = await fetch(path, {
+                            method, headers: {'Content-Type': 'application/json'},
+                            body: body == null ? undefined : JSON.stringify(body)
+                        });
+                        const data = await response.json();
+                        return {status: response.status, data};
+                    }""", {"path": path, "method": method, "body": body})
+
+                project = request("/api/projects", "POST", {"path": str(workspace), "name": "Тестовый проект"})
+                assert project["status"] == 200, project
+                base = "/api/projects/" + str(project["data"]["id"])
+                value = request(base + "/file?path=smoke.txt")
+                assert value["status"] == 200 and value["data"]["content"] == "before\n", value
+                updated = request(base + "/file", "PUT", {"path": "smoke.txt", "content": "after\n", "hash": value["data"]["hash"]})
+                assert updated["status"] == 200, updated
+                assert (workspace / "smoke.txt").read_text(encoding="utf-8") == "after\n"
+                assert request(base + "/file?path=../outside.txt")["status"] == 422
                 page.screenshot(path=str(output / "next-home.png"))
                 assert not errors, errors
                 page.locator('[data-window-action="close"]').click()
                 process.wait(timeout=20)
                 assert process.returncode == 0, "Нештатное завершение приложения"
+                (output / "report.json").write_text(json.dumps({
+                    "ok": True, "exe": str(exe),
+                    "checks": ["react_ui_boot", "legacy_override_ignored", "native_bridge", "project_file_read_write", "path_traversal_rejected", "clean_exit"],
+                    "limitations": ["Агентный сценарий и реальный сервер не проверялись"]
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
                 browser.close()
         finally:
             if process.poll() is None:
@@ -98,175 +125,9 @@ def main():
     output = Path(tempfile.mkdtemp(prefix="koddi-package-smoke-"))
     workspace = output / "workspace"
     workspace.mkdir()
-    check_default_ui(exe, output)
-    port, debug_port = free_port(), free_port()
-    env = isolated_env(output, "profile", port, debug_port)
-    # агентный сценарий написан под глобальные функции прежнего интерфейса, поэтому идёт на нём
-    env["KODDI_UI"] = "legacy"
-    with (output / "stdout.log").open("wb") as stdout, (output / "stderr.log").open("wb") as stderr:
-        process = subprocess.Popen(
-            [str(exe)],
-            cwd=exe.parent,
-            env=env,
-            stdout=stdout,
-            stderr=stderr,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        try:
-            base = f"http://127.0.0.1:{port}"
-            wait_api(process, base, output)
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.connect_over_cdp(
-                    f"http://127.0.0.1:{debug_port}", timeout=30000, no_defaults=True
-                )
-                page = browser.contexts[0].pages[0]
-                def wait(expression, timeout=30000):
-                    deadline = time.monotonic() + timeout / 1000
-                    while time.monotonic() < deadline:
-                        if page.evaluate("() => (" + expression + ")"):
-                            return
-                        page.wait_for_timeout(50)
-                    raise RuntimeError("Ожидание интерфейса истекло: " + expression)
-
-                wait(
-                    "typeof state !== 'undefined' && state.settings.permission_profile",
-                    timeout=30000,
-                )
-                assert page.title() == "Докки"
-                assert page.evaluate("window.koddiDesktop")
-                wait(
-                    "document.documentElement.dataset.windowControls === 'ready'"
-                )
-                assert page.locator(".desktop-window-controls button").count() == 3
-                page.locator('[data-window-action="maximize"]').click()
-                wait("document.querySelector('[data-window-action=maximize]').getAttribute('aria-label') === 'Восстановить'")
-                page.locator('[data-window-action="maximize"]').click()
-                wait("document.querySelector('[data-window-action=maximize]').getAttribute('aria-label') === 'Развернуть'")
-                assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
-                page.screenshot(path=str(output / "home.png"))
-
-                def request(path, method="GET", body=None):
-                    return page.evaluate(
-                        """async ({path,method,body}) => {
-                      const response=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body==null?undefined:JSON.stringify(body)});
-                      if(!response.ok)throw new Error('Проверка API: '+response.status+' '+path);
-                      return response.json();
-                    }""",
-                        {"path": path, "method": method, "body": body},
-                    )
-
-                request("/api/ai/test-enable", "POST")
-                project = request(
-                    "/api/projects", "POST", {"path": str(workspace), "name": "Тестовый проект"}
-                )
-                page.evaluate("async project => {await refresh();newChat(project);}", project)
-                page.locator("#prompt").fill("Создай скрипт приветствия и проверь его")
-                page.locator("#send").click()
-                page.get_by_role('button',name='Разрешить',exact=True).wait_for()
-                page.get_by_role('button',name='Разрешить',exact=True).click()
-                wait(
-                    "state.chat && !state.running && document.querySelector('#feed').textContent.includes('Файл greeting.py')",
-                    timeout=45000,
-                )
-                assert (workspace / "greeting.py").is_file()
-                page.locator("#prompt").fill("Добавь обработку пустого ввода")
-                page.locator("#send").click()
-                page.get_by_role('button',name='Разрешить',exact=True).wait_for()
-                page.get_by_role('button',name='Разрешить',exact=True).click()
-                wait(
-                    "!state.running && document.querySelectorAll('.message.user').length >= 2",
-                    timeout=45000,
-                )
-                content = (workspace / "greeting.py").read_text(encoding="utf-8")
-                assert "Введите приветствие." in content
-                namespace = {}
-                exec(compile(content, str(workspace / "greeting.py"), "exec"), namespace)
-                assert namespace["greet"]("привет") == "Привет!"
-                assert namespace["greet"]("") == "Введите приветствие."
-                assert page.evaluate("typeof window.koddiClipboardWrite === 'function'")
-                page.locator(".message.user").last.get_by_role("button", name="Скопировать сообщение", exact=True).click()
-                wait("document.querySelector('#toast')?.textContent === 'Сообщение скопировано'")
-                page.evaluate("""() => {
-                    const node=document.createElement('section');node.id='package-clipboard-test';
-                    document.querySelector('#feed').append(node);
-                    renderMarkdown(node,'```python\\nprint(1)\\n```');
-                }""")
-                page.locator("#package-clipboard-test").get_by_role("button", name="Скопировать код", exact=True).click()
-                wait("document.querySelector('#toast')?.textContent === 'Код скопирован'")
-                page.evaluate("document.querySelector('#package-clipboard-test').remove()")
-                completed = page.locator(".journal-completed").last
-                assert not completed.evaluate("node => node.open")
-                completed.locator(":scope > summary").click()
-                assert completed.locator(".journal-segment").count() > 0
-                for summary in completed.locator(".journal-segment > summary").all():
-                    summary.click()
-                assert completed.locator(".journal-commentary").first.is_visible()
-                assert completed.locator(".activity-line").count() > 0
-                assert any(value.strip() for value in completed.locator(".journal-duration").all_text_contents())
-                page.screenshot(path=str(output / "journal-open.png"), animations="disabled")
-                completed.locator(":scope > summary").click()
-                wait("!document.querySelector('#feed').getAnimations({subtree:true}).some(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity)")
-                page.screenshot(path=str(output / "chat.png"))
-                chat_id = page.evaluate("state.chat.id")
-                turns = request(f"/api/chats/{chat_id}/turn")
-                assert turns["turn"]["status"] == "completed"
-                messages = request(f"/api/chats/{chat_id}/messages")
-                assert any(m.get("metadata", {}).get("events") for m in messages)
-                request("/api/settings", "PUT", {"project_id":project['id'],"permission_profile": "trusted",'private_network':True})
-                opened = request(
-                    "/api/tools/run",
-                    "POST",
-                    {
-                        "project_id": project["id"],
-                        "name": "browser.open",
-                        "arguments": {"url": base + "/ui/"},
-                    },
-                )
-                assert opened["ok"], opened
-                dom = request(
-                    "/api/tools/run",
-                    "POST",
-                    {
-                        "project_id": project["id"],
-                        "name": "browser.dom",
-                        "arguments": {"session_id": opened["session_id"]},
-                    },
-                )
-                assert dom["ok"] and "Недоступно" in dom["html"], dom
-                assert httpx.get(base + "/ui/").status_code == 404
-                report = {
-                    "ok": True,
-                    "exe": str(exe),
-                    "workspace": str(workspace),
-                    "chat_id": chat_id,
-                    "checks": [
-                        "next_ui_boot",
-                        "native_bridge",
-                        "web_ui",
-                        "test_http_api",
-                        "file_create",
-                        "file_edit",
-                        "verification",
-                        "greeting_behavior",
-                        "clipboard_user",
-                        "clipboard_code",
-                        "journal_segments",
-                        "completed_fold",
-                    ],
-                    "test_provider_only": True,
-                }
-                (output / "report.json").write_text(
-                    json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                page.locator('[data-window-action="close"]').click()
-                process.wait(timeout=20)
-                assert process.returncode == 0, 'Нештатное завершение приложения'
-                browser.close()
-            print(output)
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=15)
+    (workspace / "smoke.txt").write_bytes(b"before\n")
+    check_default_ui(exe, output, workspace)
+    print(output)
 
 
 if __name__ == "__main__":

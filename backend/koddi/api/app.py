@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
+from koddi import __version__
 from koddi.agents import AgentOrchestrator, agent_runs
 from koddi.agents.queue import request_queue
 from koddi.agents.modes import list_modes, save_mode
@@ -274,6 +275,13 @@ def _saved_render_mode() -> str:
     return saved_render_mode()
 
 
+class UiStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 def create_app() -> FastAPI:
     init_db()
     from koddi.agents.recovery import recover_interrupted_runs
@@ -323,7 +331,7 @@ def create_app() -> FastAPI:
 
             await asyncio.to_thread(browser_close_all)
 
-    app = FastAPI(title="Докки API", version="0.2.2", lifespan=lifespan)
+    app = FastAPI(title="Докки API", version=__version__, lifespan=lifespan)
     from koddi.desktop.transport import DesktopTransportGuard
 
     app.add_middleware(DesktopTransportGuard)
@@ -2444,15 +2452,11 @@ def create_app() -> FastAPI:
     from koddi.remote.mock_server import create_mock_app
 
     app.mount("/api/test-dokky", create_mock_app(), name="test-dokky")
-    # основной интерфейс - React (web-next); KODDI_UI=legacy возвращает прежний на время проверки
-    ui_folder = "web" if os.getenv("KODDI_UI") == "legacy" else "web-next"
-    web_root = app_dir() / "koddi" / "desktop" / ui_folder
+    web_root = app_dir() / "koddi" / "desktop" / "web-next"
     if not web_root.is_dir():
-        web_root = Path(__file__).resolve().parents[1] / "desktop" / ui_folder
-    if not web_root.is_dir() and ui_folder != "web":
-        web_root = Path(__file__).resolve().parents[1] / "desktop" / "web"
+        web_root = Path(__file__).resolve().parents[1] / "desktop" / "web-next"
     if web_root.is_dir():
-        app.mount("/ui", StaticFiles(directory=str(web_root), html=True), name="ui")
+        app.mount("/ui", UiStaticFiles(directory=str(web_root), html=True), name="ui")
     return app
 
 

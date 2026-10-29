@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -404,7 +405,9 @@ def test_unapproved_hook_never_runs_and_approval_is_per_version(env, monkeypatch
     assert context == [{"plugin": "tools", "context": "hook-context-ok\n\nhook-context-ok"}]
     # SessionStart запоминается на чат, UserPromptSubmit идёт каждый ход
     turn_context(OWNER, None, workspace, 1, "again")
-    assert marker.read_text().count("ran") == 3
+    marker_bytes = marker.read_bytes()
+    encoding = "utf-16" if marker_bytes.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8"
+    assert marker_bytes.decode(encoding).count("ran") == 3
     servers = plugin_servers()
     assert list(servers) == ["plugin.tools.local"] and servers["plugin.tools.local"]["command"].endswith("/bin/server")
     assert "${CLAUDE_PLUGIN_ROOT}" not in servers["plugin.tools.local"]["command"]
@@ -422,9 +425,15 @@ def test_plugin_root_with_space_is_quoted_for_shell(tmp_path):
 
     root = tmp_path / "Application Support" / "plug"
     root.mkdir(parents=True)
-    (root / "say.sh").write_text("echo from-plugin\n")
     assert expand_root('"${CLAUDE_PLUGIN_ROOT}/x"', root) == f'"{root}/x"'
-    for command in ("sh ${CLAUDE_PLUGIN_ROOT}/say.sh", 'sh "${CLAUDE_PLUGIN_ROOT}/say.sh"'):
+    if os.name == "nt":
+        (root / "say.txt").write_text("from-plugin\n", encoding="utf-8")
+        commands = ("Get-Content -LiteralPath ${CLAUDE_PLUGIN_ROOT}/say.txt",
+                    'Get-Content -LiteralPath "${CLAUDE_PLUGIN_ROOT}/say.txt"')
+    else:
+        (root / "say.sh").write_text("echo from-plugin\n")
+        commands = ("sh ${CLAUDE_PLUGIN_ROOT}/say.sh", 'sh "${CLAUDE_PLUGIN_ROOT}/say.sh"')
+    for command in commands:
         code, out = run_command(command, root=root, workspace=tmp_path, payload={}, timeout=10)
         assert (code, out.strip()) == (0, "from-plugin"), command
 
@@ -556,14 +565,24 @@ def test_hook_shell_quoting_and_clean_environment(tmp_path, monkeypatch):
 
     root = tmp_path / "Application Support" / "it's plug"
     root.mkdir(parents=True)
-    (root / "say.sh").write_text('echo from-plugin; echo "token=${DOKKY_SECRET_TOKEN:-none} home=${HOME:+set}"\n')
     monkeypatch.setenv("DOKKY_SECRET_TOKEN", "s3cr3t")
     monkeypatch.setenv("KODDI_SOMETHING", "inside")
-    for command in ("sh ${CLAUDE_PLUGIN_ROOT}/say.sh", 'sh "${CLAUDE_PLUGIN_ROOT}/say.sh"',
-                    "sh '${CLAUDE_PLUGIN_ROOT}/say.sh'", 'sh "${CLAUDE_PLUGIN_ROOT}"/say.sh'):
+    if os.name == "nt":
+        (root / "say.txt").write_text("from-plugin\n", encoding="utf-8")
+        suffix = "; if ($env:DOKKY_SECRET_TOKEN) { 'token=' + $env:DOKKY_SECRET_TOKEN } else { 'token=none' }; if ($env:USERPROFILE) { 'home=set' }"
+        commands = ("Get-Content -LiteralPath ${CLAUDE_PLUGIN_ROOT}/say.txt" + suffix,
+                    'Get-Content -LiteralPath "${CLAUDE_PLUGIN_ROOT}/say.txt"' + suffix,
+                    "Get-Content -LiteralPath '${CLAUDE_PLUGIN_ROOT}/say.txt'" + suffix)
+        environment = "Get-ChildItem Env: | ForEach-Object { $_.Name + '=' + $_.Value }"
+    else:
+        (root / "say.sh").write_text('echo from-plugin; echo "token=${DOKKY_SECRET_TOKEN:-none} home=${HOME:+set}"\n')
+        commands = ("sh ${CLAUDE_PLUGIN_ROOT}/say.sh", 'sh "${CLAUDE_PLUGIN_ROOT}/say.sh"',
+                    "sh '${CLAUDE_PLUGIN_ROOT}/say.sh'", 'sh "${CLAUDE_PLUGIN_ROOT}"/say.sh')
+        environment = "env"
+    for command in commands:
         code, out = run_command(command, root=root, workspace=tmp_path, payload={}, timeout=10)
         assert (code, out.split()) == (0, ["from-plugin", "token=none", "home=set"]), (command, expand_root(command, root))
-    code, out = run_command("env", root=root, workspace=tmp_path, payload={}, timeout=10)
+    code, out = run_command(environment, root=root, workspace=tmp_path, payload={}, timeout=10)
     assert "s3cr3t" not in out and "KODDI_SOMETHING" not in out and f"CLAUDE_PLUGIN_ROOT={root}" in out
 
 
@@ -664,14 +683,22 @@ def test_catalog_has_fifty_pinned_open_plugins():
 
 def _tool_hook_plugin(env: Path) -> dict[str, bytes]:
     stop_marker = env / "stop-once"
+    if os.name == "nt":
+        marker = str(stop_marker).replace("'", "''")
+        deny = "[Console]::Error.WriteLine('no shell here'); exit 2"
+        stop = (f"if (Test-Path -LiteralPath '{marker}') {{ exit 0 }}; "
+                f"New-Item -Path '{marker}' -ItemType File | Out-Null; "
+                "[Console]::Error.WriteLine('run the checks first'); exit 2")
+    else:
+        deny = "echo 'no shell here' >&2; exit 2"
+        stop = f"if [ -e '{stop_marker}' ]; then exit 0; fi; touch '{stop_marker}'; echo 'run the checks first' >&2; exit 2"
     hooks = {"hooks": {
-        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo 'no shell here' >&2; exit 2"}]},
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": deny}]},
                        {"matcher": "Write|Edit", "hooks": [{"type": "command", "command": (
                            "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'")}]}],
         "PostToolUse": [{"matcher": "LS", "hooks": [{"type": "command", "command": (
             "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"listing-seen\"}}'")}]}],
-        "Stop": [{"hooks": [{"type": "command", "command": (
-            f"if [ -e '{stop_marker}' ]; then exit 0; fi; touch '{stop_marker}'; echo 'run the checks first' >&2; exit 2")}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": stop}]}],
     }}
     return dict(PLUGIN, **{"hooks/hooks.json": json.dumps(hooks).encode()})
 

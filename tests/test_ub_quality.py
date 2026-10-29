@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -831,6 +832,15 @@ def test_worktree_target_file_refused_and_unsafe_removals_blocked(tmp_path):
     assert gitsafe.remove_worktree(repo, clean)["ok"] and not clean.exists()
 
 
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False):
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("нет прав на создание символических ссылок")
+        raise
+
+
 def test_knowledge_export_never_follows_links(tmp_path):
     from koddi.knowledge.service import _contained
 
@@ -839,8 +849,8 @@ def test_knowledge_export_never_follows_links(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     write(outside, "secret.md", "secret\n")
-    (base / "decisions" / "link.md").symlink_to(outside / "secret.md")
-    (base / "escape").symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip(base / "decisions" / "link.md", outside / "secret.md")
+    _symlink_or_skip(base / "escape", outside, target_is_directory=True)
     assert _contained(base, base / "decisions" / "note.md")
     assert not _contained(base, base / "decisions" / "link.md")
     assert not _contained(base, base / "escape" / "secret.md")
@@ -852,7 +862,7 @@ def test_library_docs_do_not_read_through_links_outside_project(tmp_path):
     root = tmp_path / "project"
     write(root, "node_modules/pkg/README.md", "inside\n")
     write(tmp_path, "private.md", "private\n")
-    (root / "node_modules/pkg/CHANGELOG.md").symlink_to(tmp_path / "private.md")
+    _symlink_or_skip(root / "node_modules/pkg/CHANGELOG.md", tmp_path / "private.md")
     assert _read(root / "node_modules/pkg/README.md", root) == "inside\n"
     assert _read(root / "node_modules/pkg/CHANGELOG.md", root) is None
 
@@ -901,7 +911,7 @@ def test_retrieve_cache_rechecks_files(tmp_path):
     from koddi.context.retrieve import _still_fresh
 
     write(tmp_path, "a.py", "x = 1\n")
-    digest = hashlib.sha256(b"x = 1\n").hexdigest()
+    digest = hashlib.sha256((tmp_path / "a.py").read_bytes()).hexdigest()
     assert _still_fresh(tmp_path, {"items": [{"path": "a.py", "sha256": digest}]})
     write(tmp_path, "a.py", "x = 2\n")
     assert not _still_fresh(tmp_path, {"items": [{"path": "a.py", "sha256": digest}]})

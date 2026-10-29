@@ -140,3 +140,15 @@ html[data-theme="light"] .plan-badge[data-plan="ultra"] { background-image: line
 .limit-bar b { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width 300ms var(--ease); }
 .limit-row[data-low] .limit-bar b { background: var(--danger); }
 .chat-pin { flex: none; margin-right: 4px; color: var(--faint); }
+
+.side-update { pointer-events: auto; display: flex; position: relative; align-items: center; gap: 8px; margin-bottom: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.side-update-text { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.side-update-text strong, .side-update-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-update-text strong { font-size: var(--fs-13); }
+.side-update-text span { color: var(--muted); font-size: var(--fs-12); }
+.side-update button { flex: none; padding: 7px 9px; border-radius: 8px; background: var(--field); color: var(--text); font-size: var(--fs-12); }
+.side-update button:hover { background: var(--hover); }
+.side-update-spinner { width: 16px; height: 16px; color: var(--muted); }
+.side-update-progress { position: absolute; bottom: 0; left: 0; right: 0; height: 2px; }
+.side-update-progress i { display: block; height: 100%; background: var(--accent); transition: width 250ms ease; }
+.sidebar-scroll:has(+ .side-bottom .side-update) { padding-bottom: calc(var(--footer-h) + 100px); }

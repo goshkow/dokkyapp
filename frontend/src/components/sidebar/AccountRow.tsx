@@ -5,7 +5,8 @@ import type { Limits } from '../../lib/types';
 import { lastProject, useData } from '../../state/data';
 import { useLimits } from '../../state/limits';
 import { planName, usePlans } from '../../state/plans';
-import { loadLimits, newChat, openBilling, openSettings } from '../../state/remote';
+import { downloadUpdate, loadLimits, newChat, openBilling, openSettings, restartForUpdate } from '../../state/remote';
+import { guarded } from '../../state/overlay';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 import { hasUpdate, useUpdates } from '../../state/updates';
@@ -87,6 +88,22 @@ function LimitRows({ limits, loading, error }: { limits: Limits | null; loading:
   );
 }
 
+function UpdateNotice() {
+  const state = useUpdates((value) => value);
+  if (!state?.available || !['available', 'downloading', 'preparing', 'ready', 'installing', 'error'].includes(state.status)) return null;
+  const automatic = ['bundle', 'portable', 'setup', 'setup_elevated'].includes(state.method);
+  const working = ['downloading', 'preparing', 'installing'].includes(state.status);
+  const progress = state.progress ? Math.min(100, Math.round(state.progress.done / Math.max(1, state.progress.total) * 100)) : null;
+  const label = state.status === 'ready' ? 'Обновление готово' : state.status === 'downloading' ? `Загрузка${progress === null ? '…' : ` · ${progress}%`}` : state.status === 'preparing' ? 'Подготовка…' : state.status === 'installing' ? 'Перезапуск…' : state.status === 'error' ? 'Не удалось обновить' : `Докки ${state.available.version}`;
+  return (
+    <div className="side-update" aria-live="polite">
+      <div className="side-update-text"><strong>{label}</strong><span>{state.status === 'error' ? state.error : state.status === 'ready' ? `Версия ${state.available.version}` : 'Обновление Докки'}</span></div>
+      {working ? <RefreshCw className="side-update-spinner" aria-hidden="true" /> : <button type="button" onClick={guarded(state.status === 'ready' ? restartForUpdate : automatic ? downloadUpdate : () => openSettings('updates'))}>{state.status === 'ready' ? 'Перезапустить' : state.status === 'error' ? 'Повторить' : 'Обновить'}</button>}
+      {state.status === 'downloading' && progress !== null && <div className="side-update-progress" role="progressbar" aria-label="Загрузка обновления" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div>}
+    </div>
+  );
+}
+
 /** Нижний блок меню как на сайте: аватар с именем открывают настройки, строка «лимит» - лимиты и аккаунт, круглая кнопка - новый чат. */
 export function AccountRow() {
   const account = useData((state) => state.account);
@@ -109,6 +126,7 @@ export function AccountRow() {
   const free = plan === 'free';
   return (
     <footer className="side-bottom">
+      <UpdateNotice />
       <div className="side-profile">
         <div className="side-id">
           <button id="connection-badge" type="button" className="side-account" data-state={account?.authenticated ? 'ready' : 'offline'} aria-label="Открыть настройки" onClick={() => openSettings('general')}>

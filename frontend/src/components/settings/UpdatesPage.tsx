@@ -1,10 +1,9 @@
 import { Download, RefreshCw, RotateCw, X } from 'lucide-react';
 import { useEffect } from 'react';
-import { ApiError } from '../../lib/api';
 import { openExternal, SITE } from '../../lib/external';
-import { confirmDialog, guarded } from '../../state/overlay';
+import { guarded } from '../../state/overlay';
 import {
-  cancelUpdate, checkUpdates, downloadUpdate, installUpdate, loadUpdates, megabytes, setAutoDownload, skipUpdate,
+  cancelUpdate, checkUpdates, downloadUpdate, loadUpdates, megabytes, restartForUpdate, setAutoDownload, skipUpdate,
   useUpdates, type UpdateState,
 } from '../../state/updates';
 import { Meter, Row, Section, Toggle, type Say } from './parts';
@@ -27,17 +26,6 @@ const manualText = (state: UpdateState): string => {
   if (state.reason === 'dev') return 'Обновления работают в установленной программе. Эта копия запущена из исходников.';
   return 'Для этой системы обновлений пока нет.';
 };
-
-async function restart(say: Say): Promise<void> {
-  try {
-    await installUpdate();
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 409 || !/Агент/.test(error.message)) throw error;
-    if (!(await confirmDialog('Агент ещё работает', 'Перезапуск остановит текущую задачу. Сделанное сохранится, задачу можно будет продолжить после обновления.', 'Перезапустить'))) return;
-    await installUpdate(true);
-  }
-  say('Докки перезапустится через пару секунд');
-}
 
 export function UpdatesPage({ say }: { say: Say }) {
   const state = useUpdates((value) => value);
@@ -71,7 +59,7 @@ export function UpdatesPage({ say }: { say: Say }) {
           {state.status === 'preparing' && <Row title="Подготовка" detail="Проверяю подпись и собираю новую версию рядом с текущей…" />}
           {state.status === 'ready' && (
             <Row title="Готово к установке" detail="Докки закроется, поставит новую версию и откроется снова. Чаты и настройки сохранятся.">
-              <button type="button" className="pref-button primary" onClick={guarded(() => restart(say))}><RotateCw aria-hidden="true" /><span>Перезапустить и обновить</span></button>
+              <button type="button" className="pref-button primary" onClick={guarded(restartForUpdate)}><RotateCw aria-hidden="true" /><span>Перезапустить и обновить</span></button>
             </Row>
           )}
           {state.status === 'installing' && <Row title="Обновляю…" detail="Докки закроется и откроется уже новой версией." />}

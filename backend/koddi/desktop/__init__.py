@@ -8,6 +8,13 @@ from pathlib import Path
 _SOFTWARE = {"0", "false", "no", "off", "software"}
 
 
+def webengine_cache_path(storage: Path, version: str) -> Path:
+    """У каждой версии свой HTTP-кэш; хранилище пользователя остаётся общим."""
+    if not version or any(char not in "0123456789.-abcdefghijklmnopqrstuvwxyz" for char in version):
+        raise ValueError("Некорректная версия приложения")
+    return storage / "cache-versions" / version
+
+
 def render_mode_file() -> Path:
     from koddi.config import data_dir
 

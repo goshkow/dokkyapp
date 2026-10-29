@@ -110,6 +110,26 @@ def test_missing_tool_timeout_and_no_tests_are_never_success(env):
     assert failed["diagnostics"][0] == {"path": "src/a.ts", "line": 3, "message": "error TS2322: Type 'string' is not assignable"}
 
 
+@pytest.mark.skipif(os.name != "nt", reason="проверка кода выхода PowerShell")
+def test_windows_check_preserves_exit_codes(env):
+    executable = sys.executable.replace("'", "''")
+    items = [
+        checks.Check("passed", "test", "pytest", "", [sys.executable, "-c", "import sys; sys.exit(0)"]),
+        checks.Check("failed", "test", "pytest", "", [sys.executable, "-c", "import sys; sys.exit(2)"]),
+        checks.Check("no_tests", "test", "pytest", "", [sys.executable, "-c", "import sys; sys.exit(5)"]),
+        checks.Check("missing", "test", "pytest", "", ["dokky-test-missing-command"]),
+        checks.Check("shell_comment", "test", "custom", "", [
+            "__shell__", f"& '{executable}' -c 'import sys; sys.exit(3)' # комментарий",
+        ]),
+    ]
+    results = checks.run(env.runner, items)
+    assert [(item["status"], item["exit_code"]) for item in results[:3]] == [
+        ("passed", 0), ("failed", 2), ("no_tests", 5),
+    ]
+    assert results[3]["status"] == "environment" and results[3]["exit_code"] != 0
+    assert results[4]["status"] == "failed" and results[4]["exit_code"] == 3
+
+
 def test_python_tool_prefers_project_virtualenv(tmp_path):
     from koddi.quality.checks import _venv, _venv_has
 

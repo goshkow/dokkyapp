@@ -35,7 +35,7 @@ from koddi.config import data_dir
 from koddi.quality.contract import GateResult, Timer, cache_get, cache_put
 from koddi.quality.functions import Function
 
-MUTATION_VERSION = 1
+MUTATION_VERSION = 2
 OVERLAY_MARKER = ".dokky-overlay.json"
 MAX_OVERLAY_BYTES = 400 * 1024 * 1024
 MAX_OVERLAY_FILES = 60_000
@@ -395,12 +395,12 @@ def _python_for(check) -> str | None:
 
 def _runtime(runner, check, cwd: Path) -> str:
     from koddi.quality.checks import _shell_join
-    from koddi.tools.runner import shell_argv
+    from koddi.quality.checks import _check_shell_argv
 
     if not check.argv or check.argv[0] == "__shell__":
         return "shell"
     try:
-        result = runner.run_process(shell_argv(_shell_join([check.argv[0], "--version"])), cwd, 30)
+        result = runner.run_process(_check_shell_argv(_shell_join([check.argv[0], "--version"])), cwd, 30)
     except OSError:
         return "unknown"
     return ((result.get("stdout") or "") + (result.get("stderr") or "")).strip()[:120]
@@ -497,8 +497,7 @@ def mutation_key(item: dict[str, Any], ordinal: int) -> str:
 
 def mutation_gate(runner, root: Path, changed: list[Function], *, budget: dict[str, Any], coverage_data=None,
                   accessible=None, project_id: int | None = None, owner: str | None = None) -> GateResult:
-    from koddi.quality.checks import _shell_join, classify, detect
-    from koddi.tools.runner import shell_argv
+    from koddi.quality.checks import _check_shell_argv, _shell_join, classify, detect
 
     timer = Timer()
     checker = {"id": "dokky-mutation", "version": MUTATION_VERSION}
@@ -580,7 +579,7 @@ def mutation_gate(runner, root: Path, changed: list[Function], *, budget: dict[s
             started = time.monotonic()
             # базовый прогон тоже в общем бюджете времени гейта
             baseline_limit = int(min(float(budget.get("baseline_timeout", 300)), max(10.0, deadline - time.monotonic())))
-            baseline = runner.run_process(shell_argv(command), work, baseline_limit)
+            baseline = runner.run_process(_check_shell_argv(command), work, baseline_limit)
             baseline_seconds = time.monotonic() - started
             verdict = classify(check, baseline, overlay)
             if verdict["status"] == "cancelled":
@@ -615,7 +614,7 @@ def mutation_gate(runner, root: Path, changed: list[Function], *, budget: dict[s
                 target.write_bytes(mutated.encode("utf-8"))
                 clock.touch(target)
                 try:
-                    result = runner.run_process(shell_argv(command), work, per_mutant)
+                    result = runner.run_process(_check_shell_argv(command), work, per_mutant)
                 finally:
                     target.write_bytes(raw)
                     clock.touch(target)

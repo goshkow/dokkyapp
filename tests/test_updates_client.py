@@ -285,3 +285,45 @@ def test_macos_helper_keeps_new_version_when_backup_is_gone(updater, monkeypatch
     helper.write_text(service._macos_script(stage, "9.9.9", tmp_path / "log", pid=gone.pid, opener=str(opener), limit=2))
     subprocess.run(["/bin/sh", str(helper)], check=False, timeout=30)
     assert (bundle / "Contents" / "new").exists()
+
+
+def test_start_checks_for_updates_without_long_delay(updater, monkeypatch):
+    seen = []
+    updater._save(auto_download=False)
+    serve(updater, lambda request: seen.append(request.url.path) or httpx.Response(200, json=latest()))
+    monkeypatch.setattr(service, "FIRST_CHECK", (0, 1))
+    monkeypatch.setattr(service.secrets, "randbelow", lambda _: 0)
+    monkeypatch.setattr(updater, "mark_ready", lambda: None)
+    monkeypatch.setattr(updater, "cleanup", lambda: None)
+
+    async def run():
+        await updater.start()
+        for _ in range(100):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+        await updater.stop()
+    asyncio.run(run())
+    assert seen == [service.LATEST_PATH]
+    assert updater.state["status"] == "available"
+
+
+def test_check_does_not_interrupt_preparation(updater):
+    updater.state.update(status="preparing", available=latest()["stable"]["macos-arm64"]["dmg"])
+    assert asyncio.run(updater.check(manual=True))["status"] == "preparing"
+
+
+def test_update_waits_for_user_by_default(updater):
+    serve(updater, lambda request: httpx.Response(200, json=latest()))
+    state = asyncio.run(updater.check())
+    assert state["status"] == "available" and state["auto_download"] is False
+    assert updater._download is None
+
+
+def test_explicit_auto_download_is_preserved(updater, monkeypatch):
+    updater._save(auto_download=True)
+    started = []
+    monkeypatch.setattr(updater, "start_download", lambda: started.append(True))
+    serve(updater, lambda request: httpx.Response(200, json=latest()))
+    state = asyncio.run(updater.check())
+    assert state["auto_download"] is True and started == [True]

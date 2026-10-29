@@ -448,9 +448,22 @@ def classify(check: Check, result: dict, root: Path) -> dict[str, Any]:
             "signature": signature if status == "failed" else None}
 
 
+def _check_shell_argv(command: str) -> list[str]:
+    from koddi.tools.runner import shell_argv
+
+    if os.name == "nt":
+        # powershell сам завершает процесс с кодом 0 после неуспешной внешней команды
+        command = (
+            "$global:LASTEXITCODE = $null; " + command + "\n"
+            "$dokkyCheckOk = $?; if (-not $dokkyCheckOk) { "
+            "if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+            "exit 1 }; exit 0"
+        )
+    return shell_argv(command)
+
+
 def run(runner, checks: list[Check], *, timeout: int = DEFAULT_TIMEOUT) -> list[dict[str, Any]]:
     """Запуск по очереди: быстрые (lint, типы) первыми; отмена хода останавливает текущую команду и остальные."""
-    from koddi.tools.runner import shell_argv
 
     root = runner._require_workspace()
     access = WorkspacePaths(root)
@@ -472,7 +485,7 @@ def run(runner, checks: list[Check], *, timeout: int = DEFAULT_TIMEOUT) -> list[
         command = check.argv[1] if check.argv[0] == "__shell__" else _shell_join(check.argv)
         started = time.monotonic()
         try:
-            outcome = runner.run_process(shell_argv(command), cwd, min(left, timeout))
+            outcome = runner.run_process(_check_shell_argv(command), cwd, min(left, timeout))
         except OSError as exc:
             outcome = {"spawn_error": True, "stderr": str(exc)}
         results.append({**classify(check, outcome, root), "duration_seconds": round(time.monotonic() - started, 1)})
