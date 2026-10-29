@@ -1,9 +1,7 @@
 name: Release macOS
 
-# тег v<версия> собирает релиз сам (с суффиксом -rc - пре-релиз); руками: Actions -> Release macOS -> Run workflow
+# только вручную (релиз собирается локально, тег при публикации CI не запускает): Actions -> Release macOS -> Run workflow
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -126,9 +124,7 @@ jobs:
           fi
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             DRAFT=false
-            # vX.Y.Z - обычный релиз: зеркало сайта забирает только его и раздаёт приложению как обновление;
-            # версия с суффиксом (0.2.3-rc1) - пре-релиз, до приложений он не доходит
-            case "$GITHUB_REF_NAME" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+            PRERELEASE=true
           fi
           cd release
           shasum -a 256 *.dmg > SHA256SUMS-macos.txt

@@ -1,10 +1,8 @@
 name: Release Windows
 
-# тег v<версия> собирает релиз сам (с суффиксом -rc - пре-релиз); руками: Actions -> Release Windows -> Run workflow.
+# только вручную (релиз собирается локально, тег при публикации CI не запускает): Actions -> Release Windows -> Run workflow.
 # Файлы ложатся в тот же релиз, что и у Release macOS
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -163,9 +161,7 @@ jobs:
           fi
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             DRAFT=false
-            # vX.Y.Z - обычный релиз: зеркало сайта забирает только его и раздаёт приложению как обновление;
-            # версия с суффиксом (0.2.3-rc1) - пре-релиз, до приложений он не доходит
-            case "$GITHUB_REF_NAME" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+            PRERELEASE=true
           fi
           # релиз мог уже создать Release macOS: тогда только добавляем файлы
           if gh release view "$tag" >/dev/null 2>&1; then
