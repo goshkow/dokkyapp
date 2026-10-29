@@ -131,12 +131,18 @@ class Api:
         route.fulfill(content_type="application/json", body=json.dumps(value))
 
     def _value(self, method, path, body, query):
+        # открытие проекта запускает сборку карты на сервере; ответ окну не нужен
+        if method == "GET" and path.startswith("/api/projects/") and path.endswith("/map/state"):
+            return {"status": "ready", "version": 1, "files": 0, "truncated": False, "built_at": None, "watch": None}
         if path == "/api/settings":
             if method == "PUT" and isinstance(body, dict):
                 self.settings.update({k: v for k, v in body.items() if k in self.settings})
             return self.settings
         if path == "/api/dokky/session":
             return self.session()
+        if path == "/api/dokky/surface":
+            # режим чата через страницу сайта проверяет отдельный сценарий, остальные идут на своём чате
+            return {"available": False}
         if path == "/api/dokky/bootstrap":
             return self.session()["bootstrap"]
         if path == "/api/projects":
@@ -191,7 +197,7 @@ class Api:
 
 
 @contextmanager
-def browser_page(api: Api, *, viewport=(1280, 860), legacy=False, init_script: str | None = None, args: list[str] | None = None, clock: bool = False):
+def browser_page(api: Api, *, viewport=(1280, 860), legacy=False, init_script: str | None = None, args: list[str] | None = None, clock: bool = False, setup=None):
     """Открывает собранный интерфейс на подставном API и возвращает страницу."""
     handler = type("Handler", (_Handler,), {"base": WEB_LEGACY if legacy else WEB_NEXT})
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -209,6 +215,8 @@ def browser_page(api: Api, *, viewport=(1280, 860), legacy=False, init_script: s
             page.add_init_script(f"localStorage.setItem('koddi-product-scope','{api.scope}')")
             if init_script:
                 page.add_init_script(init_script)
+            if setup:  # свои маршруты до загрузки: например, подменная страница сайта во фрейме
+                setup(page)
             page.goto(f"http://127.0.0.1:{server.server_port}/ui/", wait_until="load")
             yield page
             browser.close()

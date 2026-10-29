@@ -1,15 +1,15 @@
 /**
  * Несколько веб-видов одного приложения (macOS, нативные плитки Liquid Glass): главный вид владеет состоянием и действиями,
- * вид плитки (роль sidebar, inspector или composer) показывает зеркало состояния и вызывает действия у главного вида.
+ * вид плитки (роль sidebar, inspector, composer или product) показывает зеркало состояния и вызывает действия у главного вида.
  * Связь идёт через хост (WindowBridge.relay -> window.koddiRelayIn); в обычном окне и в браузере зеркал нет.
  */
 import type { Store } from './store';
 
-export type Role = 'main' | 'sidebar' | 'inspector' | 'composer';
+export type Role = 'main' | 'sidebar' | 'inspector' | 'composer' | 'product';
 
 export const role: Role = (() => {
   const value = new URLSearchParams(location.search).get('role');
-  return value === 'sidebar' || value === 'inspector' || value === 'composer' ? value : 'main';
+  return value === 'sidebar' || value === 'inspector' || value === 'composer' || value === 'product' ? value : 'main';
 })();
 /** Вид плитки: состояния не владеет, действия отправляет главному виду. */
 export const isMirror = role !== 'main';

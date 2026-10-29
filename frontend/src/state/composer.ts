@@ -12,7 +12,8 @@ export interface ComposerState {
   agentMode: AgentMode;
   attachments: Attachment[];
   /** Подключённые навыки: уйдут вместе со следующим запросом. */
-  skills: Array<{ id: number; name: string }>;
+  /** у навыков и команд плагинов id строкой: plugin:<плагин>:<имя> */
+  skills: Array<{ id: number | string; name: string }>;
   uploads: UploadJob[];
   dragging: boolean;
   /** Растёт, когда нужно вернуть фокус в поле ввода. */

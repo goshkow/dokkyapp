@@ -190,22 +190,25 @@ class PanelTile:
 
 
 class ComposerTile:
-    """Поле ввода: нативное стекло лежит над главным веб-видом и само размывает ленту под собой, а поле (свой веб-вид) - внутри стекла."""
+    """Поле ввода: нативное стекло лежит над главным веб-видом и само размывает ленту под собой, а поле (свой веб-вид) - внутри стекла.
 
-    def __init__(self, host):
+    Так же устроен «Чат / Поиск» режима чата (роль product): блок берёт рамку с тем же id, что и роль.
+    """
+
+    def __init__(self, host, role: str = "composer"):
         from koddi.desktop import macos_frame, macos_glass
         from koddi.desktop.native_web import MacWebView
 
-        self.host, self.role = host, "composer"
+        self.host, self.role = host, role
         self.theme = "dark"
-        self.view = MacWebView(host, host.centralWidget(), "composer")
-        self.bridge, self.channel = host._install_page(self.view, "composer")
+        self.view = MacWebView(host, host.centralWidget(), role)
+        self.bridge, self.channel = host._install_page(self.view, role)
         # вид грузится сразу, но до первой рамки поля стоит за окном: без стекла рамок нет вовсе,
         # и в углу (0,0) он висел дубликатом поля ввода
         self.view.setGeometry(-10000, -10000, 400, 80)
         self.view.show()
         self.view.loadFinished.connect(lambda _ok: host.apply_lights(self.view))
-        self.view.load(QUrl(f"{host.api_base}/ui/?role=composer"))
+        self.view.load(QUrl(f"{host.api_base}/ui/?role={role}"))
         self.regions = macos_glass.RegionGlass(
             host.glass_content_view,
             lambda content: macos_frame.anchor_in(content, _nsview(host.view)),

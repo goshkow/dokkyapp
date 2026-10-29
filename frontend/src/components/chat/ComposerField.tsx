@@ -6,6 +6,7 @@ import { mod } from '../../lib/platform';
 import { useChat } from '../../state/chatCore';
 import { useData } from '../../state/data';
 import { fieldActions, fieldHost, uploadFromField, useField, useFieldHost, voiceMeter } from '../../state/field';
+import { useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { VoiceWave } from './VoiceWave';
 import { appendPastedText, pastedTextFile } from '../../lib/pastedText';
@@ -25,8 +26,14 @@ export function fieldClasses(expanded: boolean, dragging: boolean, recording: bo
  */
 export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefObject<HTMLButtonElement | null>; menuOpen?: boolean; onExpanded?: (expanded: boolean) => void }) {
   const scope = useUi((s) => s.scope);
-  const development = scope === 'development';
-  const search = scope === 'search';
+  // поле стоит на месте поля страницы сайта (режим чата со стеклом): отправку, остановку и вложения ведёт страница
+  const site = useSurface((s) => s.field);
+  const siteBusy = useSurface((s) => s.siteField?.busy ?? false);
+  const siteReady = useSurface((s) => s.siteField?.ready ?? false);
+  const siteClosed = useSurface((s) => Boolean(s.siteField?.disabled && !s.siteField.busy));
+  const sitePlaceholder = useSurface((s) => s.siteField?.placeholder ?? '');
+  const development = !site && scope === 'development';
+  const search = !site && scope === 'search';
   const settings = useData((s) => s.settings);
   const baseSize = useUi((s) => s.baseSize);
   const uiFont = useUi((s) => s.uiFont);
@@ -39,6 +46,7 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
   const focus = useField((s) => s.focus);
   const menu = useFieldHost((s) => s.menu);
   const prompt = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   const [text, setLocal] = useState(mirrored);
   const [tall, setTall] = useState(false);
   const [multiline, setMultiline] = useState(false);
@@ -124,10 +132,10 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
     return () => document.removeEventListener('pointerdown', close, true);
   }, []);
 
-  const ready = Boolean(text.trim() || hasFiles);
+  const ready = !(site && siteClosed) && Boolean(text.trim() || hasFiles || (site && siteReady));
   const queueable = development && running && ready;
-  const showStop = development && running;
-  const placeholder = transcribing ? 'Распознаю речь…' : running ? (settings.enter_sends !== false ? `Агент работает. Enter - в очередь, ${mod()}Enter - прервать и отправить` : `Агент работает. ${mod()}Enter - в очередь`) : search ? 'Что найти в интернете?' : development ? (narrow ? 'Опишите задачу' : 'Опишите задачу для проекта') : 'Спросить Докки';
+  const showStop = (development && running) || (site && siteBusy);
+  const placeholder = transcribing ? 'Распознаю речь…' : site ? (sitePlaceholder || 'Спросить Докки') : running ? (settings.enter_sends !== false ? `Агент работает. Enter - в очередь, ${mod()}Enter - прервать и отправить` : `Агент работает. ${mod()}Enter - в очередь`) : search ? 'Что найти в интернете?' : development ? (narrow ? 'Опишите задачу' : 'Опишите задачу для проекта') : 'Спросить Докки';
   const open = menuOpen ?? menu;
   const voiceBusy = recording || transcribing;
   const cancelLabel = transcribing ? 'Отменить распознавание' : 'Отменить запись';
@@ -148,13 +156,24 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         className="composer-icon"
         title={voiceBusy ? cancelLabel : 'Добавить'}
         aria-label={voiceBusy ? cancelLabel : 'Добавить'}
-        aria-haspopup={voiceBusy ? undefined : 'menu'}
-        aria-expanded={voiceBusy ? undefined : open}
+        aria-haspopup={voiceBusy || site ? undefined : 'menu'}
+        aria-expanded={voiceBusy || site ? undefined : open}
         hidden={search && !voiceBusy}
-        onClick={() => void (voiceBusy ? fieldActions.cancelVoice() : fieldActions.menu())}
+        // у страницы сайта своё меню вложений нет смысла повторять: «+» сразу открывает выбор файлов этого вида
+        onClick={() => void (voiceBusy ? fieldActions.cancelVoice() : site ? picker.current?.click() : fieldActions.menu())}
       >
         {voiceBusy ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
       </button>
+      {site && (
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          aria-label="Выбрать файлы"
+          onChange={(event) => { const picked = [...(event.target.files ?? [])]; event.target.value = ''; void uploadFromField(picked, true); }}
+        />
+      )}
       <textarea
         id="prompt"
         ref={prompt}
@@ -193,7 +212,7 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
       />
       {recording && <VoiceWave levels={isMirror ? levelsFromMeter : undefined} />}
       {recording && <VoiceTimer />}
-      {tall && (
+      {tall && !site && (
         <button id="expand-composer" type="button" className="composer-icon expand-composer" title="Развернуть поле ввода" aria-label="Развернуть поле ввода" onClick={() => void fieldActions.expand()}>
           <Maximize2 aria-hidden="true" />
         </button>
@@ -212,9 +231,9 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         type="button"
         className={`composer-icon${ready ? ' ready' : ''}${showStop ? ' is-running' : ''}`}
         data-icon={showStop ? 'stop' : 'send'}
-        title={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? 'Остановить выполнение' : 'Отправить'}
-        aria-label={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? 'Остановить выполнение' : 'Отправить'}
-        disabled={stopping || transcribing}
+        title={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? (site ? 'Остановить генерацию' : 'Остановить выполнение') : 'Отправить'}
+        aria-label={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? (site ? 'Остановить генерацию' : 'Остановить выполнение') : 'Отправить'}
+        disabled={stopping || transcribing || (site && siteClosed && !recording)}
         onClick={() => void (recording ? fieldActions.stopVoice() : fieldActions.sendOrStop())}
       >
         {showStop && !recording ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}

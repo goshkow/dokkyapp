@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from koddi.storage.db import db
@@ -15,7 +16,7 @@ class SkillError(ValueError):
 
 def ensure_builtin() -> None:
     """Стандартные навыки появляются сами и обновляются с версией каталога; пользовательские с тем же именем не трогаются."""
-    from koddi.skills.catalog import BUILTIN, VERSION
+    from koddi.skills.catalog import BUILTIN, METADATA, VERSION
 
     with db() as conn:
         rows = {row["name"]: json.loads(row["workflow_json"] or "{}") for row in conn.execute("SELECT name, workflow_json FROM skills")}
@@ -27,7 +28,7 @@ def ensure_builtin() -> None:
                 continue
             workflow = {
                 "builtin": True, "key": item["key"], "version": VERSION, "category": item["category"],
-                "instructions": item["instructions"], "mode": "development",
+                "instructions": item["instructions"], "mode": "development", **METADATA.get(item["key"], {}),
             }
             conn.execute(
                 """
@@ -94,7 +95,30 @@ def list_skills() -> list[dict]:
     ensure_builtin()
     with db() as conn:
         rows = conn.execute("SELECT * FROM skills ORDER BY name").fetchall()
-    return [_skill_dict(row) for row in rows]
+    return [_skill_dict(row) for row in rows] + plugin_skills()
+
+
+def plugin_skills() -> list[dict]:
+    """Навыки и команды включённых плагинов текущего аккаунта; id у них строка `plugin:<плагин>:<имя>`."""
+    from fastapi import HTTPException
+
+    from koddi.plugins.store import skill_entries
+    from koddi.policy.account import local_owner
+
+    try:
+        owner = local_owner()
+    except HTTPException:
+        return []
+    try:
+        entries = skill_entries(owner)
+    except Exception as exc:
+        # сломанный плагин не должен прятать собственные навыки человека
+        from koddi.logs import log_event
+
+        log_event("WARNING", "plugins.skills_failed", f"Навыки плагинов не загружены: {type(exc).__name__}")
+        return []
+    disabled = disabled_skills()
+    return [{**item, "enabled": item["name"] not in disabled} for item in entries]
 
 
 def skill_instruction(skill: dict) -> str:
@@ -108,7 +132,20 @@ def skill_instruction(skill: dict) -> str:
     return "\n".join(f"{index}. {line}" for index, line in enumerate(lines, 1) if line) or str(skill.get("description") or "")
 
 
-def skill_block(skill_ids: list[int]) -> tuple[str, list[str]]:
+def slash_skill(content: str) -> str | None:
+    """id навыка или команды плагина по первому слову `/имя` сообщения; короткое имя - только если оно однозначно."""
+    match = re.match(r"^/([a-z0-9][a-z0-9._:-]{0,129})(?=\s|$)", (content or "").lstrip())
+    if not match:
+        return None
+    wanted = match.group(1)
+    entries = plugin_skills()
+    exact = [item for item in entries if item["name"] == wanted]
+    short = [item for item in entries if item["name"].split(":", 1)[1] == wanted]
+    found = exact or (short if len(short) == 1 else [])
+    return found[0]["id"] if found else None
+
+
+def skill_block(skill_ids: list[int | str]) -> tuple[str, list[str]]:
     """Блок инструкций выбранных навыков для начала пользовательского сообщения и список их названий.
 
     Это указание пользователя, а не системное: оно действует в рамках прав приложения и не отменяет правил безопасности.
@@ -124,8 +161,17 @@ def skill_block(skill_ids: list[int]) -> tuple[str, list[str]]:
         skill = by_id.get(skill_id)
         if not skill:
             raise SkillError("Выбранный навык не найден")
+        text = skill_instruction(skill)
+        if skill.get("plugin"):
+            from koddi.plugins.store import PluginError, entry_text
+            from koddi.policy.account import local_owner
+
+            try:
+                _, text = entry_text(skill["name"], local_owner())
+            except PluginError as exc:
+                raise SkillError(str(exc)) from exc
         names.append(skill["name"])
-        parts.append(f'<skill name="{skill["name"]}">\n{skill_instruction(skill)}\n</skill>')
+        parts.append(f'<skill name="{skill["name"]}">\n{text}\n</skill>')
     head = (
         "Пользователь подключил навыки к этому запросу. Это его инструкции: следуй им, пока они не противоречат "
         "правилам безопасности и правам приложения."
@@ -153,9 +199,31 @@ def apply_skill(skill_id: int, task: str) -> dict:
     return {"ok": True, "skill": skill, "task": created}
 
 
+def disabled_skills() -> set[str]:
+    from koddi.storage.db import get_setting
+
+    return {str(item) for item in get_setting("skills_disabled", []) or []}
+
+
+def set_skill_enabled(skill_id: int, enabled: bool) -> dict:
+    """Отключённый навык не предлагается агенту и не загружается через skill.load; выбор вручную остаётся."""
+    from koddi.storage.db import set_setting
+
+    with db() as conn:
+        row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+    if not row:
+        raise SkillError("Навык не найден")
+    current = disabled_skills()
+    name = row["name"]
+    current.discard(name) if enabled else current.add(name)
+    set_setting("skills_disabled", sorted(current))
+    return _skill_dict(row)
+
+
 def _skill_dict(row) -> dict:
     item = dict(row)
     item["workflow"] = json.loads(item.pop("workflow_json") or "{}")
     item["builtin"] = bool(item["workflow"].get("builtin"))
+    item["enabled"] = item["name"] not in disabled_skills()
     item["category"] = str(item["workflow"].get("category") or ("Мои навыки" if not item["builtin"] else "Прочее"))
     return item

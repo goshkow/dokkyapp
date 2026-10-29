@@ -50,3 +50,12 @@ async def test_mcp_failure_never_returns_fake_empty_success(monkeypatch):
     result = await module.mcp_tools_list_async()
     assert result["ok"] is False
     assert result["server_statuses"][0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_list_without_config_is_empty_not_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(module, "mcp_config_path", lambda: tmp_path / "missing.json")
+    result = await module.mcp_tools_list_async()
+    assert result["ok"] is True
+    assert result["tools"] == [] and result["servers"] == []
+    assert "error" not in result

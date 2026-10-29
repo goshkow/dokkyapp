@@ -47,7 +47,14 @@ class DesktopTransportGuard:
             and scope.get("method") == "GET"
             and scope.get("path") == "/api/dokky/auth/callback"
         )
-        if secrets.compare_digest(value, expected) or callback:
+        # Origin шлют POST, WebSocket и запросы из чужих страниц: интерфейс приложения - только со своего адреса,
+        # даже если ключ к запросу как-то приложился (iframe сайта внутри окна, у WebSocket нет CORS)
+        sender = headers.get(b"origin")
+        foreign = sender is not None and self.access.origin is not None and sender != self.access.origin.encode("ascii")
+        # GET картинкой или скриптом с другой страницы идёт без Origin, но с кукой окна macOS: такие запросы выдаёт
+        # Sec-Fetch-Site (другой порт того же 127.0.0.1 - same-site, тоже чужой)
+        foreign = foreign or headers.get(b"sec-fetch-site", b"same-origin") not in {b"same-origin", b"none"}
+        if callback or (not foreign and secrets.compare_digest(value, expected)):
             await self.app(scope, receive, send)
             return
         if scope["type"] == "websocket":

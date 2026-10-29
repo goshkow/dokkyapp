@@ -108,11 +108,25 @@ def environment_info() -> dict[str, str]:
     return {"os": f"{system} {version}".strip(), "shell": f"{shell} -l (shell.run)", "notes": notes}
 
 
+HOME_WORKSPACE_NOTE = (
+    "This is the user's general Докки folder for chats without a project, not a project: keep new files here unless "
+    "the user names another place. Other files on the computer are reachable by absolute paths through the permission mode."
+)
+
+
+def workspace_note(workspace: Path | None) -> str | None:
+    from koddi.projects import is_home
+
+    return HOME_WORKSPACE_NOTE if is_home(workspace) else None
+
+
 def compose_coding_context(
     *, mode: str, workspace: Path | None, project_id: int | None,
     memory: list[dict[str, Any]] | None = None,
     plan: list[dict] | None = None,
     depth: str = "light",
+    project_map: dict | None = None,
+    hints: dict | None = None,
 ) -> dict:
     from koddi.logs.service import redact
     from koddi.policy.grants import permission_profile
@@ -128,6 +142,7 @@ def compose_coding_context(
             MODE_FILES.get(normalized_mode, MODE_FILES["chat"]), f"Mode: {normalized_mode}"
         ),
         "workspace": str(workspace.resolve()) if workspace else None,
+        "workspace_note": workspace_note(workspace),
         "environment": environment_info(),
         "policy_profile": permission_profile(project_id),
         "context_budget": get_setting("context_budget", "medium"),
@@ -137,6 +152,16 @@ def compose_coding_context(
         # пустая строка тоже входит в снимок: удаление инструкций доходит до модели обычной дельтой
         "user_instructions": user_instructions(),
     }
+    if project_map:
+        # обзор карты меняется только при новых папках или заметках, поэтому дельта снимка редкая
+        context["project_map"] = redact(project_map)
+    # подсказки хода: пустое значение тоже входит, чтобы прошлые подсказки снимались дельтой
+    if hints is not None:
+        context["skill_suggestions"] = hints.get("skill_suggestions") or {}
+        context["knowledge_hints"] = redact(hints.get("knowledge_hints") or {})
+        if "engineering_state" in hints:
+            context["engineering_state"] = redact(hints["engineering_state"])
+        context["plugin_hooks"] = redact(hints.get("plugin_hooks") or {})
     return {"role": "user", "content": CONTEXT_PREFIX + json.dumps(context, ensure_ascii=False)}
 
 
@@ -226,7 +251,7 @@ def compose_system_prompt(
             "## Active mode\n" + mode_prompt,
             "## Workspace\n"
             + (
-                str(workspace.resolve())
+                str(workspace.resolve()) + (f"\n{workspace_note(workspace)}" if workspace_note(workspace) else "")
                 if workspace
                 else "No workspace selected. Ask the user to open or create a project before editing files."
             ),

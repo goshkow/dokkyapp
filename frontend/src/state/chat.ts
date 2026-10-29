@@ -22,6 +22,8 @@ import { choiceDialog, confirmDialog, inputDialog, notify } from './overlay';
 import { enqueueDraft, refreshProjectPermissions, refreshQueue, resetPermissions, resetQueue } from './queue';
 import { resetCloudPreferences } from './cloudPrefs';
 import { resetSearch } from './search';
+import { sendToSite, siteFieldActive, stopSite } from './siteField';
+import { surface } from './surface';
 import { closeViewers } from './viewers';
 import { openSettings } from './settingsUi';
 import { ui } from './ui';
@@ -407,25 +409,13 @@ async function sendLocalDraft(prepared: () => void): Promise<void> {
     openSettings('account');
     return;
   }
-  let mode = composer.get().agentMode;
+  const mode = composer.get().agentMode;
   const version = view.get().version;
   const scope = ui.get().scope;
   const accountId = data.get().account?.user?.id;
   const currentView = () => version === view.get().version && scope === ui.get().scope && accountId === data.get().account?.user?.id;
-  let { project } = view.get();
-  if (['development', 'debug'].includes(mode) && !project) {
-    const choice = await inputDialog('Выберите рабочую папку', [{
-      name: 'project_id', label: 'Проект', type: 'select',
-      options: [{ value: '', label: 'Обычный чат без файлов' }, ...data.get().projects.map((item) => ({ value: item.id, label: item.name }))],
-    }], 'Продолжить');
-    if (!choice || !currentView()) return;
-    project = data.get().projects.find((item) => item.id === Number(choice.project_id)) ?? null;
-    view.set({ project });
-    if (!project) {
-      mode = 'chat';
-      composer.set({ agentMode: 'chat' });
-    }
-  }
+  // чат без проекта работает в папке «Докки» в документах: её выдаёт сервер приложения при создании чата
+  const { project } = view.get();
   let current = view.get().chat;
   if (!current) {
     current = await post<Chat>('/api/chats', { title: 'Новый чат', project_id: project?.id ?? null, mode, model }, { signal: ctl.view.signal });
@@ -592,14 +582,18 @@ hooks.sync = syncChat;
 hooks.attach = attachStream;
 hooks.stop = stopLocal;
 
-export const send = (): Promise<void> => (isDevelopment() ? sendLocal() : sendCloud());
+// в режиме чата со стеклом поле приложения стоит на месте поля сайта: отправляет и останавливает страница сайта
+export const send = (): Promise<void> => (siteFieldActive() ? Promise.resolve(sendToSite()) : isDevelopment() ? sendLocal() : sendCloud());
 async function stopCloud(): Promise<void> {
   const { runId } = chat.get();
   if (runId) await post(cloudPath(`runs/${encodeURIComponent(runId)}/cancel`));
   else if (submission) { submission.cancelled = true; setStatus('Останавливаю отправку…'); }
 }
 /** Кнопка отправки во время работы агента: в разработке останавливает ход, в облаке отменяет запуск. */
-export const sendOrStop = (): Promise<void> => (chat.get().running ? (isDevelopment() ? stopLocal() : stopCloud()) : send());
+export const sendOrStop = (): Promise<void> => {
+  if (siteFieldActive()) return Promise.resolve(surface.get().siteField?.busy ? stopSite() : sendToSite());
+  return chat.get().running ? (isDevelopment() ? stopLocal() : stopCloud()) : send();
+};
 export const loadOlder = (): Promise<void> => (isDevelopment() ? loadOlderLocal() : loadOlderCloud());
 export const reloadChat = (): void => {
   const current = view.get().chat;
@@ -699,7 +693,7 @@ export async function chooseWorkspace(): Promise<void> {
   const current = view.get().project;
   const value = await inputDialog('Рабочая папка', [{
     name: 'project_id', label: 'Проект', type: 'select', value: current?.id ?? '',
-    options: [{ value: '', label: 'Без проекта' }, ...data.get().projects.map((item) => ({ value: item.id, label: item.name }))],
+    options: [{ value: '', label: 'Без проекта (Документы/Докки)' }, ...data.get().projects.map((item) => ({ value: item.id, label: item.name }))],
   }]);
   if (!value) return;
   const project = data.get().projects.find((item) => item.id === Number(value.project_id)) ?? null;

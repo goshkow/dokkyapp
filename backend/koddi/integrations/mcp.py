@@ -16,10 +16,40 @@ def mcp_config_path() -> Path:
     return runtime_path("mcp", "servers.json")
 
 
+class MissingMcpConfig(ValueError):
+    pass
+
+
+def plugin_servers() -> dict[str, dict]:
+    """MCP-серверы плагинов, которые человек разрешил для их текущей версии (только своего аккаунта)."""
+    from fastapi import HTTPException
+
+    from koddi.plugins.store import mcp_servers
+    from koddi.policy.account import local_owner
+
+    try:
+        return mcp_servers(local_owner())
+    except HTTPException:
+        return {}
+    except Exception as exc:
+        # сломанный плагин не должен отключать собственные MCP-серверы человека
+        from koddi.logs import log_event
+
+        log_event("WARNING", "plugins.mcp_failed", f"MCP плагинов не загружены: {type(exc).__name__}")
+        return {}
+
+
+def mcp_configured() -> bool:
+    return mcp_config_path().is_file() or bool(plugin_servers())
+
+
 def _load_servers() -> dict[str, dict]:
     path = mcp_config_path()
+    plugins = plugin_servers()
     if not path.is_file():
-        raise ValueError("MCP config not found")
+        if plugins:
+            return plugins
+        raise MissingMcpConfig("MCP config not found")
     config = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(config, dict):
         raise ValueError("MCP config must be an object")
@@ -28,7 +58,8 @@ def _load_servers() -> dict[str, dict]:
         not isinstance(value, dict) for value in servers.values()
     ):
         raise ValueError("MCP config requires a servers or mcpServers object")
-    return servers
+    # имена серверов плагинов начинаются с plugin. и не перекрывают настроенные человеком
+    return {**plugins, **servers}
 
 
 def _timeout(server: dict) -> float:
@@ -140,6 +171,16 @@ def run_sync(coroutine):
 async def mcp_tools_list_async() -> dict:
     try:
         servers = _load_servers()
+    except MissingMcpConfig:
+        # серверов просто нет - это не сбой, иначе модель считает ошибкой и пытается чинить
+        return {
+            "ok": True,
+            "servers": [],
+            "tools": [],
+            "server_statuses": [],
+            "errors": [],
+            "note": "MCP-серверы не настроены, внешних MCP-инструментов нет",
+        }
     except Exception as exc:
         return {"ok": False, "error": _error(exc), "config_path": str(mcp_config_path())}
     tools = []

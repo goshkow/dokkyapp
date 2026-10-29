@@ -5,11 +5,12 @@ import { togglePanel } from './panels';
 import { signOut } from './session';
 import { openBilling, openSettings } from './settingsUi';
 import { ui, type Scope } from './ui';
-import { goBack, goForward, newChat, openPage, view, type PageKey } from './view';
+import { openSection, startChat, surface } from './surface';
+import { goBack, goForward, openPage, view, type PageKey } from './view';
 
 declare global {
   interface Window {
-    /** Команды строки меню macOS; вызывает хост окна. */
+    /** Команды строки меню macOS и меню значка в трее; вызывает хост окна. */
     koddiMenu?: (action: string) => void;
   }
 }
@@ -50,10 +51,14 @@ async function run(action: string): Promise<void> {
   const page = DEV_PAGES[action];
   if (page) return goToPage(page, 'development');
   switch (action) {
-    case 'page-library': return goToPage('library', 'chat');
+    case 'page-library':
+      if (surface.get().status === 'off') return goToPage('library', 'chat');
+      if (ui.get().scope === 'development') await switchScope('chat');
+      return openSection('library');
     case 'billing': return openBilling();
+    case 'usage': return openSettings('usage');
     case 'sign-out': return signOut();
-    case 'new-chat': return newChat(ui.get().scope === 'development' ? view.get().project ?? lastProject() : null);
+    case 'new-chat': return startChat(ui.get().scope === 'development' ? view.get().project ?? lastProject() : null);
     case 'toggle-left': return togglePanel('left');
     case 'toggle-right': return togglePanel('right');
     case 'back': return goBack();

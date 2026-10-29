@@ -5,12 +5,12 @@ import hashlib
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from koddi.integrations.mcp import mcp_config_path, mcp_tools_list_async
+from koddi.integrations.mcp import mcp_config_path, mcp_tools_list_async, plugin_servers
 
 
 async def discover_agent_tools() -> tuple[list[dict], dict[str, tuple[str, str]], list[dict]]:
     """Отдаёт модели точные схемы MCP, а исполнение пропускает через политику."""
-    if not mcp_config_path().is_file():
+    if not mcp_config_path().is_file() and not plugin_servers():
         return [], {}, []
     result = await mcp_tools_list_async()
     schemas, bindings = [], {}

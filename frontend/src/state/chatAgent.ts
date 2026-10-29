@@ -65,6 +65,33 @@ export function setChanges(changes: Change[] | Change | null | undefined): void 
 
 export const selectChange = (key: string): void => chat.set({ changeSelection: key });
 
+interface CheckpointFile { path: string; action: 'restore' | 'delete' | 'create'; conflict: boolean }
+
+/** Откат всех правок хода агента; файлы, изменённые после агента, не трогаются. */
+export async function restoreTurn(turnId: number, afterSync: () => Promise<void>): Promise<void> {
+  const preview = await api<{ files: CheckpointFile[] }>(`/api/turns/${turnId}/checkpoint`);
+  if (!preview.files.length) {
+    notify('В этом ходе нет правок, которые можно откатить');
+    return;
+  }
+  const free = preview.files.filter((file) => !file.conflict);
+  const busy = preview.files.filter((file) => file.conflict).map((file) => file.path);
+  if (!free.length) throw new Error('Все файлы хода изменились после агента: откат остановлен, чтобы не затереть эти правки');
+  const verbs = { restore: 'вернуть', delete: 'удалить созданный агентом', create: 'восстановить удалённый' } as const;
+  const lines = free.slice(0, 12).map((file) => `${file.path} - ${verbs[file.action]}`);
+  if (free.length > 12) lines.push(`и ещё ${free.length - 12}`);
+  if (busy.length) lines.push(`Не трогаем (изменены после агента): ${busy.join(', ')}`);
+  if (!(await confirmDialog('Откатить весь ход агента?', lines.join('\n'), 'Откатить'))) return;
+  const result = await post<{ restored: boolean; reason?: string; conflicts?: string[] }>(
+    `/api/turns/${turnId}/checkpoint/restore`, { paths: free.map((file) => file.path) },
+  );
+  if (!result.restored) {
+    throw new Error(result.conflicts?.length ? `Файлы изменились во время отката: ${result.conflicts.join(', ')}` : result.reason || 'Откат не выполнен');
+  }
+  await afterSync();
+  notify('Правки хода отменены, откат можно отменить в изменениях');
+}
+
 export async function rollbackChange(id: Change['id'], fileCount: number, afterSync: () => Promise<void>): Promise<void> {
   const text = fileCount > 1
     ? `Будет отменён весь набор изменений. Файлов: ${fileCount}. Это затронет не только открытый файл.`

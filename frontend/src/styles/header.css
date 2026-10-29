@@ -31,5 +31,3 @@ main:not(.chat-page) { grid-template-rows: var(--controls-h) minmax(0, 1fr); }
 .chat-header .ai-product-switch[data-away] { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.22s ease, visibility 0s linear 0.22s; }
 
 /* чат виден в Докки на телефоне */
-.chat-phone-mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-right: 6px; color: var(--muted); }
-.chat-phone-mark svg { width: 16px; height: 16px; }

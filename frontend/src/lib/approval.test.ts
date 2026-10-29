@@ -29,3 +29,12 @@ describe('подтверждение действий', () => {
     expect(summarizeApproval('file.create', { paths: Array.from({ length: 1000 }, (_, n) => `file-${n}`) }).scope).toHaveLength(100);
   });
 });
+
+describe('подтверждение гейтов качества', () => {
+  it('предупреждает, что мутации и сбор покрытия запускают тесты проекта', () => {
+    const result = summarizeApproval('quality.run', { gates: ['crap', 'mutation'], coverage: 'collect' });
+    expect(result.title).toBe('Проверить качество кода');
+    expect(result.details).toEqual(expect.arrayContaining(['Гейты: crap, mutation', 'Сбор покрытия запускает тесты проекта']));
+    expect(result.details.some((line) => line.startsWith('Мутации запускают тесты'))).toBe(true);
+  });
+});

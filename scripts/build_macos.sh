@@ -76,6 +76,7 @@ rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_h
   --include-module=unicodedata \
   --include-data-files="$QT_RU=qt_translations/qtbase_ru.qm" \
   --include-data-dir=backend/koddi/computer_use/native=koddi/computer_use/native \
+  --include-data-dir=backend/koddi/codeintel/native=koddi/codeintel/native \
   --include-data-dir=backend/koddi/licenses=koddi/licenses \
   --include-data-dir=prompts=prompts \
   --include-data-dir=locales=locales \

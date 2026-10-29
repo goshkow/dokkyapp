@@ -40,22 +40,24 @@ html.glass .side-top::before, html.glass .side-bottom::before { display: none; }
 html.glass .shell-controls-left { left: max(var(--controls-left-min), calc(var(--lw) - 114px)); }
 
 /* список чатов растворяется у краёв вместо затемнения */
+/* внизу список гаснет до строки профиля, а размытие идёт под всем подвалом до края плитки - иначе текст проступал под именем */
 html.glass .sidebar-scroll {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 78px), transparent calc(100% - 30px));
-  mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 78px), transparent calc(100% - 30px));
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 104px), transparent calc(100% - 56px));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 104px), transparent calc(100% - 56px));
 }
 html.glass .sidebar-panel::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--footer-h) + 4px);
-  height: 52px;
+  bottom: 0;
+  z-index: 3;
+  height: calc(var(--footer-h) + 76px);
   pointer-events: none;
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
-  -webkit-mask-image: linear-gradient(to top, transparent, #000 60%, transparent);
-  mask-image: linear-gradient(to top, transparent, #000 60%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  -webkit-mask-image: linear-gradient(to top, #000 calc(var(--footer-h) + 18px), transparent);
+  mask-image: linear-gradient(to top, #000 calc(var(--footer-h) + 18px), transparent);
 }
 
 /* правая панель: каждая карточка отдельная стеклянная плитка */
@@ -68,6 +70,9 @@ html.glass .inspector-card { border: 1px solid var(--tile-edge); border-radius: 
 html.glass { --glass-base: color-mix(in srgb, var(--bg) 80%, #000); }
 html.glass[data-theme="light"] { --glass-base: var(--bg); }
 html.glass .chat-edge-fade-top { display: none; }
+/* сплошная подложка --bg под полем (для очереди и карточек) под стеклом ложилась светлым прямоугольником не в тон окна:
+   ленту у низа растворяет затемнение ниже, а у очереди и карточек своё размытие */
+html.glass #composer::before { display: none; }
 html.glass main.chat-page .chat-edge-fade-bottom {
   display: block;
   height: calc(var(--feed-bottom, 140px) + 6px);
@@ -87,6 +92,11 @@ html.glass .chat-page > #feed {
 /* нативные плитки: левое меню живёт в своём виде внутри NSGlassEffectView */
 /* главный вид: колонка меню пуста, плитку рисует хост; кнопки навигации при открытом меню лежат в плитке */
 html.native-tiles:not(.tile) .sidebar-panel { background: none; border: 0; box-shadow: none; }
+/* у слоя с размытием свой композитный слой; когда хост переставляет плитку под страницу (модалка), WebKit пересобирает
+   слои и без своего слоя подвал оказывался под размытием */
+html.glass .side-bottom { z-index: 4; will-change: transform; }
+/* размытие низа меню рисует сама плитка; в пустой колонке главного вида оно легло бы поверх подвала плитки */
+html.native-tiles:not(.tile) .sidebar-panel::after { display: none; }
 html.native-tiles:not(.tile) .shell-controls-left { left: var(--controls-left-min); }
 #shell.tile-left .shell-controls-left { opacity: 0; pointer-events: none; }
 /* вид плитки: страница прозрачна, стекло даёт хост */
@@ -165,3 +175,10 @@ html.native-tiles:not(.tile) .composer-field.field-slot::after { display: none; 
 html.tile #composer { position: fixed; inset: 0; width: 100%; max-width: none; justify-self: stretch; padding: 0; margin: 0; }
 html.tile #composer .composer-field { box-sizing: border-box; height: 100%; min-height: 0; }
 html.tile #composer .composer-field::after { inset: auto 24px 0; }
+
+/* вид плитки «Чат / Поиск» в режиме чата: переключатель целиком - содержимое нативного стекла, своей подложки нет */
+html.tile .tile-product { position: fixed; inset: 0; width: 100%; height: 100%; transform: none; background: transparent; border-color: transparent; }
+html.tile .tile-product .ai-product-indicator {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+  box-shadow: inset 0 0.5px 0 var(--tile-light), 0 1px 3px rgba(0, 0, 0, 0.12);
+}

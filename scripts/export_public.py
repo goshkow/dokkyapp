@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # и рабочие записки разработки: требования к серверу и проекты, по которым ещё идёт работа
 NEVER = (
     "internal/", "TASKS.md", "PROJECT_CONTEXT.md", "_screens/", ".env",
-    "docs/UPDATES_API_SPEC.md", "docs/UPDATES_CLIENT_DESIGN.md", "docs/PROMPT_CACHE_CLIENT.md", "docs/PLAN_0.2.1.md",
+    "docs/UPDATES_API_SPEC.md", "DOKKY_AGENT_QUALITY_UPGRADE.md", "DOKKY_UB_MODE_ENGINEERING_UPGRADE.md", "docs/UPDATES_CLIENT_DESIGN.md", "docs/PROMPT_CACHE_CLIENT.md", "docs/PLAN_0.2.1.md",
 )
 AUTHOR = ("goshkow", "goshkow@users.noreply.github.com")
 

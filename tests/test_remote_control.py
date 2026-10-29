@@ -551,6 +551,17 @@ def test_settings_endpoints_and_sharing(tmp_path, monkeypatch):
         assert client.put(f"/api/chats/{chat}/remote", json={"shared": "no"}).status_code == 422
         assert client.put(f"/api/chats/{chat}/remote", json={"shared": False}).json() == {"chat_id": chat, "shared": False}
         assert client.put("/api/chats/999999/remote", json={"shared": True}).status_code == 404
+        # новые чаты по умолчанию видны на сайте; настройка выключена - новый чат остаётся только на компьютере
+        assert client.get("/api/remote-control").json()["share_new"] is True
+        assert client.put("/api/remote-control", json={"share_new": "нет"}).status_code == 422
+        assert client.put("/api/remote-control", json={"share_new": False}).json()["share_new"] is False
+        private = client.post("/api/chats", json={"title": "Только здесь"}).json()["id"]
+        assert client.get("/api/remote-control").json()["shared"][str(private)] is False
+        asyncio.run(remote_control.sync_sessions())
+        assert outbox.session(private)["shared"] == 0
+        # вручную включённый чат уходит на сайт и при выключенной настройке
+        assert client.put(f"/api/chats/{private}/remote", json={"shared": True}).json()["shared"] is True
+        assert client.put("/api/remote-control", json={"share_new": True}).json()["share_new"] is True
         assert client.put("/api/remote-control", json={"enabled": False}).json()["state"] == "off"
     assert remote_control.supervisor is None
     with TestClient(create_app()) as client:

@@ -391,6 +391,21 @@ class RemoteAIClient:
                                         code=error.get("code", "upstream_unavailable"),
                                     )
                                 raise RemoteAIError("AI-сервер сообщил об ошибке генерации")
+                            progress = payload.get("dokky_progress")
+                            if isinstance(progress, dict) and isinstance(progress.get("tool"), dict):
+                                # подпись действия, которое модель ещё пишет: сам вызов придёт целиком в конце ответа
+                                tool = progress["tool"]
+                                name, path = tool.get("name"), tool.get("path")
+                                if isinstance(name, str) and 0 < len(name) <= 128:
+                                    yield {
+                                        "tool_progress": {
+                                            "id": "",
+                                            "name": names.get(name, name),
+                                            "path": path if isinstance(path, str) and len(path) <= 300 else None,
+                                            "bytes_received": tool["chars"] if type(tool.get("chars")) is int else 0,
+                                        },
+                                        "index": tool["index"] if type(tool.get("index")) is int else 0,
+                                    }
                             if payload.get("dokky"):
                                 from koddi.dokky.privacy import scrub_money
 

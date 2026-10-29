@@ -9,7 +9,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from koddi.agents.progress import FailureTracker, local_title
+from koddi.agents.progress import FailureTracker, local_title, progress_text
 from koddi.agents.telemetry import ObservedClient, TurnMetrics, current_metrics
 from koddi.agents.history import (
     CHECKPOINT,
@@ -40,6 +40,7 @@ from koddi.storage.db import db, get_setting, durable_write
 from koddi.tools import TOOL_SCHEMAS, ToolRunner, tool_schemas_for_mode
 from koddi.tools.output_store import save_tool_output
 from koddi.tools.runner import tool_output_excerpt
+from koddi.quality.contract import compact
 
 
 def sse(event: str, data: Any) -> str:
@@ -108,6 +109,17 @@ async def execute_tool_events(runner, name, args, cancel_event, *, approved=Fals
         await asyncio.gather(pending, return_exceptions=True)
 
 
+async def plugin_hook(function: str, *args):
+    """Хуки плагинов не роняют ход: сбой самих хуков пишется в журнал, ход идёт как без них."""
+    from koddi.plugins import hooks
+
+    try:
+        return await asyncio.to_thread(getattr(hooks, function), *args)
+    except Exception as exc:
+        audit_event("WARNING", "plugins.hook_failed", type(exc).__name__, {"hook": function})
+        return None
+
+
 def control_tool(
     name: str, description: str, properties: dict, required: list | None = None
 ) -> dict:
@@ -145,10 +157,61 @@ CONTROL_TOOLS = [
                             "type": "string",
                             "enum": ["pending", "running", "completed", "blocked"],
                         },
+                        "check": {
+                            "type": "string",
+                            "maxLength": 200,
+                            "description": "Check id proving this step.",
+                        },
                     },
                     "required": ["title", "status"],
                     "additionalProperties": False,
                 },
+            },
+            "contract": {
+                "type": "object",
+                "description": "Machine-checkable task contract for non-trivial work, set before writing code: goal, "
+                "acceptance (verifiable criteria), test_plan (which tests or checks prove each criterion; for a bug, the "
+                "failing test or repro first), non_goals, scope, assumptions, risks, affected_components. Kept across "
+                "restarts; task.complete must give evidence for every acceptance item.",
+                "properties": {
+                    "goal": {"type": "string", "maxLength": 2000},
+                    **{
+                        key: {"type": "array", "items": {"type": "string", "maxLength": 500}, "maxItems": 30}
+                        for key in ("acceptance", "test_plan", "non_goals", "scope", "assumptions", "risks", "affected_components")
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "stage": {
+                "type": "string",
+                "enum": ["make_it_work", "make_it_right", "practice"],
+                "description": "Current stage; advance only with passing checks.",
+            },
+            "root_cause": {
+                "type": "object",
+                "description": "Bug: symptom → why chain → root cause.",
+                "properties": {
+                    "symptom": {"type": "string"},
+                    "chain": {"type": "array", "items": {"type": "string"}},
+                    "cause": {"type": "string"},
+                },
+                "required": ["cause"],
+            },
+            "premise": {
+                "type": "object",
+                "description": "After repeated failures: wrong assumption, refuting facts, new approach.",
+                "properties": {
+                    "assumption": {"type": "string"},
+                    "refuting_facts": {"type": "array", "items": {"type": "string"}},
+                    "new_approach": {"type": "string"},
+                },
+                "required": ["assumption", "refuting_facts", "new_approach"],
+            },
+            "decision": {
+                "type": "object",
+                "description": "Significant decision for the persistent log.",
+                "properties": {"kind": {"type": "string"}, "summary": {"type": "string"}},
+                "required": ["summary"],
             },
         },
         required=["steps"],
@@ -160,8 +223,27 @@ CONTROL_TOOLS = [
             "summary": {
                 "type": "string",
                 "description": "Final report in Markdown for the user's language: one outcome sentence, then short ## sections (what changed, checks, what remains) with lists, `code` for paths and commands, **bold** for key facts. No walls of text.",
-            }
+            },
+            "evidence": {
+                "type": "array",
+                "description": "One item per acceptance criterion of the contract: met / not_met / unverified, with the "
+                "qa.run check id or ui.verify check_id that proves it. A criterion without a passed check is reported to "
+                "the user as unverified.",
+                "maxItems": 40,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "criterion": {"type": "string", "maxLength": 500},
+                        "status": {"type": "string", "enum": ["met", "not_met", "unverified"]},
+                        "check": {"type": "string", "maxLength": 200},
+                        "proof": {"type": "string", "maxLength": 500},
+                    },
+                    "required": ["criterion", "status"],
+                    "additionalProperties": False,
+                },
+            },
         },
+        required=["summary"],
     ),
     control_tool(
         "task.ask_user",
@@ -301,6 +383,7 @@ class AgentOrchestrator:
         metric_token = current_metrics.set(metrics)
         client = ObservedClient(client, metrics)
         failures = FailureTracker()
+        stop_blocks = 0
         plan: list[dict] = []
         created_ids: list[int] = []
 
@@ -363,6 +446,9 @@ class AgentOrchestrator:
                 previous = json.loads(previous_plan[0])
                 if any(s.get("status") in {"pending", "running"} for s in previous):
                     plan = previous
+                    from koddi.quality.gate import inherit_contract
+
+                    await asyncio.to_thread(inherit_contract, chat_id, turn_id)
             allowed_names = (
                 {t["function"]["name"] for t in tool_schemas_for_mode(mode)} if workspace else set()
             )
@@ -401,10 +487,10 @@ class AgentOrchestrator:
                 mode in {"development", "debug"}
                 or (config.get("provider") == "dokky" and mode in {"plan", "review"})
             ):
-                from koddi.integrations.mcp import mcp_config_path
+                from koddi.integrations.mcp import mcp_configured
                 from koddi.policy.grants import permission_profile
 
-                configured = mcp_config_path().is_file()
+                configured = mcp_configured()
                 connect_allowed = not configured or permission_profile(project_id) in {"trusted", "full"}
                 if not connect_allowed:
                     answer = {}
@@ -469,6 +555,23 @@ class AgentOrchestrator:
 
                 tools.sort(key=lambda item: item["function"]["name"])
             memory = await asyncio.to_thread(retrieve_memory, project_id, user_message)
+            project_map = None
+            if workspace is not None and mode != "chat":
+                from koddi.policy.account import local_owner as map_owner
+                from koddi.projectmap import context_snapshot
+
+                try:
+                    # обзор готовой карты в снимок; если её ещё нет, фон начнёт сборку к следующим вызовам
+                    project_map = await asyncio.to_thread(context_snapshot, project_id, workspace, map_owner())
+                except Exception as exc:
+                    audit_event("WARNING", "project_map.snapshot", str(exc)[:300], {"project_id": project_id})
+            hints = None
+            if workspace is not None and mode != "chat" and config.get("provider") == "dokky":
+                from koddi.agents.hints import turn_hints
+
+                hints = await asyncio.to_thread(
+                    turn_hints, project_id, workspace, user_message, {item["function"]["name"] for item in tools}, chat_id
+                )
             current_context = None
             context_checkpoint = False
             depth = "light"
@@ -478,7 +581,8 @@ class AgentOrchestrator:
                 depth = turn_mode(chat_id)
                 system = compose_coding_system_prompt()
                 current_context = compose_coding_context(
-                    project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth,
+                    project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth, project_map=project_map,
+                    hints=hints,
                 )
             else:
                 system, _, _ = compose_system_prompt(
@@ -534,11 +638,13 @@ class AgentOrchestrator:
                     from koddi.tools.schemas import tool_schemas_for_new_session
                     from koddi.policy.account import local_owner
                     from koddi.computer_use.service import consent_enabled
+                    from koddi.policy.engine import _mcp_servers_enabled
 
                     tools = tool_schemas_for_new_session(
                         tools,
                         runtime_extensions=get_setting("coding_runtime_extensions:" + local_owner(), False) is True,
                         computer_use=consent_enabled(),
+                        mcp=_mcp_servers_enabled(),
                     )
                 tools = compatible_tools(canonical["tools"], tools)
                 tools = [{"type": item["type"], "function": deepcopy(item["function"])} for item in tools]
@@ -614,6 +720,10 @@ class AgentOrchestrator:
                 messages.append(reminder)
                 await durable_write(journal, chat_id, reminder)
             runner = ToolRunner(workspace, project_id, turn_id, False, cancel_event, review_actions=True)
+            # инженерный цикл (red/green, атака на предпосылку) включается только в сессиях с quality.run:
+            # закреплённые старые сессии ведут себя как раньше
+            runner.ub_workflow = "quality.run" in {item["function"]["name"] for item in tools}
+            runner.quality_depth = depth
             if first and config.get("provider") == "dokky":
                 title = local_title(display_message if display_message is not None else user_message)
                 with db() as conn:
@@ -679,7 +789,8 @@ class AgentOrchestrator:
 
                     if force_compaction or measured_context >= context_limit(active_config) * 0.9:
                         current_context = compose_coding_context(
-                            project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth,
+                            project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth, project_map=project_map,
+                            hints=hints,
                         )
                         async for event in responsive_stream(transition(chat_id, messages=messages, config=active_config, runtime_context=current_context), cancel_event):
                             if "event" in event:
@@ -705,7 +816,7 @@ class AgentOrchestrator:
                     if current_context is not None:
                         current_context = compose_coding_context(
                             project_id=project_id, mode=mode, workspace=workspace,
-                            memory=memory, plan=plan, depth=depth,
+                            memory=memory, plan=plan, depth=depth, project_map=project_map, hints=hints,
                         )
                         fixed.append(current_context)
                     latest_developer = next(
@@ -853,6 +964,7 @@ class AgentOrchestrator:
                             progress = dict(chunk["tool_progress"])
                             if progress.get("name") in mcp_bindings:
                                 progress["display_name"] = "/".join(mcp_bindings[progress["name"]])
+                            progress["text"] = progress_text(progress)
                             yield sse("tool.progress", {**progress, "message_id": message_id})
                         if "tool_call" in chunk:
                             calls.append(chunk["tool_call"])
@@ -1048,6 +1160,14 @@ class AgentOrchestrator:
                         # документ плана (plan.md) существует только в режиме планирования: в разработке модель
                         # иногда присылает его сама, хотя её просили искать или исправлять, а не планировать
                         document = str(args.get("document") or "") if mode == "plan" else ""
+                        if valid and args.get("contract"):
+                            from koddi.quality.gate import save_contract
+
+                            result["contract"] = await asyncio.to_thread(save_contract, turn_id, args["contract"])
+                        if valid and any(key in args for key in ("stage", "root_cause", "premise", "decision")) or (
+                            valid and any(isinstance(step, dict) and step.get("check") for step in proposed)
+                        ):
+                            result.update(await asyncio.to_thread(self._workflow_update, turn_id, project_id, workspace, args))
                         if valid:
                             plan = proposed
                             with db() as conn:
@@ -1070,6 +1190,8 @@ class AgentOrchestrator:
                                 result = {"ok": True, "response": value}
                     elif name == "task.complete":
                         diagnostics = getattr(runner, "completion_diagnostics", lambda: [])()
+                        result = None
+                        quality_report = ""
                         if mode != "plan" and diagnostics:
                             result = {"ok": False, "error": "Исправьте ошибки синтаксиса в изменённых файлах", "checks": diagnostics}
                         elif mode != "plan" and any(
@@ -1080,14 +1202,30 @@ class AgentOrchestrator:
                                 "error": "В плане есть незавершённые шаги. Завершите их или отметьте блокировку с объяснением.",
                             }
                         else:
+                            async for value in self._quality_gate(
+                                client, selected, cancel_event, turn_id=turn_id, workspace=workspace, project_id=project_id,
+                                mode=mode, tool_names={t["function"]["name"] for t in tools} & allowed_names,
+                                evidence=args.get("evidence"), task=user_message, runner=runner, depth=depth,
+                            ):
+                                if isinstance(value, str):
+                                    yield value
+                                else:
+                                    result, quality_report = value
+                        if result is None:
+                            reason = await plugin_hook("stop", project_id, workspace, chat_id, stop_blocks)
+                            if reason:
+                                stop_blocks += 1
+                                result = {"ok": False, "error": "A plugin Stop hook the user approved asks to keep working "
+                                          "before finishing. Address it, then call task.complete again: " + reason}
+                        if result is None:
                             result, complete = {"ok": True}, True
-                            completion_summary = args["summary"]
+                            completion_summary = args["summary"] + (f"\n\n---\n{quality_report}" if quality_report else "")
                             final_id = await durable_write(create_message, chat_id, "text", turn_id)
                             created_ids.append(final_id)
                             await durable_write(
                                 save_message,
                                 final_id,
-                                args.get("summary", ""),
+                                completion_summary,
                                 {"status": "completed", "channel": "final"},
                             )
                             yield sse(
@@ -1133,6 +1271,10 @@ class AgentOrchestrator:
                                 role="coder",
                             )
                             update_task_status(child_task["id"], "running")
+                            from koddi.changes.writer import release as release_writer
+
+                            # родитель ждёт дочерний ход и сам не пишет: замок папки переходит к ребёнку
+                            release_writer(turn_id)
                             child_stream = AgentOrchestrator(client.client, _depth=self._depth + 1).run(
                                 chat_id=child_chat,
                                 project_id=project_id,
@@ -1207,65 +1349,76 @@ class AgentOrchestrator:
                                 "name": tool_name,
                                 "arguments": args,
                             }
-                        execution_started = monotonic()
-                        async for update in execute_tool_events(
-                            runner, execution_name, execution_args, cancel_event
-                        ):
-                            if "waiting_seconds" in update:
-                                yield sse(
-                                    "tool.waiting", {**data, "seconds": update["waiting_seconds"]}
+                        binding = mcp_bindings.get(name)
+                        # хук плагина может только запретить: до вопроса человеку и до исполнения
+                        hook_block = await plugin_hook("pre_tool", project_id, workspace, chat_id, name, args, binding)
+                        if hook_block:
+                            result = {"ok": False, "error": "A plugin PreToolUse hook the user approved blocked this "
+                                      "action: " + hook_block}
+                        else:
+                            execution_started = monotonic()
+                            async for update in execute_tool_events(
+                                runner, execution_name, execution_args, cancel_event
+                            ):
+                                if "waiting_seconds" in update:
+                                    yield sse(
+                                        "tool.waiting", {**data, "seconds": update["waiting_seconds"]}
+                                    )
+                                else:
+                                    result = update["result"]
+                            tool_elapsed += monotonic() - execution_started
+                            if result.get("approval_required"):
+                                action = describe_action(
+                                    execution_name, execution_args,
+                                    external=result.get("external"), dangerous=bool(result.get("dangerous")),
                                 )
-                            else:
-                                result = update["result"]
-                        tool_elapsed += monotonic() - execution_started
-                        if result.get("approval_required"):
-                            action = describe_action(
-                                execution_name, execution_args,
-                                external=result.get("external"), dangerous=bool(result.get("dangerous")),
-                            )
-                            verdict = None
-                            if result.get("review"):
-                                yield sse("agent.status", {"text": "Докки проверяет действие: " + action["title"].lower()})
-                                verdict = await review_action(
-                                    client, model=selected, task=user_message, plan=plan,
-                                    workspace=str(workspace) if workspace else None,
-                                    tool=execution_name, args=execution_args, action=action,
-                                    responsive=lambda iterator: responsive_stream(iterator, cancel_event),
-                                )
-                                audit_event("INFO", "tool.review", execution_name, {
-                                    key: verdict[key] for key in ("available", "allowed", "necessity", "safety")
-                                })
-                            answer = {"approved": True} if verdict and verdict["allowed"] else {}
-                            if verdict and verdict["allowed"]:
-                                yield sse("agent.status", {"text": "Докки проверил и разрешил: " + (verdict["reason"] or action["title"].lower())})
-                            else:
-                                async for value in wait_input("approval", {**data, "action": action, "review": verdict}):
-                                    if isinstance(value, str):
-                                        yield value
-                                    else:
-                                        answer = value
-                            if answer.get("approved") is True:
-                                execution_started = monotonic()
-                                async for update in execute_tool_events(
-                                    runner,
-                                    execution_name,
-                                    execution_args,
-                                    cancel_event,
-                                    approved=True,
-                                ):
-                                    if "waiting_seconds" in update:
-                                        yield sse(
-                                            "tool.waiting",
-                                            {**data, "seconds": update["waiting_seconds"]},
-                                        )
-                                    else:
-                                        result = update["result"]
-                                tool_elapsed += monotonic() - execution_started
-                            else:
-                                result = {
-                                    "ok": False,
-                                    "error": "Пользователь запретил действие. Не повторяйте без нового разрешения.",
-                                }
+                                verdict = None
+                                if result.get("review"):
+                                    yield sse("agent.status", {"text": "Докки проверяет действие: " + action["title"].lower()})
+                                    verdict = await review_action(
+                                        client, model=selected, task=user_message, plan=plan,
+                                        workspace=str(workspace) if workspace else None,
+                                        tool=execution_name, args=execution_args, action=action,
+                                        responsive=lambda iterator: responsive_stream(iterator, cancel_event),
+                                    )
+                                    audit_event("INFO", "tool.review", execution_name, {
+                                        key: verdict[key] for key in ("available", "allowed", "necessity", "safety")
+                                    })
+                                answer = {"approved": True} if verdict and verdict["allowed"] else {}
+                                if verdict and verdict["allowed"]:
+                                    yield sse("agent.status", {"text": "Докки проверил и разрешил: " + (verdict["reason"] or action["title"].lower())})
+                                else:
+                                    async for value in wait_input("approval", {**data, "action": action, "review": verdict}):
+                                        if isinstance(value, str):
+                                            yield value
+                                        else:
+                                            answer = value
+                                if answer.get("approved") is True:
+                                    execution_started = monotonic()
+                                    async for update in execute_tool_events(
+                                        runner,
+                                        execution_name,
+                                        execution_args,
+                                        cancel_event,
+                                        approved=True,
+                                    ):
+                                        if "waiting_seconds" in update:
+                                            yield sse(
+                                                "tool.waiting",
+                                                {**data, "seconds": update["waiting_seconds"]},
+                                            )
+                                        else:
+                                            result = update["result"]
+                                    tool_elapsed += monotonic() - execution_started
+                                else:
+                                    result = {
+                                        "ok": False,
+                                        "error": "Пользователь запретил действие. Не повторяйте без нового разрешения.",
+                                    }
+                            if result.get("ok") is not False:
+                                notes = await plugin_hook("post_tool", project_id, workspace, chat_id, name, args, result, binding)
+                                if notes:
+                                    result = {**result, "plugin_hook_feedback": notes}
                     metrics.tool(result, tool_elapsed)
                     if args is not None:
                         failures.record(name, args, result)
@@ -1384,6 +1537,9 @@ class AgentOrchestrator:
                 )
             yield sse("turn.failed", {"turn_id": turn_id, "error": error, **details})
         finally:
+            from koddi.changes.writer import release
+
+            release(turn_id)
             current_metrics.reset(metric_token)
             if "runner" in locals() and getattr(runner, "read_cache", None) is not None:
                 metrics.local_read_cache = runner.read_cache.stats()
@@ -1410,6 +1566,112 @@ class AgentOrchestrator:
                             "UPDATE messages SET metadata_json=? WHERE id=?",
                             (json.dumps(metadata, ensure_ascii=False), row["id"]),
                         )
+
+    async def _quality_gate(self, client, model: str, cancel_event, *, turn_id: int, workspace: Path | None,
+                            project_id: int | None, mode: str, tool_names: set[str], evidence: Any, task: str,
+                            runner=None, depth: str | None = None):
+        """Гейт перед task.complete: отдаёт события SSE и последним - (отказ или None, отчёт для итога)."""
+        from koddi.quality import gate
+        from koddi.quality.reviewer import needed, review_changes
+
+        if workspace is None or "qa.run" not in tool_names:
+            yield (None, "")
+            return
+        changes = await asyncio.to_thread(gate.turn_changes, turn_id)
+        review_enabled = await asyncio.to_thread(needed, changes, workspace)
+
+        def evaluate():
+            return gate.evaluate(turn_id=turn_id, workspace=workspace, project_id=project_id, mode=mode,
+                                 tool_names=tool_names, evidence=evidence, review_enabled=review_enabled)
+
+        decision = await asyncio.to_thread(evaluate)
+        quality_results: list = []
+        if (decision.allow and changes and runner is not None and "quality.run" in tool_names
+                and mode in gate.GATED_MODES and project_id is not None):
+            from koddi.quality import engine
+
+            yield sse("agent.status", {"text": "Объективные гейты качества"})
+            contract = (await asyncio.to_thread(gate.load, turn_id)).get("contract") or {}
+            try:
+                quality_results, budget = await asyncio.to_thread(engine.automatic, runner, depth=depth, changes=changes,
+                                                                  contract=contract)
+            except Exception as exc:  # noqa: BLE001 - сбой гейтов не должен терять готовую работу
+                audit_event("ERROR", "quality.auto", f"{type(exc).__name__}: {str(exc)[:200]}", {"turn_id": turn_id})
+                quality_results, budget = [], {}
+            if quality_results:
+                compacted = [compact(item) for item in quality_results]
+                metrics = current_metrics.get(None)
+                if metrics is not None:
+                    metrics.gates(compacted)
+                yield sse("quality.gates", {"turn_id": turn_id, "gates": compacted, "level": budget.get("level")})
+            refused = await asyncio.to_thread(self._quality_block, turn_id, engine.blocking(quality_results, budget))
+            if refused is not None:
+                yield sse("quality.updated", {"turn_id": turn_id, "state": "repairing", "allowed": False, "report": ""})
+                yield (refused, "")
+                return
+        if decision.review_request is not None:
+            yield sse("agent.status", {"text": "Независимое ревью изменений"})
+            request = decision.review_request
+            verdict = await review_changes(
+                client, model=model, task=task, root=workspace, changes=request["changes"], contract=request["contract"],
+                qa=request["qa"], responsive=lambda iterator: responsive_stream(iterator, cancel_event),
+                quality=[compact(item, limit=4) for item in quality_results] or None,
+            )
+            audit_event("INFO", "quality.review", "independent review", {
+                "available": verdict.get("available"), "findings": len(verdict.get("findings") or []),
+                "blocking": sum(1 for item in verdict.get("findings") or [] if item.get("blocking")),
+                "dropped": verdict.get("dropped", 0),
+            })
+            refused = await asyncio.to_thread(gate.apply_review, turn_id, request["fingerprint"], verdict)
+            decision = refused or await asyncio.to_thread(evaluate)
+        report = decision.report
+        if decision.allow and quality_results:
+            from koddi.quality import engine
+
+            report = (report + "\n" if report else "") + "Объективные гейты:\n" + "\n".join(engine.report_lines(quality_results))
+        if decision.state != "implemented" or not decision.allow:
+            yield sse("quality.updated", {"turn_id": turn_id, "state": decision.state, "allowed": decision.allow,
+                                          "report": report})
+        if not decision.allow:
+            yield ({"ok": False, "error": decision.error, "quality_state": decision.state, **decision.details}, "")
+            return
+        yield (None, report)
+
+    @staticmethod
+    def _workflow_update(turn_id: int, project_id: int | None, workspace: Path | None, args: dict) -> dict:
+        from koddi.quality import gate, workflow
+
+        state = gate.load(turn_id)
+        changes = gate.turn_changes(turn_id)
+        current = bool(workspace) and bool(changes) and state.get("qa_fingerprint") == gate.fingerprint(workspace, list(changes))
+        return workflow.apply_plan_update(turn_id, project_id, args, qa=state.get("qa"), current=current)
+
+    @staticmethod
+    def _quality_block(turn_id: int, failed: list) -> dict | None:
+        """Провал объективного гейта останавливает завершение один раз на версию кода и в пределах общего лимита."""
+        from koddi.quality import gate, workflow
+
+        if not failed:
+            return None
+        state = gate.load(turn_id)
+        if int(state["gate_blocks"]) >= gate.MAX_GATE_BLOCKS:
+            return None
+        flow = workflow.load(turn_id)
+        seen = set(flow.get("quality_blocks") or [])
+        fresh = [item for item in failed if f"{item.gate}:{item.source_revision}" not in seen]
+        if not fresh:
+            return None  # на этой версии кода уже останавливали: дальше - честный отчёт, а не цикл
+        flow["quality_blocks"] = [*seen, *(f"{item.gate}:{item.source_revision}" for item in fresh)][-30:]
+        workflow.save(turn_id, flow)
+        gate.save(turn_id, gate_blocks=int(state["gate_blocks"]) + 1, state="repairing")
+        workflow.log_decision(turn_id, None, kind="quality",
+                              summary="завершение остановлено гейтами: " + ", ".join(item.gate for item in fresh))
+        return {"ok": False, "quality_state": "repairing",
+                "error": "Objective quality gates failed for the changed code: " + ", ".join(item.gate for item in fresh)
+                + ". Fix the findings (smallest change, behavioural tests rather than wrappers), run qa.run, then "
+                "task.complete again. If a finding is wrong or out of scope, explain it in the final report - the gate "
+                "stops completion only once per code version.",
+                "quality_gates": [compact(item, limit=6) for item in fresh]}
 
     @staticmethod
     def _control_error(name: str, args: dict) -> str | None:

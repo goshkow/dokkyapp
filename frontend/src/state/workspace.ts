@@ -6,7 +6,7 @@ import { confirmDialog, notify } from './overlay';
 import { setPanel } from './panels';
 import { view } from './view';
 
-export type Focus = '' | 'diff' | 'files' | 'plan' | 'browser';
+export type Focus = '' | 'diff' | 'files' | 'plan' | 'browser' | 'map' | 'quality';
 
 export interface EditorFile {
   projectId: number;
@@ -31,6 +31,8 @@ interface WorkspaceState {
   overview: { environment: boolean; context: boolean };
   tree: TreeState;
   editor: EditorFile | null;
+  // папка, открытая с карты проекта: список файлов показывает только её
+  folder: string | null;
 }
 
 export const workspace = createStore<WorkspaceState>({
@@ -38,6 +40,7 @@ export const workspace = createStore<WorkspaceState>({
   overview: { environment: true, context: true },
   tree: { state: 'idle', files: [], error: '', projectId: null },
   editor: null,
+  folder: null,
 });
 export const useWorkspace = <S,>(selector: (state: WorkspaceState) => S): S => useStore(workspace, selector);
 
@@ -63,7 +66,7 @@ export function clearEditor(): void {
 export function resetWorkspace(): void {
   clearEditor();
   treeRequest += 1;
-  workspace.set({ tree: { state: 'idle', files: [], error: '', projectId: null } });
+  workspace.set({ tree: { state: 'idle', files: [], error: '', projectId: null }, folder: null });
 }
 
 export async function loadFiles(): Promise<void> {
@@ -96,6 +99,14 @@ export async function selectInspector(key: Focus): Promise<void> {
   setPanel('right', true, false);
   if (key === 'files') await loadFiles();
 }
+
+/** Папка с карты проекта: карточка «Файлы» со списком только этой папки. */
+export async function openFolder(path: string): Promise<void> {
+  workspace.set({ folder: path.replace(/\/+$/, '') || null });
+  await selectInspector('files');
+}
+
+export const showAllFiles = (): void => workspace.set({ folder: null });
 
 export const collapseFocus = (): void => workspace.set({ focus: '' });
 

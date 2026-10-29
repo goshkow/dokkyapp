@@ -14,7 +14,7 @@ from dataclasses import replace
 from functools import wraps
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlparse, urlsplit
 
 import httpx
 
@@ -45,6 +45,8 @@ _MAX_BROWSER_REQUESTS = 300
 _MAX_BROWSER_BYTES = 20 * 1024 * 1024
 _BROWSER_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="koddi-browser")
 _NETWORK_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="koddi-browser-http")
+# подзапросы страницы: как у Chromium, до 6 одновременно, иначе тяжёлые сайты не успевают собрать DOM
+_ROUTE_THREAD = ThreadPoolExecutor(max_workers=6, thread_name_prefix="koddi-browser-route")
 
 
 def _network_call(function, *args, **kwargs):
@@ -255,6 +257,53 @@ def _short_error(exc: BaseException) -> str:
     return (text[0] if text else exc.__class__.__name__)[:300]
 
 
+# ответ сервера ждём дольше, чем сборку DOM: без ответа страницы нет, а без DOM уже можно читать часть
+_COMMIT_MS = 20_000
+_DOM_MS = 10_000
+
+
+def _load(page: Any, go: Callable[..., Any], url: str, meta: dict) -> dict:
+    """Переход в два шага: ждём ответ сервера, потом DOM. Медленный DOM - не ошибка, страница уже открыта."""
+    from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout
+
+    started = time.monotonic()
+    for _ in range(DEFAULT_LIMITS.max_redirects + 1):
+        meta.pop("redirect", None)
+        try:
+            go(wait_until="commit", timeout=_COMMIT_MS)
+            break
+        except PlaywrightTimeout as exc:
+            host = urlsplit(url).hostname or url
+            raise NetworkAccessError(
+                f"{host} не ответил за {_COMMIT_MS // 1000} с. Повтор того же адреса не поможет: "
+                "попробуй web.fetch или другой адрес"
+            ) from exc
+        except PlaywrightError:
+            target = meta.pop("redirect", None)
+            if not target:
+                raise
+            # новый переход снова идёт через проверку адреса и DNS pin в route_request
+            url = str(validate_url(target))
+            try:
+                # отменённый переход сначала уводит на страницу ошибки Chrome, иначе она перебьёт наш
+                page.wait_for_url(lambda current: current.startswith("chrome-error:"), timeout=2000)
+            except PlaywrightError:
+                pass
+            go = lambda target=url, **kw: page.goto(target, **kw)  # noqa: E731
+    else:
+        raise NetworkAccessError("слишком много редиректов")
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=_DOM_MS)
+    except PlaywrightTimeout:
+        return {
+            "loading": True,
+            "note": f"страница ответила, но не догрузилась за {_DOM_MS // 1000} с; "
+            "browser.snapshot покажет то, что уже есть",
+            "load_ms": int((time.monotonic() - started) * 1000),
+        }
+    return {"load_ms": int((time.monotonic() - started) * 1000)}
+
+
 @browser_thread
 def browser_open(
     url: str,
@@ -284,7 +333,8 @@ def browser_open(
     if target is not None and not (native and is_loopback_url(target_url)):
         _network_call(resolve_target, target, allow_private=allow_private)
     browser = _ensure_browser()
-    context = browser.new_context(service_workers="block", accept_downloads=False)
+    # плотность как у экранов Retina: в панели кадр показывается в натуральную величину и не мылится
+    context = browser.new_context(service_workers="block", accept_downloads=False, device_scale_factor=2)
     session_id = next(_SESSION_IDS)
     events: dict[str, list[dict[str, Any]]] = {"console": [], "network": []}
     meta = {
@@ -333,15 +383,23 @@ def browser_open(
                 if redirects > DEFAULT_LIMITS.max_redirects:
                     raise NetworkAccessError("redirect limit exceeded")
                 previous = previous.redirected_from
-            response = _network_call(
-                fetch_response,
+            headers = request.all_headers()
+            pending = _ROUTE_THREAD.submit(lambda: asyncio.run(fetch_response(
                 request.url, allow_private=allow_private, method=request.method,
-                headers=request.all_headers(), content=request.post_data_buffer,
+                headers=headers, content=request.post_data_buffer,
                 follow_redirects=False, limits=replace_limits(remaining_bytes, remaining_seconds),
-            )
-            # Playwright не маршрутизирует продолжение HTTP-редиректа повторно
+            )))
+            # обработчик живёт в своём greenlet: пока ждём сеть, Playwright обслуживает соседние запросы
+            while not pending.done():
+                page.wait_for_timeout(5)
+            response = pending.result()
             if response.status_code in REDIRECT_STATUSES:
-                raise NetworkAccessError("browser HTTP redirects are not supported")
+                # продолжение редиректа Playwright сам не маршрутизирует; переход по Location делает _load
+                location = response.headers.get("location")
+                if location and request.is_navigation_request() and request.frame == page.main_frame:
+                    meta["redirect"] = urljoin(request.url, location)
+                route.abort("blockedbyclient")
+                return
             budget["bytes"] += len(response.content)
             if budget["bytes"] > _MAX_BROWSER_BYTES:
                 raise NetworkAccessError("browser byte limit exceeded")
@@ -353,7 +411,13 @@ def browser_open(
             route.fulfill(
                 status=response.status_code, headers=response_headers, body=response.content,
             )
-        except Exception:
+        except Exception as exc:
+            if request.is_navigation_request():
+                # без этого модель видит только net::ERR_BLOCKED_BY_CLIENT и гадает о причине
+                state["failure"] = _short_error(exc)
+                from koddi.logs import log_event
+
+                log_event("WARNING", "browser.navigation", "navigation blocked", {"url": request.url[:500], "error": state["failure"]})
             route.abort("blockedbyclient")
 
     def route_socket(socket: Any) -> None:
@@ -438,7 +502,7 @@ def browser_open(
         page.on("requestfailed", add_failure)
         page.on("framenavigated", on_navigated)
         page.set_viewport_size(dict(_VIEWPORT))
-        page.goto(target_url, wait_until="domcontentloaded", timeout=30_000)
+        loaded = _load(page, lambda **kw: page.goto(target_url, **kw), target_url, meta)
         state["opening"] = False
         title = page.title()
         meta["title"] = title
@@ -452,13 +516,19 @@ def browser_open(
         _SESSION_EVENTS[session_id] = events
         _META[session_id] = meta
         _notify("browser.session", {"action": "opened", **_info(session_id)})
-        return {"ok": True, "session_id": session_id, "url": page.url, "title": title, "local": meta["local"]}
-    except BaseException:
+        return {"ok": True, "session_id": session_id, "url": page.url, "title": title, "local": meta["local"], **loaded}
+    except BaseException as exc:
         forget_page()
         try:
             context.close()
         except Exception:
             pass
+        if isinstance(exc, Exception) and not isinstance(exc, NetworkAccessError):
+            from koddi.logs import log_event
+
+            log_event("ERROR", "browser.open", "page open failed", {"url": target_url[:500], "error": str(exc)[:2000]})
+            reason = state.get("failure") or _short_error(exc)
+            raise NetworkAccessError(f"страница не открылась: {reason}") from exc
         raise
 
 
@@ -538,16 +608,17 @@ def _navigate(session_id: int, page: Any, payload: dict) -> dict:
     since = meta.get("seq", 0)
     action = payload.get("action") or ("goto" if payload.get("url") else "")
     if action == "back":
-        page.go_back(wait_until="domcontentloaded", timeout=15_000)
+        loaded = _load(page, page.go_back, page.url, meta)
     elif action == "forward":
-        page.go_forward(wait_until="domcontentloaded", timeout=15_000)
+        loaded = _load(page, page.go_forward, page.url, meta)
     elif action == "reload":
-        page.reload(wait_until="domcontentloaded", timeout=30_000)
+        loaded = _load(page, page.reload, page.url, meta)
     elif action in {"goto", ""} and payload.get("url"):
-        page.goto(_check_navigation(meta, str(payload["url"])), wait_until="domcontentloaded", timeout=30_000)
+        target = _check_navigation(meta, str(payload["url"]))
+        loaded = _load(page, lambda **kw: page.goto(target, **kw), target, meta)
     else:
         raise ValueError("нужен url или action: back, forward, reload")
-    return _outcome(session_id, page, since)
+    return _outcome(session_id, page, since, **loaded)
 
 
 def _dom_html(page: Any, payload: dict) -> dict:
@@ -738,12 +809,13 @@ def _close_session(session_id: int) -> None:
 
 # живой вид и ввод пользователя
 @browser_thread
-def browser_frame(session_id: int, quality: int = 55) -> dict:
+def browser_frame(session_id: int, quality: int = 55, *, raw: bool = False) -> dict:
+    """Кадр живого окна; raw отдаёт байты JPEG без base64 - панель берёт кадры потоком, лишняя перекодировка заметна."""
     page = _PAGES.get(session_id)
     if page is None:
         return {"ok": False, "error": "browser session not found"}
     try:
-        data = page.screenshot(type="jpeg", quality=max(20, min(int(quality), 90)), timeout=5000)
+        data = page.screenshot(type="jpeg", quality=max(20, min(int(quality), 90)), timeout=5000, animations="allow", caret="initial")
         try:
             title = page.title()
         except Exception:  # noqa: BLE001 - идёт навигация
@@ -754,13 +826,15 @@ def browser_frame(session_id: int, quality: int = 55) -> dict:
             meta["url"], meta["title"] = page.url, title
         return {
             "ok": True, "session_id": session_id, "url": page.url, "title": title,
-            "width": size["width"], "height": size["height"], "image": base64.b64encode(data).decode("ascii"),
+            "width": size["width"], "height": size["height"],
+            **({"data": data} if raw else {"image": base64.b64encode(data).decode("ascii")}),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": _short_error(exc)}
 
 
-_INPUT_KINDS = {"click", "dblclick", "wheel", "type", "key", "navigate", "back", "forward", "reload", "resize"}
+_INPUT_KINDS = {"click", "dblclick", "wheel", "move", "down", "up", "type", "key", "navigate", "back", "forward", "reload", "resize"}
+_MOUSE_BUTTONS = {"left", "middle", "right"}
 
 
 @browser_thread
@@ -774,14 +848,25 @@ def browser_input(session_id: int, payload: dict) -> dict:
         return {"ok": False, "error": "unsupported input"}
     size = page.viewport_size or dict(_VIEWPORT)
     try:
-        if kind in {"click", "dblclick", "wheel"}:
+        if kind in {"click", "dblclick", "wheel", "move", "down", "up"}:
             x = min(max(float(payload.get("x", 0.5)), 0.0), 1.0) * size["width"]
             y = min(max(float(payload.get("y", 0.5)), 0.0), 1.0) * size["height"]
+            button = payload.get("button", "left")
+            if button not in _MOUSE_BUTTONS:
+                return {"ok": False, "error": "invalid button"}
             if kind == "wheel":
                 page.mouse.move(x, y)
                 page.mouse.wheel(max(-3000, min(float(payload.get("dx", 0)), 3000)), max(-3000, min(float(payload.get("dy", 0)), 3000)))
+            elif kind == "move":
+                # наведение и перетаскивание: страница видит то же движение, что и обычный браузер
+                page.mouse.move(x, y)
+            elif kind in {"down", "up"}:
+                # номер нажатия из события панели: так страница сама узнаёт двойной и тройной клик
+                count = max(1, min(int(payload.get("count", 1)), 3))
+                page.mouse.move(x, y)
+                (page.mouse.down if kind == "down" else page.mouse.up)(button=button, click_count=count)
             else:
-                page.mouse.click(x, y, click_count=2 if kind == "dblclick" else 1)
+                page.mouse.click(x, y, button=button, click_count=2 if kind == "dblclick" else 1)
         elif kind == "type":
             page.keyboard.insert_text(str(payload.get("text", ""))[:2000])
         elif kind == "key":

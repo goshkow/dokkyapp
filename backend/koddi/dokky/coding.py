@@ -689,12 +689,27 @@ def clear_local_account_data() -> None:
             shutil.rmtree(path)
 
 
+# проекты и их чаты живут на компьютере, а не в аккаунте: после входа любым аккаунтом они остаются на месте
+LOCAL_TABLES = ("chats", "attachments", "queued_requests", "change_sets", "file_operations")
+
+
 def adopt_local_data(user_id: str) -> None:
-    """Привязывает только старые записи без владельца; чужая история остаётся у прежнего аккаунта."""
+    """Переводит локальные чаты, вложения, очередь, память проектов и журнал изменений на вошедший аккаунт.
+
+    Серверные сессии разработки принадлежат аккаунту, который их создал: чужие удаляются, и следующий запрос
+    заводит новую сессию текущего аккаунта, а контекст собирается из локальной истории чата.
+    """
     if not user_id:
         return
     with db() as conn:
-        conn.execute("UPDATE chats SET owner_id=? WHERE owner_id=''", (user_id,))
-        conn.execute("UPDATE attachments SET owner_id=? WHERE owner_id=''", (user_id,))
-        conn.execute("UPDATE queued_requests SET owner_id=? WHERE owner_id=''", (user_id,))
-        conn.execute("UPDATE memory_summaries SET owner_id=? WHERE owner_id=''", (user_id,))
+        for table in LOCAL_TABLES:
+            conn.execute(f"UPDATE {table} SET owner_id=? WHERE owner_id<>?", (user_id, user_id))
+        # память проекта - вместе с проектом, личная память без проекта остаётся у своего аккаунта
+        conn.execute(
+            "UPDATE memory_summaries SET owner_id=? WHERE owner_id<>? AND (project_id IS NOT NULL OR owner_id='')",
+            (user_id, user_id),
+        )
+        # заметки карты описывают проект и переходят вместе с ним; совпавший заголовок остаётся у вошедшего аккаунта
+        conn.execute("UPDATE OR IGNORE project_map_notes SET owner_id=? WHERE owner_id<>?", (user_id, user_id))
+        for table in ("coding_sessions", "coding_session_keys", "coding_pending"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id<>?", (user_id,))

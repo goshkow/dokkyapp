@@ -166,3 +166,16 @@ async def test_recovered_session_is_checked_after_recovery_not_against_stale_cac
     actual = state["requests"][0]["tools"]
     actual[0]["function"]["name"] = "computer__use"
     assert actual[0]["function"] == pinned["function"]
+
+
+def test_sessions_pinned_before_code_intelligence_upgrade_stay_compatible():
+    # снимок схем всех инструментов до семантических инструментов кода и QA: старые диалоги не должны ломаться
+    import json
+    from pathlib import Path
+
+    from koddi.agents.orchestrator import CONTROL_TOOLS
+    from koddi.tools.schemas import TOOL_SCHEMAS
+
+    pinned = json.loads((Path(__file__).parent / "fixtures" / "pinned_tool_schemas_v1.json").read_text(encoding="utf-8"))
+    selected = compatible_tools(pinned, [*TOOL_SCHEMAS, *CONTROL_TOOLS])
+    assert [item["function"]["parameters"] for item in selected] == [item["function"]["parameters"] for item in pinned]

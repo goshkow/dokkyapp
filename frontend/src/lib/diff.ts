@@ -29,6 +29,7 @@ export interface Change {
   id: number | string;
   description: string;
   status?: string;
+  turn_id?: number | null;
   diff: string;
   files?: ChangeMeta[];
 }

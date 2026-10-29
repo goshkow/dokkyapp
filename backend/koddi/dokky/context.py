@@ -99,13 +99,14 @@ def prune_outputs(messages: list[dict]) -> list[dict]:
         protected += context_size([item], [], dokky=True)
     for index in candidates:
         item = result[index]
-        old = item["content"]
-        item["content"] = (
-            f"[вывод удалён при сжатии: {len(old.splitlines())} строк, {len(old)} символов; при необходимости повтори чтение]"
-        )
+        item["content"] = _pruned(item["content"])
     if context_size(messages, [], dokky=True) - context_size(result, [], dokky=True) < 20_000:
         return copy.deepcopy(messages)
     return result
+
+
+def _pruned(old: str) -> str:
+    return f"[вывод удалён при сжатии: {len(old.splitlines())} строк, {len(old)} символов; при необходимости повтори чтение]"
 
 
 def recent_tail(messages: list[dict], budget: int = 10_000) -> list[dict]:
@@ -121,12 +122,32 @@ def recent_tail(messages: list[dict], budget: int = 10_000) -> list[dict]:
         if item.get("role") == "user" or item.get("role") == "assistant":
             start = index
     if start == len(messages):
-        raise DokkyError(
-            "Последний обмен слишком велик для дословного хвоста. История сохранена",
-            422,
-            "context_tail_limit",
-        )
-    tail = copy.deepcopy(messages[start:])
+        # последний обмен больше бюджета, обычно из-за длинных выводов инструментов: берём его целиком, выводы -
+        # заглушкой (их суть уже в сводке), иначе сжатие падает каждый раз и чат не продолжить
+        for index in range(len(messages) - 1, -1, -1):
+            role = messages[index].get("role")
+            if role in {"system", "developer"}:
+                break
+            if role in {"user", "assistant"}:
+                start = index
+                break
+        tail = copy.deepcopy(messages[start:])
+        for item in tail:
+            if item.get("role") == "tool" and isinstance(item.get("content"), str) and len(item["content"]) > 600:
+                item["content"] = _pruned(item["content"])
+        # исходная просьба человека перед этим шагом агента - если влезает, она тоже дословно
+        if start > 0 and messages[start].get("role") == "assistant" and messages[start - 1].get("role") == "user":
+            asked = [copy.deepcopy(messages[start - 1]), *tail]
+            if context_size(asked, [], dokky=True) <= budget:
+                start, tail = start - 1, asked
+        if start == len(messages) or context_size(tail, [], dokky=True) > budget:
+            raise DokkyError(
+                "Последний обмен слишком велик для дословного хвоста. История сохранена",
+                422,
+                "context_tail_limit",
+            )
+    else:
+        tail = copy.deepcopy(messages[start:])
     if tail[-1].get("tool_calls"):
         raise DokkyError("Сначала завершите вызовы инструментов", 409, "coding_busy")
     return tail

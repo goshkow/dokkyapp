@@ -2,6 +2,7 @@ import { cloudPath, del, patch, post } from '../lib/api';
 import type { Account, Chat, Project } from '../lib/types';
 import { data, isReady, lastProject, loadCloud, loadLocal, setScope } from './data';
 import { confirmDialog, inputDialog, notify } from './overlay';
+import { setSurfaceProduct, surface } from './surface';
 import { ui, type Scope } from './ui';
 import { newChat, openChat, setScopeRestorer, view } from './view';
 
@@ -48,7 +49,13 @@ export const forgetParked = (): void => { parked = null; };
 let switching = 0;
 export async function switchScope(scope: Scope): Promise<void> {
   const account = data.get().account;
-  if (!isReady(account) || scope === ui.get().scope) return;
+  if (!isReady(account)) return;
+  // чат и поиск в режиме чата - вкладки страницы сайта, у приложения это один режим
+  if (scope !== 'development' && surface.get().status !== 'off') {
+    void setSurfaceProduct(scope === 'search' ? 'search' : 'chat');
+    scope = 'chat';
+  }
+  if (scope === ui.get().scope) return;
   const version = ++switching;
   const previous = ui.get().scope;
   if (previous === 'chat' && scope === 'search') parked = view.get().chat;
@@ -62,7 +69,7 @@ export async function switchScope(scope: Scope): Promise<void> {
       newChat(lastProject());
     } else {
       newChat(null);
-      const keep = previous !== 'development';
+      const keep = previous !== 'development' || surface.get().status !== 'off';
       if (!keep) await loadCloud();
       if (version !== switching) return;
       if (returning && scope === 'chat') openChat(returning);

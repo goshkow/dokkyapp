@@ -69,7 +69,8 @@ def test_used_history_cannot_silently_diverge(isolated):
     assert client.delete(f"/api/chats/{isolated}/messages/{message}").status_code == 409
 
 
-def test_signin_cannot_take_another_accounts_chats_attachments_or_memory(isolated, tmp_path):
+def test_local_chats_stay_on_the_computer_after_switching_accounts(isolated, tmp_path):
+    """Чаты проектов и вложения принадлежат компьютеру: другой аккаунт видит их на месте, личная память - нет."""
     from koddi.dokky.coding import adopt_local_data
     from koddi.agents.memory import retrieve_memory
     from koddi.tools import ToolRunner
@@ -78,20 +79,30 @@ def test_signin_cannot_take_another_accounts_chats_attachments_or_memory(isolate
     import io
     from koddi.attachments import store_attachment
 
-    attachment = store_attachment(isolated, 'private.txt', io.BytesIO(b'private data A'))
+    attachment = store_attachment(isolated, 'notes.txt', io.BytesIO(b'project data'))
     runner = ToolRunner(tmp_path)
     assert runner.run('memory.set', {'content': 'privateword owner A', 'kind': 'note'}, approved=True)['ok']
     assert retrieve_memory(None, 'privateword')[0]['owner_id'] == 'a'
+    with storage.db() as conn:
+        conn.execute("INSERT INTO coding_sessions(chat_id,user_id,session_json) VALUES (?,'a','{}')", (isolated,))
+        conn.execute("INSERT INTO coding_session_keys(chat_id,user_id,request_key,body_json) VALUES (?,'a','k','{}')", (isolated,))
     storage.set_setting('dokky_user', {'id': 'b'})
     adopt_local_data('b')
     client = TestClient(create_app())
-    assert client.get(f'/api/chats/{isolated}/messages').status_code == 404
+    assert client.get(f'/api/chats/{isolated}/messages').status_code == 200
+    assert [chat['id'] for chat in client.get('/api/chats').json()] == [isolated]
+    assert client.get(f"/api/attachments/{attachment['id']}/content").status_code == 200
     assert retrieve_memory(None, 'privateword') == []
-    assert client.get(f"/api/attachments/{attachment['id']}/content").status_code == 404
     with storage.db() as conn:
-        assert conn.execute('SELECT owner_id FROM chats WHERE id=?', (isolated,)).fetchone()[0] == 'a'
+        assert conn.execute('SELECT owner_id FROM chats WHERE id=?', (isolated,)).fetchone()[0] == 'b'
         assert conn.execute('SELECT owner_id FROM memory_summaries').fetchone()[0] == 'a'
+        # серверная сессия первого аккаунта второму не годится: следующий запрос заведёт свою
+        assert conn.execute('SELECT count(*) FROM coding_sessions').fetchone()[0] == 0
+        assert conn.execute('SELECT count(*) FROM coding_session_keys').fetchone()[0] == 0
+    # обратный вход возвращает чат первому аккаунту вместе с его личной памятью
     storage.set_setting('dokky_user', {'id': 'a'})
+    adopt_local_data('a')
+    assert client.get(f'/api/chats/{isolated}/messages').status_code == 200
     assert retrieve_memory(None, 'privateword')[0]['content'] == 'privateword owner A'
 
 

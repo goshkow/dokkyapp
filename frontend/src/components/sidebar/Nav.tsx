@@ -1,10 +1,11 @@
 import {
   CalendarClock, Ellipsis, FolderOpen, GitPullRequest, Globe, Images, Layers, ListChecks, MessagesSquare, ScrollText, Search, SquareTerminal, X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { guarded } from '../../state/overlay';
 import { openLibrary, openPage, switchScope } from '../../state/remote';
 import { setSidebarQuery, useSidebarQuery } from '../../state/sidebarQuery';
+import { openSection, useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 
@@ -19,6 +20,13 @@ interface TileSpec {
   run: () => void;
   active?: boolean;
   pressed?: boolean;
+  badge?: boolean;
+}
+
+/** Иконка раздела сайта: SVG-маска, которую прислала страница сайта. */
+export function SurfaceIcon({ icon, fallback }: { icon: string; fallback: ReactNode }) {
+  if (!icon) return <>{fallback}</>;
+  return <span className="surface-icon" style={{ '--icon': `url("${icon}")` } as CSSProperties} aria-hidden="true" />;
 }
 
 function Tile({ spec }: { spec: TileSpec }) {
@@ -34,6 +42,7 @@ function Tile({ spec }: { spec: TileSpec }) {
       onClick={spec.run}
     >
       {spec.icon}
+      {spec.badge && <span className="surface-badge" aria-hidden="true" />}
     </button>
   );
 }
@@ -81,6 +90,9 @@ function SearchField({ open, onClose }: { open: boolean; onClose: () => void }) 
 export function Nav() {
   const development = useUi((state) => state.scope === 'development');
   const page = useView((state) => state.page);
+  // в режиме чата разделы задаёт сайт: что видно в его меню (с учётом доступа), то и здесь
+  const site = useSurface((state) => state.status !== 'off') && !development;
+  const sections = useSurface((state) => state.sections);
   const [more, setMore] = useState(false);
   const [searching, setSearching] = useState(false);
   const closeSearch = () => {
@@ -110,7 +122,17 @@ export function Nav() {
           page$('sources', 'Источники', <Globe aria-hidden="true" />),
           page$('logs', 'Журнал событий', <ScrollText aria-hidden="true" />),
         ]
-      : [{ key: 'library', id: 'cloud-library-button', label: 'Библиотека', icon: <Images aria-hidden="true" />, active: page === 'library', run: openLibrary }]),
+      : site
+        ? sections.map((section): TileSpec => ({
+            key: `site-${section.key}`,
+            id: `site-section-${section.key}`,
+            label: section.label,
+            icon: <SurfaceIcon icon={section.icon} fallback={<Globe aria-hidden="true" />} />,
+            active: section.active,
+            badge: section.badge,
+            run: () => { void openSection(section.key); },
+          }))
+        : [{ key: 'library', id: 'cloud-library-button', label: 'Библиотека', icon: <Images aria-hidden="true" />, active: page === 'library', run: openLibrary }]),
   ];
   const overflow = tiles.length > ROW;
   const visible = overflow ? tiles.slice(0, ROW - 1) : tiles;

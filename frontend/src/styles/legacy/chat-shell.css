@@ -191,6 +191,45 @@ textarea,
   gap: 7px 10px;
   font-size: var(--fs-12);
 }
+/* Remote access чата: строка с переключателем под списком среды, описание - подсказкой по наведению */
+#card-environment .environment-remote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-12);
+  color: var(--text);
+}
+#card-environment .environment-remote > svg { width: 15px; height: 15px; flex: none; color: var(--muted); }
+#card-environment .environment-remote > span { flex: 1; min-width: 0; }
+#card-environment .environment-remote .pref-switch { width: 36px; height: 22px; }
+#card-environment .environment-remote .pref-switch::after { width: 16px; height: 16px; }
+#card-environment .environment-remote .pref-switch[aria-checked="true"]::after { transform: translateX(14px); }
+.popover.remote-tip {
+  display: flex;
+  gap: 10px;
+  width: 270px;
+  min-width: 0;
+  padding: 12px 14px;
+  pointer-events: none;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--muted);
+}
+.popover.remote-tip b { display: block; margin-bottom: 3px; color: var(--text); font-size: var(--fs-13); font-weight: 600; }
+.remote-tip-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.remote-tip-icon svg { width: 16px; height: 16px; }
 #card-environment .environment-list dd {
   color: var(--text);
 }

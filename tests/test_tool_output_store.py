@@ -132,7 +132,10 @@ def test_read_ranges_are_bounded_and_cancellation_is_honored(saved):
 
 
 @pytest.mark.asyncio
-async def test_native_agent_reads_tail_of_truncated_result(saved, tmp_path):
+async def test_native_agent_reads_tail_of_truncated_result(saved, tmp_path, monkeypatch):
+    # окно модели как у реальных провайдеров: при 32K по умолчанию 40 КБ файла уже запускают сжатие истории
+    monkeypatch.setattr("koddi.agents.orchestrator.remote_config",
+                        lambda: {"provider": "openai-compatible", "model": "mock", "context_tokens": 128000})
     (tmp_path / "large.txt").write_text("x" * 40000 + " IMPORTANT_END", encoding="utf-8")
     with storage.db() as conn:
         chat = conn.execute("INSERT INTO chats(title) VALUES ('Large result')").lastrowid

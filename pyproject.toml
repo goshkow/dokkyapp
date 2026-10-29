@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "koddi"
-version = "0.2.1"
+version = "0.2.2"
 description = "Remote-powered coding agent with FastAPI, HTML desktop UI and rollbackable tools."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -55,7 +55,7 @@ koddi-agent = "koddi.cli:main"
 where = ["backend"]
 
 [tool.setuptools.package-data]
-koddi = ["computer_use/native/*.ps1", "computer_use/native/*.swift", "licenses/**/*.txt", "licenses/*.json", "storage/migrations/*", "desktop/web/*", "desktop/web/assets/*", "desktop/web/vendor/*", "desktop/web-next/*", "desktop/web-next/assets/*"]
+koddi = ["computer_use/native/*.ps1", "computer_use/native/*.swift", "codeintel/native/*.js", "licenses/**/*.txt", "licenses/*.json", "storage/migrations/*", "desktop/web/*", "desktop/web/assets/*", "desktop/web/vendor/*", "desktop/web-next/*", "desktop/web-next/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

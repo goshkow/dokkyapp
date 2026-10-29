@@ -203,6 +203,7 @@ class RemoteControl:
             "power": self.power,
             "pending": outbox.count(),
             "new_session_project_id": config["new_session_project_id"],
+            "share_new": bool(config["share_new"]),
             "shared": {str(row["chat_id"]): bool(row["shared"]) for row in rows},
             "site": api.dokky_origin(),
         }
@@ -218,6 +219,10 @@ class RemoteControl:
             if value is not None and (type(value) is not int or not self._project(value)):
                 raise HTTPException(404, "Проект не найден")
             self._update(new_session_project_id=value)
+        if "share_new" in payload:
+            if not isinstance(payload["share_new"], bool):
+                raise HTTPException(422, "share_new: true или false")
+            self._update(share_new=int(payload["share_new"]))
         if "enabled" in payload:
             if not isinstance(payload["enabled"], bool):
                 raise HTTPException(422, "enabled: true или false")
@@ -738,7 +743,12 @@ class RemoteControl:
     # хуки окна приложения: вызываются из потоков FastAPI, поэтому только запись в SQLite и пробуждение моста
     @_best_effort
     def chat_created(self, chat_id: int) -> None:
-        if self._enabled:
+        if not self.config()["share_new"]:
+            # запись с shared=0 сразу: иначе при включении доступа чат ушёл бы на сайт вместе с остальными недавними
+            outbox.ensure_session(chat_id)
+            with db() as conn:
+                conn.execute("UPDATE remote_sessions SET shared=0 WHERE chat_id=?", (chat_id,))
+        elif self._enabled:
             self.share(chat_id)
 
     @_best_effort

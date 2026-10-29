@@ -119,3 +119,33 @@ def test_log_search_and_export() -> None:
     exported = client.get("/api/logs/export")
     assert exported.status_code == 200
     assert "attachment" in exported.headers["content-disposition"]
+
+
+def test_browser_open_from_chat_link_is_validated(monkeypatch) -> None:
+    client = TestClient(create_app())
+    assert client.post("/api/browser/open", json={"url": "file:///etc/passwd"}).status_code == 422
+    assert client.post("/api/browser/open", json={"url": "javascript:alert(1)"}).status_code == 422
+    assert client.post("/api/browser/open", json={"url": "https://example.com", "project_id": "1"}).status_code == 422
+    # localhost без запущенного сервера проекта закрыт так же, как для агента
+    assert client.post("/api/browser/open", json={"url": "http://localhost:3000/"}).status_code == 403
+
+    opened = {}
+
+    def fake_open(url, project_id, **kwargs):
+        opened.update(url=url, project_id=project_id, **kwargs)
+        return {"ok": True, "session_id": 7, "url": url, "title": "", "local": False}
+
+    monkeypatch.setattr(api_module, "browser_open", fake_open)
+    response = client.post("/api/browser/open", json={"url": "https://example.com/a"})
+    assert response.status_code == 200 and response.json()["session_id"] == 7
+    assert opened["allow_private"] is False and opened["local_preview"] is False
+
+    def failing_open(url, project_id, **kwargs):
+        raise api_module_network.NetworkAccessError("non-public network address")
+
+    monkeypatch.setattr(api_module, "browser_open", failing_open)
+    response = client.post("/api/browser/open", json={"url": "https://example.com/b"})
+    assert response.status_code == 400 and "non-public" in response.json()["detail"]
+
+
+api_module_network = import_module("koddi.policy.network")

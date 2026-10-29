@@ -12,6 +12,7 @@ import { recordCodingActivity } from './codingSession';
 import { composer, setText, uploadPath, upload } from './composer';
 import { guarded, notify } from './overlay';
 import { enqueueDraft, interruptAndSend } from './queue';
+import { attachFromField, siteFieldActive } from './siteField';
 import { cancelVoice, stopVoice, toggleVoice, voiceLevels } from './voice';
 
 export interface FieldMirror {
@@ -98,6 +99,7 @@ const endRemote = remote('fieldUploadEnd', uploadEnd);
 const chunkRemote = remote('fieldUploadTextChunk', uploadTextChunk);
 
 export async function uploadFromField(files: Iterable<File>, cloud: boolean, pastedText?: string): Promise<void> {
+  if (siteFieldActive()) return attachFromField(files);
   if (!isMirror) return upload(files, cloud, pastedText);
   for (const file of files) {
     const key = crypto.randomUUID();

@@ -3,13 +3,20 @@ import { createStore, useStore } from '../lib/store';
 import { composer } from './composer';
 import { notify } from './overlay';
 
+export interface SkillPlugin { id: number; name: string; title: string; kind: 'skill' | 'command'; path: string; model_invocation: boolean; argument_hint: string }
+
 export interface Skill {
-  id: number;
+  /** навыки и команды плагинов: строка plugin:<плагин>:<имя> */
+  id: number | string;
   name: string;
   description: string;
   builtin: boolean;
   category: string;
+  /** false - агент не получает навык в подсказках и не может загрузить его сам */
+  enabled?: boolean;
   workflow: { instructions?: string; checklist?: Array<string | { title: string }>; steps?: string[] };
+  /** навык или команда установленного плагина: текст лежит в файле плагина */
+  plugin?: SkillPlugin;
 }
 
 interface SkillsState { items: Skill[]; loaded: boolean; error: string }
@@ -39,7 +46,7 @@ export function attachSkill(skill: Pick<Skill, 'id' | 'name'>): void {
   composer.set({ skills: [...current, { id: skill.id, name: skill.name }] });
 }
 
-export function detachSkill(id: number): void {
+export function detachSkill(id: number | string): void {
   composer.set({ skills: composer.get().skills.filter((item) => item.id !== id) });
 }
 

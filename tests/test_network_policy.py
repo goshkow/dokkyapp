@@ -370,10 +370,10 @@ def test_search_uses_same_bounded_provider_transport(wire):
 
 
 class FakeRoute:
-    def __init__(self, url, *, previous=None):
+    def __init__(self, url, *, previous=None, navigation=False):
         self.request = SimpleNamespace(
             url=url, method="GET", redirected_from=previous, post_data_buffer=None,
-            all_headers=lambda: {},
+            all_headers=lambda: {}, is_navigation_request=lambda: navigation, frame="main",
         )
         self.fulfilled = None
         self.aborted = None
@@ -390,16 +390,30 @@ class FakePage:
         self.context = context
         self.handlers = {}
         self.url = "about:blank"
+        self.main_frame = "main"
+        self.visited = []
 
     def on(self, event, handler):
         self.handlers[event] = handler
 
     def goto(self, url, **kwargs):
+        from playwright.sync_api import Error
+
         self.url = url
-        route = FakeRoute(url)
+        self.visited.append(url)
+        route = FakeRoute(url, navigation=True)
         self.context.route_handler(route)
         if route.aborted or self.context.fail_navigation:
-            raise RuntimeError("navigation failed")
+            raise Error("navigation failed")
+
+    def wait_for_timeout(self, ms):
+        time.sleep(ms / 1000)
+
+    def wait_for_load_state(self, state, **kwargs):
+        pass
+
+    def wait_for_url(self, predicate, **kwargs):
+        pass
 
     def title(self):
         return "Page"
@@ -461,7 +475,7 @@ def test_browser_routes_public_and_denies_private_subresources(browser, wire):
     result = service.browser_open("https://example.com/")
     assert result["ok"]
     assert context.offline
-    assert options == {"service_workers": "block", "accept_downloads": False}
+    assert options == {"service_workers": "block", "accept_downloads": False, "device_scale_factor": 2}
     for url in ["http://127.0.0.1/", "file:///C:/Windows/win.ini", "http://user:p@example.com/"]:
         route = FakeRoute(url)
         context.route_handler(route)
@@ -487,7 +501,7 @@ def test_browser_page_limit_and_navigation_cleanup(browser, wire, monkeypatch):
     service._PAGES.clear()
     context.fail_navigation = True
     wire.queue.append(reply())
-    with pytest.raises(RuntimeError, match="navigation failed"):
+    with pytest.raises(network.NetworkAccessError, match="страница не открылась"):
         service.browser_open("https://example.com/")
     assert context.closed
     assert not service._PAGES and not service._SESSION_EVENTS
@@ -521,11 +535,23 @@ def test_browser_redirect_and_request_budgets(browser, wire, monkeypatch):
 def test_browser_http_redirects_fail_closed_and_cleanup(browser, wire):
     context, _ = browser
     wire.queue.append(reply(status="302 Found", headers=b"Location: http://127.0.0.1/\r\n"))
-    with pytest.raises(RuntimeError, match="navigation failed"):
+    with pytest.raises(network.NetworkAccessError, match="страница не открылась"):
         service.browser_open("https://example.com/")
+    # редирект главной страницы повторяется новым переходом, но приватный адрес режется до сети
+    assert context.page.visited == ["https://example.com/", "http://127.0.0.1/"]
     assert len(wire.connections) == 1
     assert context.closed
     assert not service._PAGES and not service._SESSION_EVENTS
+
+
+def test_browser_follows_public_redirect_through_route(browser, wire):
+    context, _ = browser
+    wire.queue.append(reply(status="301 Moved", headers=b"Location: https://example.com/next\r\n"))
+    wire.queue.append(reply())
+    result = service.browser_open("http://example.com/")
+    assert result["ok"]
+    assert context.page.visited == ["http://example.com/", "https://example.com/next"]
+    assert len(wire.connections) == 2
 
 
 def test_real_chromium_uses_routed_responses_while_offline(wire):

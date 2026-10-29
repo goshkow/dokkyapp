@@ -69,4 +69,5 @@ def test_full_tool_schema_contains_phase_two_three_tools() -> None:
     }
     assert required.issubset(names)
     assert "task.spawn_parallel" not in names
-    assert "refactor.extract" not in names
+    # извлечение функции теперь настоящее (codeintel), а не запись заявки
+    assert {"refactor.extract", "code.definition", "code.symbol_edit"}.issubset(names)

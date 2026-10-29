@@ -28,7 +28,7 @@ STORE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "https://dokky.goshkow.com/webkit-stor
 # методы моста, которые страница может вызвать; всё остальное отбрасывается
 BRIDGE_METHODS = (
     "relay", "regions", "appearance", "overlay", "panels", "copyText", "copyImage",
-    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer",
+    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer", "tray", "popupMenu",
 )
 
 SHIM = """
@@ -156,11 +156,11 @@ def _objc_classes():
         def download_decideDestinationUsingResponse_suggestedFilename_completionHandler_(  # noqa: N802
             self, download, response, name, handler
         ):
+            from koddi.desktop.web_host import trusted_origin
+
             owner = self.owner
             origin = _qurl(download.originalRequest().URL()) if download.originalRequest() is not None else QUrl()
-            if origin.scheme() == "blob":
-                origin = QUrl(origin.toString()[5:])
-            if not same_origin(origin, QUrl(owner.host.api_base)):
+            if not trusted_origin(origin, owner.host.api_base):
                 handler(None)
                 return
             panel = NSSavePanel.savePanel()
@@ -186,13 +186,12 @@ def _objc_classes():
         def webView_requestMediaCapturePermissionForOrigin_initiatedByFrame_type_decisionHandler_(  # noqa: N802
             self, web, origin, frame, kind, handler
         ):
-            # микрофон нужен только голосовому вводу своей страницы; остальное запрещено
-            own = (str(origin.protocol()), str(origin.host()), int(origin.port())) == (
-                QUrl(self.owner.host.api_base).scheme(),
-                QUrl(self.owner.host.api_base).host(),
-                QUrl(self.owner.host.api_base).port(),
-            )
-            handler(1 if own and int(kind) == 1 else 2)  # Grant / Deny; тип 1 - только микрофон
+            from koddi.desktop.web_host import trusted_origin
+
+            # микрофон нужен только голосовому вводу своей страницы и сайта в режиме чата; остальное запрещено
+            port = int(origin.port())
+            url = QUrl(f"{origin.protocol()}://{origin.host()}" + (f":{port}" if port else ""))
+            handler(1 if trusted_origin(url, self.owner.host.api_base) and int(kind) == 1 else 2)  # Grant / Deny; 1 - микрофон
 
         def webView_runJavaScriptAlertPanelWithMessage_initiatedByFrame_completionHandler_(  # noqa: N802
             self, web, message, frame, handler

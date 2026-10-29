@@ -84,6 +84,7 @@ if ($Compiler -eq "msvc") {
   --include-module=select `
   --include-module=unicodedata `
   --include-data-dir=backend/koddi/computer_use/native=koddi/computer_use/native `
+  --include-data-dir=backend/koddi/codeintel/native=koddi/codeintel/native `
   --include-data-dir=backend/koddi/licenses=koddi/licenses `
   --include-data-dir=prompts=prompts `
   --include-data-dir=locales=locales `

@@ -373,9 +373,32 @@ def test_tail_cannot_split_tool_exchange():
         {"role": "assistant", "content": None, "tool_calls": [{"id": "a"}]},
         {"role": "tool", "tool_call_id": "a", "content": "x" * 50000},
     ]
+    tail = recent_tail(messages)
+    assert [item["role"] for item in tail] == ["assistant", "tool"]
+    assert tail[1]["tool_call_id"] == "a" and tail[1]["content"].startswith("[вывод удалён при сжатии")
+    assert messages[2]["content"] == "x" * 50000
+    assert recent_tail(messages, budget=20000) == messages[1:]
+
+
+def test_tail_keeps_large_tool_results_with_their_call():
+    calls = [{"id": "a"}, {"id": "b"}]
+    messages = [
+        {"role": "system", "content": "fixed"},
+        {"role": "user", "content": "проверь"},
+        {"role": "assistant", "content": None, "tool_calls": calls},
+        {"role": "tool", "tool_call_id": "a", "content": "y" * 20000},
+        {"role": "tool", "tool_call_id": "b", "content": "z" * 20000},
+    ]
+    tail = recent_tail(messages)
+    assert [item["role"] for item in tail] == ["user", "assistant", "tool", "tool"]
+    assert tail[0]["content"] == "проверь" and [item.get("tool_call_id") for item in tail[2:]] == ["a", "b"]
+    assert all(item["content"].startswith("[вывод удалён") for item in tail[2:])
+
+
+def test_tail_still_refuses_oversized_user_message():
+    messages = [{"role": "system", "content": "fixed"}, {"role": "user", "content": "u" * 50000}]
     with pytest.raises(DokkyError, match="хвоста"):
         recent_tail(messages)
-    assert recent_tail(messages, budget=20000) == messages[1:]
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,9 @@ TITLES = {
     "patch.apply": "Применить правки к файлам",
     "shell.run": "Выполнить команду",
     "test.run": "Запустить тесты",
+    "qa.run": "Запустить проверки проекта",
+    "quality.run": "Проверить качество кода",
+    "ui.verify": "Проверить страницу в браузере",
     "build.run": "Запустить сборку",
     "lint.run": "Запустить проверку кода",
     "format.run": "Отформатировать код",
@@ -51,6 +54,7 @@ TITLES = {
     "ide.open_file": "Открыть файл в редакторе",
     "ide.open_diff": "Показать изменения в редакторе",
     "memory.set": "Запомнить заметку для следующих задач",
+    "project.map_update": "Обновить карту проекта",
     "skill.apply": "Применить навык",
     "skill.create": "Создать навык",
     "automation.create": "Создать автоматизацию",
@@ -89,6 +93,15 @@ def describe_action(name: str, args: dict[str, Any] | None, *, external: list[st
         kind = "command"
         detail = str(args.get("command", ""))
         target = str(args.get("cwd", "")) or ""
+    elif name == "qa.run":
+        kind = "command"
+        detail = "lint, типы и тесты проекта" + (" (весь проект)" if args.get("scope") == "full" else " для изменённых файлов")
+    elif name == "quality.run":
+        kind = "command"
+        gates = [str(item) for item in args.get("gates") or []]
+        detail = ("мутационное тестирование в изолированной копии проекта" if "mutation" in gates or not gates
+                  else "сбор покрытия тестами проекта" if args.get("coverage") == "collect" else "разбор кода")
+        detail += " (весь проект)" if args.get("scope") == "full" else " для изменённых файлов"
     elif name in {"file.move", "file.copy"}:
         target = f"{args.get('source', '')} → {args.get('destination', '')}"
     elif name == "file.read_many":

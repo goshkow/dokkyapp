@@ -1,4 +1,4 @@
-import { Copy, Layers, Pencil, Play, Plus, Trash2, Zap } from 'lucide-react';
+import { Copy, Layers, Pencil, Play, Plus, Sparkles, Trash2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ApiError, del, post, put } from '../../lib/api';
 import { loadLocal, useData } from '../../state/data';
@@ -9,6 +9,8 @@ import { lastProject } from '../../state/data';
 import { newChat, openChat } from '../../state/view';
 import { Dialog } from '../ui/Dialog';
 import { Empty, Hint, PageRoot } from './shared';
+import { PluginCatalog, PluginsPanel } from './PluginsPanel';
+import { pluginFile } from '../../state/plugins';
 
 interface Form { id: number | null; name: string; description: string; instructions: string }
 
@@ -69,9 +71,26 @@ function Editor({ form, onClose, onSaved }: { form: Form | null; onClose: () => 
   );
 }
 
+/** Текст навыка плагина читается из его файла (с проверкой хэша) только когда человек раскрыл карточку. */
+function PluginInstructions({ skill }: { skill: Skill }) {
+  const [text, setText] = useState<string | null>(null);
+  const load = () => {
+    if (text !== null || !skill.plugin) return;
+    setText('Загружаю…');
+    pluginFile(skill.plugin.id, skill.plugin.path).then(setText, (error: Error) => setText(error.message));
+  };
+  return (
+    <details className="skill-details" onToggle={(event) => { if ((event.target as HTMLDetailsElement).open) load(); }}>
+      <summary>Инструкция агенту</summary>
+      <pre>{text ?? ''}</pre>
+    </details>
+  );
+}
+
 function Card({ skill, onEdit, onCopy, onChange }: { skill: Skill; onEdit: () => void; onCopy: () => void; onChange: () => void }) {
   const projects = useData((s) => s.projects);
   const text = instructionOf(skill);
+  const plugin = skill.plugin;
   const use = () => {
     attachSkill(skill);
     newChat(lastProject());
@@ -88,11 +107,36 @@ function Card({ skill, onEdit, onCopy, onChange }: { skill: Skill; onEdit: () =>
     await loadLocal(false);
     openChat(result.chat);
   });
+  const automatic = skill.enabled !== false;
+  const toggleAutomatic = guarded(async () => {
+    await post(`/api/skills/${skill.id}/enabled`, { enabled: !automatic });
+    onChange();
+  });
   const remove = guarded(async () => {
     if (!(await confirmDialog('Удалить навык?', skill.name, 'Удалить'))) return;
     await del(`/api/skills/${skill.id}`);
     onChange();
   });
+  if (plugin) {
+    return (
+      <article className="skill-card" data-plugin>
+        <div className="skill-head">
+          <h3>{skill.name}</h3>
+          <span className="skill-badge">{plugin.kind === 'command' ? 'Команда плагина' : 'Плагин'}</span>
+        </div>
+        {skill.description && <p>{skill.description}</p>}
+        <PluginInstructions skill={skill} />
+        <p className="plugin-hint">
+          {plugin.kind === 'command' || !plugin.model_invocation
+            ? `Запускает только человек: «Использовать» или /${skill.name} в начале сообщения.`
+            : `Агент подключает сам, когда навык подходит к задаче, или вы: /${skill.name}.`}
+        </p>
+        <div className="skill-actions">
+          <button type="button" className="primary" onClick={use} title="Подключить к новому запросу"><Zap aria-hidden="true" /><span>Использовать</span></button>
+        </div>
+      </article>
+    );
+  }
   return (
     <article className="skill-card" data-builtin={skill.builtin || undefined}>
       <div className="skill-head">
@@ -107,6 +151,17 @@ function Card({ skill, onEdit, onCopy, onChange }: { skill: Skill; onEdit: () =>
       <div className="skill-actions">
         <button type="button" className="primary" onClick={use} title="Подключить к новому запросу"><Zap aria-hidden="true" /><span>Использовать</span></button>
         <button type="button" className="secondary" onClick={execute} title="Создать чат в проекте и сразу начать"><Play aria-hidden="true" /><span>В проекте</span></button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-pressed={automatic}
+          title={automatic ? 'Агент сам подключает навык, когда он подходит к задаче. Нажмите, чтобы выключить' : 'Агент не подключает навык сам. Нажмите, чтобы включить автоподбор'}
+          aria-label="Автоподбор навыка"
+          data-off={automatic ? undefined : true}
+          onClick={toggleAutomatic}
+        >
+          <Sparkles aria-hidden="true" />
+        </button>
         <button type="button" className="icon-button" title="Сделать свою копию" aria-label="Сделать свою копию" onClick={onCopy}><Copy aria-hidden="true" /></button>
         {!skill.builtin && <button type="button" className="icon-button" title="Изменить" aria-label="Изменить" onClick={onEdit}><Pencil aria-hidden="true" /></button>}
         {!skill.builtin && <button type="button" className="icon-button" title="Удалить" aria-label="Удалить" onClick={remove}><Trash2 aria-hidden="true" /></button>}
@@ -115,6 +170,9 @@ function Card({ skill, onEdit, onCopy, onChange }: { skill: Skill; onEdit: () =>
   );
 }
 
+type Tab = 'skills' | 'plugins' | 'catalog';
+const TABS: Array<[Tab, string]> = [['skills', 'Навыки'], ['plugins', 'Плагины'], ['catalog', 'Каталог плагинов']];
+
 /** «Навыки»: готовые инструкции для агента. Подключаются к запросу через «+» в поле ввода или кнопкой «Использовать». */
 export function SkillsPage() {
   const items = useSkills((s) => s.items);
@@ -122,15 +180,32 @@ export function SkillsPage() {
   const error = useSkills((s) => s.error);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Form | null>(null);
+  const [tab, setTab] = useState<Tab>('skills');
   useEffect(() => { void loadSkills(true); }, []);
   const groups = groupSkills(items, query);
   const reload = () => { void loadSkills(true); };
+  const tabs = (
+    <div className="lib-tabs" role="tablist" aria-label="Навыки и плагины">
+      {TABS.map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={id === tab} onClick={() => setTab(id)}>{label}</button>
+      ))}
+    </div>
+  );
+  if (tab !== 'skills') {
+    return (
+      <PageRoot title="Навыки" subtitle="Плагины Claude Code и Codex с GitHub">
+        {tabs}
+        {tab === 'plugins' ? <PluginsPanel onCatalog={() => setTab('catalog')} /> : <PluginCatalog />}
+      </PageRoot>
+    );
+  }
   return (
     <PageRoot
       title="Навыки"
       subtitle={loaded ? `${items.length} ${items.length === 1 ? 'навык' : 'навыков'}` : undefined}
       commands={<button type="button" className="primary" onClick={() => setEditing(blank)}><Plus aria-hidden="true" /><span>Новый навык</span></button>}
     >
+      {tabs}
       <Hint>Навык - это готовая инструкция для агента: как делать ревью, искать баги, писать тесты. Подключите его к запросу кнопкой «+» в поле ввода, пункт «Навыки», или кнопкой «Использовать» здесь. Инструкция уйдёт агенту вместе с вашим сообщением как ваше собственное указание.</Hint>
       <label className="page-search"><span className="sr-only">Найти навык</span>
         <input className="page-input" type="search" placeholder="Найти навык" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -146,7 +221,7 @@ export function SkillsPage() {
                 key={skill.id}
                 skill={skill}
                 onChange={reload}
-                onEdit={() => setEditing({ id: skill.id, name: skill.name, description: skill.description, instructions: instructionOf(skill) })}
+                onEdit={() => setEditing({ id: Number(skill.id), name: skill.name, description: skill.description, instructions: instructionOf(skill) })}
                 onCopy={() => setEditing({ id: null, name: `${skill.name} (мой)`.slice(0, 80), description: skill.description, instructions: instructionOf(skill) })}
               />
             ))}

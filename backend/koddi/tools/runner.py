@@ -33,11 +33,10 @@ from koddi.browser import (
     file_url_for,
     is_loopback_url,
     local_preview_allowed,
-    web_fetch,
-    web_search,
 )
 from koddi.changes import latest_change_set
 from koddi.config import settings
+from koddi.dokky.web import web_fetch, web_search
 from koddi.installer import update_check
 from koddi.i18n import check_locales
 from koddi.integrations import (
@@ -278,6 +277,26 @@ def _record_tool(
         )
 
 
+# семантические инструменты кода: имя инструмента -> функция koddi.codeintel.tools
+CODE_TOOLS = {
+    "symbol.search": "symbol_search",
+    "code.outline": "outline",
+    "code.references": "references",
+    "code.definition": "definition",
+    "code.symbol_edit": "symbol_edit",
+    "refactor.rename": "rename",
+    "refactor.extract": "extract",
+}
+
+
+# инструменты, которые меняют файлы или индекс git рабочей папки: их ход держит замок «один писатель»
+WORKSPACE_WRITERS = {
+    "file.create", "file.write_patch", "file.edit", "file.search_replace", "file.delete", "file.move", "file.copy",
+    "file.restore", "patch.apply", "format.run", "refactor.rename", "refactor.extract", "code.symbol_edit",
+    "git.checkout", "git.create_branch", "git.add", "git.commit", "git.restore_file", "changes.rollback",
+}
+
+
 class ToolRunner:
     SAFE_EXPLICIT_WRITE_TOOLS = {
         "file.create",
@@ -308,6 +327,11 @@ class ToolRunner:
         self.read_cache = FileReadCache()
         self.computer_session = None
         self.pending_diagnostics = {}
+        # инженерный цикл и глубина хода задаёт оркестратор; прямой вызов из интерфейса - без них
+        self.ub_workflow = False
+        self.quality_depth: str | None = None
+        # файлы, которые агент сам положил в индекс: только их можно коммитить без явных путей
+        self.agent_staged: set[str] = set()
 
     async def _network(self, coroutine):
         import asyncio
@@ -373,6 +397,17 @@ class ToolRunner:
             log_event("INFO", "tool.approval_required", name, {"approval_required": True})
             return result
 
+        if name in WORKSPACE_WRITERS and self.workspace is not None:
+            from koddi.changes.writer import WriterBusy, claim
+
+            try:
+                claim(self.workspace, self.turn_id)
+            except WriterBusy as exc:
+                result = {"ok": False, "writer_busy": True, "holder_turn": exc.holder.turn_id,
+                          "error": "Эту папку сейчас меняет другой ход агента. Подождите его завершения или работайте "
+                                   "в отдельном worktree - два писателя в одной папке перетирают правки друг друга."}
+                _record_tool(self.turn_id, name, args, "error", result)
+                return result
         try:
             from koddi.policy.engine import READ_ONLY_TOOLS
 
@@ -383,6 +418,11 @@ class ToolRunner:
                 result = self._dispatch(name, args)
             finally:
                 self._external = set()
+            if self.workspace and name not in READ_ONLY_TOOLS and not name.startswith(("project.map", "project.knowledge", "browser.")):
+                from koddi.projectmap import mark_dirty
+
+                # правка или команда могла изменить файлы: карта перечитает их при следующем запросе
+                mark_dirty(self.project_id, self.workspace)
             if result.get("ok", True) and name in {
                 "file.read",
                 "file.read_many",
@@ -529,12 +569,51 @@ class ToolRunner:
             return self.search_text(args)
         if name == "search.files":
             return self.search_files(args)
-        if name == "symbol.search":
-            return self.search_text({"query": args["query"], "glob": "*.{py,cs,js,ts,tsx,xaml}"})
-        if name == "code.outline":
-            return self.code_outline(args)
-        if name == "code.references":
-            return self.search_text({"query": args["symbol"]})
+        if name == "context.retrieve":
+            return self.context_retrieve(args)
+        if name == "docs.lookup":
+            from koddi.libdocs import DocsError, lookup
+
+            try:
+                return lookup(self._require_workspace(), args)
+            except DocsError as exc:
+                return {"ok": False, "error": str(exc), "retryable": True}
+        if name == "skill.load":
+            from koddi.policy.account import local_owner
+            from koddi.projectmap.service import project_for_workspace
+            from koddi.skills.selector import load
+
+            project_id = self.project_id or (project_for_workspace(self.workspace) if self.workspace else None)
+            return load(str(args["name"]), project_id=project_id, owner=local_owner(), root=self.workspace,
+                        file=str(args["file"]) if args.get("file") else None)
+        if name == "project.knowledge":
+            from koddi.knowledge import knowledge_tool
+            from koddi.policy.account import local_owner
+
+            return knowledge_tool(self.project_id, self._require_workspace(), args, owner=local_owner())
+        if name == "qa.run":
+            from koddi.quality.gate import qa_tool
+
+            return qa_tool(self, args)
+        if name == "quality.run":
+            from koddi.quality.engine import quality_tool
+
+            return quality_tool(self, args)
+        if name == "ui.verify":
+            from koddi.quality.ui import UiVerifyError, verify
+
+            try:
+                return verify(self, args)
+            except UiVerifyError as exc:
+                return {"ok": False, "error": str(exc)}
+        if name == "code.impact":
+            from koddi.codeintel.impact import analyze
+
+            return analyze(self, args)
+        if name in CODE_TOOLS:
+            from koddi.codeintel import tools as code_tools
+
+            return getattr(code_tools, CODE_TOOLS[name])(self, args)
         if name == "patch.preview":
             return self.patch_preview(args)
         if name == "devserver.start":
@@ -543,10 +622,6 @@ class ToolRunner:
             return self.shell_run(
                 {"command": args["command"], "timeout_seconds": args.get("timeout_seconds", 600)}
             )
-        if name == "refactor.rename":
-            return self.refactor_rename(args)
-        if name == "refactor.extract":
-            return self.unsupported(name)
         if name == "shell.run":
             return self.shell_run(args)
         if name == "process.list":
@@ -566,24 +641,48 @@ class ToolRunner:
             return self.git_command(["git", "log", "--oneline", f"-{int(args.get('limit', 20))}"])
         if name == "git.branch":
             return self.git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        if name == "git.checkout":
-            return self.git_command(["git", "checkout", args["branch"]])
-        if name == "git.create_branch":
-            return self.git_command(["git", "checkout", "-b", args["branch"]])
+        if name in {"git.checkout", "git.create_branch"}:
+            from koddi.projects.gitsafe import branch_error
+
+            branch = str(args.get("branch") or "")
+            if error := branch_error(branch):
+                return {"ok": False, "error": error, "stdout": "", "stderr": error}
+            # «--» в конце: аргумент - только ветка или коммит, не путь; без -f git не перетирает незакоммиченные правки
+            command = ["git", "checkout", branch, "--"] if name == "git.checkout" else ["git", "checkout", "-b", branch, "--"]
+            return self.git_command(command)
         if name == "git.worktree_create":
-            return self.git_command(
-                ["git", "worktree", "add", args["path"], args.get("branch", "HEAD")]
-            )
+            from koddi.projects.gitsafe import ensure_worktree
+
+            workspace = self._require_workspace()
+            return ensure_worktree(workspace, (workspace / str(args["path"])).resolve(), args.get("branch"))
         if name == "git.worktree_remove":
-            return self.git_command(["git", "worktree", "remove", args["path"]])
+            from koddi.projects.gitsafe import remove_worktree
+
+            return remove_worktree(self._require_workspace(), Path(str(args["path"])))
         if name == "git.worktree_list":
             return self.git_command(["git", "worktree", "list", "--porcelain"])
         if name == "git.add":
-            return self.git_command(["git", "add", "--", *args.get("paths", ["."])])
+            from koddi.projects.gitsafe import add
+
+            workspace = self._require_workspace()
+            access = WorkspacePaths(workspace)
+            result = add(workspace, args.get("paths"), accessible=lambda item: access.accessible(workspace / item))
+            self.agent_staged.update(result.get("staged") or [])
+            return result
         if name == "git.commit":
-            return self.git_command(["git", "commit", "-m", args["message"]])
+            from koddi.projects.gitsafe import commit
+            from koddi.quality.gate import turn_changes
+
+            workspace = self._require_workspace()
+            access = WorkspacePaths(workspace)
+            own = set(self.agent_staged) | set(turn_changes(self.turn_id))
+            result = commit(workspace, args["message"], paths=args.get("paths"), body=args.get("body"), own=own,
+                            accessible=lambda item: access.accessible(workspace / item))
+            if result.get("ok"):
+                self.agent_staged.difference_update(result.get("committed") or [])
+            return result
         if name == "git.restore_file":
-            return self.git_command(["git", "restore", "--", args["path"]])
+            return self.git_restore_file(args)
         if name in {"test.detect", "build.detect"}:
             return self.detect_commands(name)
         if name == "verification.run":
@@ -634,6 +733,10 @@ class ToolRunner:
             return read_completed_context(self.turn_id, args.get("source_turn_id"), action_id=args.get("action_id"), message_id=args.get("message_id"), before_action_id=args.get("before_action_id"), offset=args.get("offset", 0), max_chars=args.get("max_chars", 6000))
         if name == "workspace.inspect":
             return self.workspace_inspect(args)
+        if name == "project.map":
+            return self.project_map(args)
+        if name == "project.map_update":
+            return self.project_map_update(args)
         if name == "memory.get":
             return self.memory_get(args)
         if name == "memory.set":
@@ -775,6 +878,29 @@ class ToolRunner:
         return {"ok": True, "tree": tree, "test_commands": self.detect_commands("test.detect"),
                 "outlines": outlines, "note": "Commands are suggestions; no checks were executed."}
 
+    def project_map(self, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.policy.account import local_owner
+        from koddi.projectmap import MapError, map_tool
+
+        try:
+            return map_tool(self.project_id, self._require_workspace(), args, owner=local_owner(), cancel=self.cancel_event)
+        except MapError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def project_map_update(self, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.policy.account import local_owner
+        from koddi.projectmap import MapError, map_update_tool
+
+        chat_id = None
+        if self.turn_id is not None:
+            with db() as conn:
+                row = conn.execute("SELECT chat_id FROM turns WHERE id=?", (self.turn_id,)).fetchone()
+            chat_id = row["chat_id"] if row else None
+        try:
+            return map_update_tool(self.project_id, self._require_workspace(), args, owner=local_owner(), chat_id=chat_id)
+        except MapError as exc:
+            return {"ok": False, "error": str(exc), "retryable": True}
+
     def file_read(self, args: dict[str, Any]) -> dict[str, Any]:
         path = self._path(args["path"])
         max_bytes = max(
@@ -873,6 +999,9 @@ class ToolRunner:
             path = self._path(relative)
             if path in canonical:
                 raise ToolError("duplicate normalized patch path")
+            # конфиг и хуки git исполняют команды при следующем git status или commit - мимо подтверждения
+            if any(part.lower() in {".git", "git~1"} for part in path.parts):
+                raise ToolError("files inside .git are not changed by agent tools")
             if self._read_editable(path) != before:
                 raise ToolError("file changed since edit preparation")
             if after is not None and "\x00" in after:
@@ -893,6 +1022,10 @@ class ToolRunner:
         from koddi.changes import recovery
         from koddi.policy.account import local_owner
 
+        if not outside and self.turn_id is not None:
+            from koddi.changes.checkpoints import ensure_captured
+
+            ensure_captured(self.turn_id, workspace)
         operation = recovery.prepare(
             owner_id=local_owner(), project_id=project_id, turn_id=None if outside else self.turn_id, root=root,
             changes={path:(before.encode('utf-8') if before is not None else None,after.encode('utf-8') if after is not None else None) for path,(before,after,_mode) in canonical.items()},
@@ -1323,29 +1456,37 @@ class ToolRunner:
             "diff": unified_diff(str(path.relative_to(workspace)), before, args.get("content", "")),
         }
 
-    def refactor_rename(self, args: dict[str, Any]) -> dict[str, Any]:
+    def context_retrieve(self, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.codeintel.impact import changed_files
+        from koddi.context.retrieve import RetrieveError, retrieve
+        from koddi.policy.account import local_owner
+        from koddi.projectmap.service import MapError, project_for_workspace
+
         workspace = self._require_workspace()
-        glob = args.get("glob", "**/*")
-        if not args["old"]:
-            raise ToolError("old symbol cannot be empty")
-        changes = {}
-        for path in WorkspacePaths(workspace).files():
-            relative = path.relative_to(workspace).as_posix()
-            if self._matches_glob(relative, glob):
-                try:
-                    text = self._read_editable(path)
-                except (UnicodeDecodeError, ToolError):
-                    continue
-                if args["old"] in text:
-                    changes[relative] = (text, text.replace(args["old"], args["new"]))
-        return {**self._commit_files(changes, "Textual refactor rename"), "changed": list(changes)}
+        project_id = self.project_id or project_for_workspace(workspace)
+        if project_id is None:
+            return {"ok": False, "error": "context.retrieve needs a project opened in Dokky; use search.text"}
+        paths = WorkspacePaths(workspace)
+        focus = [paths.resolve(str(item), check_ignore=True).relative_to(workspace).as_posix() for item in args.get("paths") or []]
+        try:
+            return retrieve(
+                project_id, workspace, local_owner(), str(args["query"]), focus=focus or changed_files(workspace, limit=20),
+                max_chars=int(args.get("max_chars") or 12000), limit=int(args.get("limit") or 12),
+                include_tests=args.get("include_tests"), cancel=self.cancel_event,
+            )
+        except (RetrieveError, MapError) as exc:
+            return {"ok": False, "error": str(exc), "retryable": True}
 
     def shell_run(self, args: dict[str, Any]) -> dict[str, Any]:
         workspace = self._require_workspace()
         timeout = int(args.get("timeout_seconds") or settings.command_timeout_seconds)
+        return self.run_process(shell_argv(args["command"]), workspace, timeout)
+
+    def run_process(self, argv: list[str], cwd: Path, timeout: int) -> dict[str, Any]:
+        """Процесс без shell с остановкой всего дерева по отмене хода или тайм-ауту; вывод ограничен."""
         proc = subprocess.Popen(
-            shell_argv(args["command"]),
-            cwd=workspace,
+            argv,
+            cwd=cwd,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1459,14 +1600,23 @@ class ToolRunner:
         return {"ok": proc.returncode == 0, "processes_json": proc.stdout, "stderr": proc.stderr}
 
     def process_kill(self, args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            pid = int(args["pid"])
+        except (KeyError, TypeError, ValueError):
+            return {"ok": False, "stderr": "pid must be an integer"}
+        # 0 и отрицательные pid в kill() - группы процессов (-1 - все процессы пользователя), 1 и 4 - системные;
+        # саму Докки и её родителя агент не завершает
+        own = {os.getpid(), os.getppid()} | ({os.getpgrp()} if os.name != "nt" else set())
+        if pid <= 1 or pid > 2**31 - 1 or (os.name == "nt" and pid == 4) or pid in own:
+            return {"ok": False, "stderr": f"process {pid} cannot be stopped by the agent"}
         if os.name != "nt":
             try:
-                os.kill(int(args["pid"]), signal.SIGTERM)
+                os.kill(pid, signal.SIGTERM)
             except OSError as exc:
                 return {"ok": False, "stderr": str(exc)}
             return {"ok": True, "stderr": ""}
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {int(args['pid'])}"],
+            ["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid}"],
             text=True,
             capture_output=True,
             timeout=30,
@@ -1476,14 +1626,17 @@ class ToolRunner:
         return {"ok": proc.returncode == 0, "stderr": proc.stderr}
 
     def git_command(self, command: list[str]) -> dict[str, Any]:
+        from koddi.projects.gitsafe import SAFE_CONFIG, git_env
+
         workspace = self._require_workspace()
         proc = subprocess.run(
-            command,
+            [command[0], *SAFE_CONFIG, *command[1:]],
             cwd=workspace,
             text=True,
             capture_output=True,
             timeout=30,
             check=False,
+            env=git_env(),
             creationflags=HIDDEN_SUBPROCESS,
         )
         return {
@@ -1492,6 +1645,22 @@ class ToolRunner:
             "stderr": proc.stderr,
             "returncode": proc.returncode,
         }
+
+    def git_restore_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Версия файла из индекса пишется как обычная правка агента: она в журнале и откатывается.
+        `git restore` стирал бы незакоммиченные правки человека безвозвратно, а «.» - во всём дереве."""
+        from koddi.projects.gitsafe import index_text
+
+        workspace = self._require_workspace()
+        try:
+            relative, after = index_text(workspace, str(args.get("path") or ""))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        path = self._path(relative)
+        before = self._read_editable(path)
+        if before == after:
+            return {"ok": True, "path": relative, "unchanged": True}
+        return {**self._commit_files({relative: (before, after)}, f"Restore {path.name} from git"), "path": relative}
 
     def detect_commands(self, name: str) -> dict[str, Any]:
         workspace = self._require_workspace()
@@ -1585,20 +1754,22 @@ class ToolRunner:
         payload = {key: value for key, value in args.items() if key != "session_id"}
         result = browser_event(int(args.get("session_id") or 0) or None, action, payload)
         if action == "screenshot" and result.get("ok"):
-            from koddi.attachments.service import store_attachment
-
-            path = Path(result.pop("path"))
-            with db() as conn:
-                turn = conn.execute("SELECT chat_id FROM turns WHERE id=?", (self.turn_id,)).fetchone()
-            with path.open("rb") as handle:
-                attachment = store_attachment(turn["chat_id"] if turn else None, "browser-page.png", handle)
             result.update(
-                attachment_id=attachment["id"],
-                image_url=f"/api/attachments/{attachment['id']}/content",
+                self.attach_image(Path(result.pop("path")), "browser-page.png"),
                 vision_transport="not_confirmed",
                 note="проверяй страницу через browser.snapshot, картинка нужна пользователю",
             )
         return result
+
+    def attach_image(self, path: Path, name: str) -> dict[str, Any]:
+        """Картинка во вложения чата хода: её видит пользователь, модели она не передаётся."""
+        from koddi.attachments.service import store_attachment
+
+        with db() as conn:
+            turn = conn.execute("SELECT chat_id FROM turns WHERE id=?", (self.turn_id,)).fetchone()
+        with path.open("rb") as handle:
+            attachment = store_attachment(turn["chat_id"] if turn else None, name, handle)
+        return {"attachment_id": attachment["id"], "image_url": f"/api/attachments/{attachment['id']}/content"}
 
     def devserver_start(self, args: dict[str, Any]) -> dict[str, Any]:
         """Долгая команда в фоне: сервер разработки, наблюдатель. Возвращает первые строки вывода и pid для остановки."""

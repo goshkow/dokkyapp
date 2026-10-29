@@ -312,10 +312,10 @@ const plural = (n: number, one: string, few: string, many: string) => {
 
 const groups: Record<string, string> = {
   'file.read': 'read', 'tool.output_read': 'read',
-  'directory.list': 'explore', 'directory.tree': 'explore', 'search.text': 'explore', 'project.instructions': 'explore',
+  'directory.list': 'explore', 'directory.tree': 'explore', 'search.text': 'explore', 'project.instructions': 'explore', 'project.map': 'explore',
   'file.create': 'edit', 'file.write_patch': 'edit', 'file.edit': 'edit', 'file.apply_patch': 'edit',
-  'shell.run': 'command', 'test.run': 'command', 'verification.run': 'command',
-  'web.search': 'web', 'web.fetch': 'web', 'plan.update': 'meta',
+  'shell.run': 'command', 'test.run': 'command', 'verification.run': 'command', 'qa.run': 'command', 'quality.run': 'command',
+  'web.search': 'web', 'web.fetch': 'web', 'plan.update': 'meta', 'project.map_update': 'map',
   'task.complete': 'meta', 'task.ask_user': 'meta', 'task.delegate': 'meta',
 };
 
@@ -323,7 +323,7 @@ const groups: Record<string, string> = {
 export function journalSummary(entries: JournalEntry[]) {
   const actions = new Map<string, NonNullable<JournalEntry['event']>>();
   for (const entry of entries) if (entry.type === 'action' && entry.event) actions.set(entry.key, entry.event);
-  const count = { read: new Set<unknown>(), explore: 0, created: new Set<unknown>(), edited: new Set<unknown>(), command: 0, failed: 0, web: 0, plan: 0, other: 0 };
+  const count = { read: new Set<unknown>(), explore: 0, created: new Set<unknown>(), edited: new Set<unknown>(), command: 0, failed: 0, web: 0, map: 0, plan: 0, other: 0 };
   let added = 0;
   let removed = 0;
   for (const event of actions.values()) {
@@ -342,6 +342,7 @@ export function journalSummary(entries: JournalEntry[]) {
     } else if (group === 'command') count.command++;
     else if (group === 'web') count.web++;
     else if (group === 'meta') count.plan++;
+    else if (group === 'map') count.map++;
     else count.other++;
     if (result.ok === false) count.failed++;
   }
@@ -353,6 +354,7 @@ export function journalSummary(entries: JournalEntry[]) {
   if (count.edited.size) parts.push(`изменил ${files(count.edited.size)}`);
   if (count.command) parts.push(`выполнил ${count.command} ${plural(count.command, 'команду', 'команды', 'команд')}`);
   if (count.web) parts.push('искал в интернете');
+  if (count.map) parts.push('обновил карту проекта');
   if (count.other) parts.push(`выполнил ${count.other} ${plural(count.other, 'действие', 'действия', 'действий')}`);
   if (!parts.length && count.plan) parts.push('обновил план');
   // длинный перечень не помещается в строку: три главные части и многоточие
@@ -391,6 +393,9 @@ export function journalSegments(entries: JournalEntry[], metadata: MessageMeta):
         if (!blocks.length && metadata.turn?.created_at) segment.created_at = metadata.turn.created_at;
         blocks.push(segment);
       }
+      // модель иногда просит правила для нескольких вложенных папок разом: в этапе это одна строка
+      const rules = (item: JournalEntry) => item.type === 'action' && item.event?.data?.name === 'project.instructions' && item.event.data.result?.ok !== false;
+      if (rules(entry) && segment.entries.some(rules)) continue;
       segment.entries.push(entry);
     }
   }
@@ -399,8 +404,8 @@ export function journalSegments(entries: JournalEntry[], metadata: MessageMeta):
     open.running = metadata.status === 'running' && !metadata.live_text;
     if (!open.running) open.end = metadata.turn?.completed_at;
   }
-  // общее «Думаю…» без конкретных действий не получает отдельную строку после завершения этапа
-  return blocks.filter((block) => block.type !== 'segment' || block.running || block.entries.some((entry) => entry.type !== 'status' || !(entry.text ?? '').startsWith('Думаю')));
+  // этап из одних состояний («Думаю…», «Подготавливаю действие…») после завершения не получает строку «Думал N сек.»
+  return blocks.filter((block) => block.type !== 'segment' || block.running || block.entries.some((entry) => entry.type !== 'status'));
 }
 
 /** Подпись хода: меняется только когда меняется то, что рисуется. */
@@ -446,6 +451,8 @@ export function actionText(event: ActionEvent): string {
   const titles: Record<string, [string, string]> = {
     'tool.output_read': ['Читаю полный результат действия', 'Полный результат действия прочитан'],
     'project.instructions': ['Читаю правила проекта', 'Правила проекта изучены'],
+    'project.map': ['Смотрю карту проекта', 'Карта проекта изучена'],
+    'project.map_update': ['Обновляю карту проекта', 'Карта проекта обновлена'],
     'file.create': [`Создаю файл: ${path}`, `Создан файл: ${path}${delta}`],
     'file.write_patch': [`Редактирую: ${path}`, `Изменён файл: ${path}${delta}`],
     'file.edit': [`Редактирую: ${path}`, `Изменён файл: ${path}${delta}`],
@@ -460,6 +467,8 @@ export function actionText(event: ActionEvent): string {
     'verification.run': [command ? `Проверяю: ${command}` : 'Проверяю результат', command ? `Проверено: ${command}` : 'Результат проверен'],
     'test.run': [command ? `Запускаю тесты: ${command}` : 'Запускаю тесты', command ? `Тесты выполнены: ${command}` : 'Тесты выполнены'],
     'plan.update': ['Обновляю план', 'План обновлён'],
+    'qa.run': args.expect === 'fail' ? ['Проверяю, что тест падает по нужной причине', 'Красный тест проверен'] : ['Запускаю проверки', 'Проверки выполнены'],
+    'quality.run': args.report_id ? ['Читаю отчёт качества', 'Отчёт качества прочитан'] : ['Проверяю качество кода', 'Качество кода проверено'],
     'task.delegate': ['Передаю подзадачу агенту', 'Подзадача выполнена'],
     'task.complete': ['Подвожу итог', 'Задача завершена'],
     'task.ask_user': ['Ожидаю уточнения', 'Уточнение получено'],
@@ -488,6 +497,8 @@ export function liveLabel(event: ActionEvent): string {
   const labels: Record<string, string> = {
     'tool.output_read': 'Читаю результат действия',
     'project.instructions': 'Читаю правила проекта',
+    'project.map': 'Смотрю карту проекта',
+    'project.map_update': 'Обновляю карту проекта',
     'file.create': file ? `Создаю ${file}` : 'Создаю файл',
     'file.write_patch': file ? `Редактирую ${file}` : 'Редактирую файл',
     'file.edit': file ? `Редактирую ${file}` : 'Редактирую файл',
@@ -502,6 +513,8 @@ export function liveLabel(event: ActionEvent): string {
     'verification.run': 'Проверяю результат',
     'test.run': 'Запускаю тесты',
     'plan.update': 'Обновляю план',
+    'qa.run': args.expect === 'fail' ? 'Проверяю красный тест' : 'Запускаю проверки',
+    'quality.run': 'Проверяю качество кода',
     'task.delegate': 'Передаю подзадачу агенту',
     'task.complete': 'Подвожу итог',
     'task.ask_user': 'Ожидаю уточнения',

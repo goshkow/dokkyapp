@@ -7,6 +7,7 @@ import {
 } from '../lib/types';
 import { loadLimits, resetLimits } from './limits';
 import { setPanel, setPanelPersistence } from './panels';
+import { notify } from './overlay';
 import { applyAppearance, ui, type Scope } from './ui';
 
 export interface DataState {
@@ -20,9 +21,6 @@ export interface DataState {
   models: ModelOption[];
   modes: ModeOption[];
   loginBusy: boolean;
-  /** попытка входа закончилась (время вышло или код сгорел): вместо «Войти» показывается «Войти снова» */
-  loginExpired: boolean;
-  authMessage: string;
   /** Раскрытые проекты и последний проект помнятся между запусками. */
   openProjects: string[];
   lastProjectId: number | null;
@@ -43,8 +41,6 @@ export const data = createStore<DataState>({
   models: [],
   modes: [],
   loginBusy: false,
-  loginExpired: false,
-  authMessage: '',
   openProjects: readJson<string[]>(OPEN_KEY, []),
   lastProjectId: Number(readText(LAST_KEY)) || null,
 });
@@ -167,7 +163,7 @@ export const storedScope = (): Scope | null => {
 };
 
 /* вход и выход */
-export function revoke(message = 'Сессия завершена. Войдите снова'): void {
+export function revoke(): void {
   resetLimits();
   cacheClear();
   setCacheOwner('');
@@ -177,8 +173,6 @@ export function revoke(message = 'Сессия завершена. Войдит�
     cloudChats: [],
     cloudNext: null,
     loginBusy: false,
-    loginExpired: false,
-    authMessage: message,
   });
 }
 setUnauthorizedHandler(() => revoke());
@@ -189,17 +183,23 @@ const LOGIN_SECONDS = 600;
 let loginTimer = 0;
 let loginAttempt = 0;
 
-/** Одна попытка входа живёт 10 минут: сервер выдаёт короткую ссылку, приложение ждёт ответа браузера. */
+/**
+ * Одна попытка входа живёт 10 минут: сервер выдаёт короткую ссылку, приложение ждёт ответа браузера.
+ * Под кнопкой статуса нет: истёкшая попытка просто возвращает «Войти», настоящая ошибка приходит уведомлением.
+ */
 export async function login(): Promise<void> {
   const attempt = ++loginAttempt;
   clearTimeout(loginTimer);
-  data.set({ loginBusy: true, loginExpired: false, authMessage: '' });
+  data.set({ loginBusy: true });
   let flow: { authorize_url: string; expires_in?: number };
   try {
     flow = await post<{ authorize_url: string; expires_in?: number }>('/api/dokky/auth/start');
   } catch (error) {
     // ошибка выдачи ссылки: браузер не открывается
-    if (attempt === loginAttempt) data.set({ loginBusy: false, authMessage: (error as Error).message });
+    if (attempt === loginAttempt) {
+      data.set({ loginBusy: false });
+      notify((error as Error).message || 'Не удалось начать вход', true);
+    }
     return;
   }
   if (attempt !== loginAttempt) return;
@@ -207,8 +207,10 @@ export async function login(): Promise<void> {
   else window.open(flow.authorize_url, '_blank', 'noopener,noreferrer');
   // запас в несколько секунд: решает приложение по ответу сервера, таймер - только страховка
   const deadline = Date.now() + (flow.expires_in || LOGIN_SECONDS) * 1000 + 5000;
-  const finish = (patch: Partial<DataState>): void => {
-    if (attempt === loginAttempt) data.set({ loginBusy: false, ...patch });
+  const finish = (error = ''): void => {
+    if (attempt !== loginAttempt) return;
+    data.set({ loginBusy: false });
+    if (error) notify(error, true);
   };
   const poll = async (): Promise<void> => {
     if (attempt !== loginAttempt) return;
@@ -219,20 +221,18 @@ export async function login(): Promise<void> {
         // после входа загружается всё то же, что при запуске: списки, модели, лимиты
         resetLimits();
         await bootApp();
-        finish({ loginExpired: false, authMessage: '' });
+        finish();
         return;
       }
-      if (value.status === 'expired') return finish({ loginExpired: true, authMessage: value.message || 'Время на вход вышло' });
-      if (value.status === 'invalid') return finish({ loginExpired: true, authMessage: value.message || 'Попытка входа закончилась, войдите снова' });
-      if (value.status === 'denied' || value.status === 'error') return finish({ authMessage: value.message || 'Не удалось войти' });
-      if (value.status === 'idle') return finish({ authMessage: '' });
+      if (value.status === 'expired' || value.status === 'invalid' || value.status === 'idle') return finish();
+      if (value.status === 'denied' || value.status === 'error') return finish(value.message || 'Не удалось войти');
       if (Date.now() > deadline) {
         await post('/api/dokky/auth/cancel').catch(() => undefined);
-        return finish({ loginExpired: true, authMessage: 'Время на вход вышло' });
+        return finish();
       }
       loginTimer = window.setTimeout(() => void poll(), 1000);
     } catch (error) {
-      finish({ authMessage: (error as Error).message });
+      finish((error as Error).message || 'Не удалось войти');
     }
   };
   loginTimer = window.setTimeout(() => void poll(), 1000);
@@ -242,13 +242,13 @@ export async function login(): Promise<void> {
 export async function cancelLogin(): Promise<void> {
   loginAttempt += 1;
   clearTimeout(loginTimer);
-  data.set({ loginBusy: false, loginExpired: false, authMessage: '' });
+  data.set({ loginBusy: false });
   await post('/api/dokky/auth/cancel').catch(() => undefined);
 }
 
 export async function logout(): Promise<void> {
   await post('/api/dokky/logout');
-  revoke('Вы вышли из Докки');
+  revoke();
 }
 
 /** Перечитывает bootstrap и сессию: когда план сменился, вместе с ним меняются модели и возможности аккаунта. */

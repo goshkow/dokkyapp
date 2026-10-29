@@ -1,0 +1,43 @@
+/* режим чата: страница сайта во фрейме занимает всю колонку чата, кнопки окна лежат поверх неё */
+.site-surface { position: absolute; inset: 0; z-index: 1; background: var(--bg); }
+.site-surface[hidden] { display: none; }
+/* под стеклом страница сайта прозрачная: фон чата - то же стекло, что под меню */
+html.glass .site-surface { background: transparent; }
+.site-surface iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+/* пока страница не ответила, вместо неё спокойный фон, а не белая вспышка */
+.site-surface[data-status="loading"] iframe { visibility: hidden; }
+/* новость сайта затемняет всё окно: тот же тон и размытие, что у .news-layer сайта; над фреймом - дыра (clip-path) */
+.surface-scrim {
+  position: fixed; inset: 0; z-index: 800; background: #0008;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  animation: surface-scrim-in 0.18s ease both;
+}
+@keyframes surface-scrim-in { from { opacity: 0; } }
+.surface-scrim.is-closing { opacity: 0; pointer-events: none; transition: opacity 0.18s ease; }
+@media (prefers-reduced-motion: reduce) { .surface-scrim { animation: none; } }
+/* подложки поля ввода и «Чат / Поиск» над фреймом: пустые, только рамка для нативного стекла с видом приложения внутри */
+.site-field-slot { position: absolute; z-index: 2; margin: 0; padding: 0; pointer-events: none; }
+.site-surface-state {
+  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px;
+  padding: 24px; text-align: center; color: var(--muted);
+}
+.site-surface-state b { color: var(--text); font-size: var(--fs-15); font-weight: 600; }
+.site-surface-state p { max-width: 320px; margin: 0; }
+
+/* иконки разделов и чатов приходят с сайта: SVG-маска, цвет задаёт меню приложения */
+.surface-icon { display: inline-block; flex: none; width: 18px; height: 18px; background: currentColor; mask: var(--icon) center / contain no-repeat; -webkit-mask: var(--icon) center / contain no-repeat; }
+.side-tile .surface-badge { position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.side-tile { position: relative; }
+.chat-item .surface-icon { width: 14px; height: 14px; margin-right: 6px; opacity: 0.72; vertical-align: -2px; }
+.chat-row .chat-state { display: inline-grid; place-items: center; width: 14px; height: 14px; flex: none; }
+.chat-row .chat-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.chat-row .chat-working .spinner { width: 11px; height: 11px; }
+.surface-multi-off { display: grid; gap: 8px; margin: 4px 8px 8px; padding: 12px; border-radius: 12px; background: var(--hover); color: var(--muted); font-size: var(--fs-13); }
+.surface-multi-off b { color: var(--text); }
+
+/* чаты других компьютеров в режиме кода: свёрнутый список под «Недавним» */
+.remote-chats .section-toggle { display: flex; align-items: center; gap: 4px; width: 100%; background: none; color: inherit; text-align: left; }
+.remote-chats .section-toggle svg { width: 13px; height: 13px; transition: transform 160ms var(--ease); }
+.remote-chats[data-open] .section-toggle svg { transform: rotate(90deg); }
+.remote-chats .chat-host { flex: none; max-width: 40%; overflow: hidden; color: var(--faint); font-size: var(--fs-12); text-overflow: ellipsis; white-space: nowrap; }
+.remote-chats .chat-host[data-offline] { opacity: 0.6; }

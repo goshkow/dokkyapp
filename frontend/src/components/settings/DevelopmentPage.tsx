@@ -5,9 +5,11 @@ import { savePermission } from '../../state/chat';
 import { scheduleKeepalive } from '../../state/codingSession';
 import { saveSettings, useData } from '../../state/data';
 import { confirmDialog, guarded } from '../../state/overlay';
+import { loadRemote, saveRemote, useRemote } from '../../state/remoteControl';
 import { useView } from '../../state/view';
 import { saveKey } from './GeneralPage';
 import { ComputerControl } from './ComputerControl';
+import { QualitySettings } from './QualitySettings';
 import { Block, Pick, Row, Section, Toggle, type Say } from './parts';
 
 interface Recovery { id: number; project_id: number; status: string; state: string; files: Array<{ path: string; current_hash: string }> }
@@ -21,6 +23,8 @@ export function DevelopmentPage({ say }: { say: Say }) {
   const [recovery, setRecovery] = useState<Recovery[]>([]);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const remoteStatus = useRemote((s) => s.status);
+  useEffect(() => { loadRemote().catch(() => undefined); }, []);
   useEffect(() => {
     if (!project) return;
     api<Recovery[]>(`/api/projects/${project.id}/write-recovery`).then(setRecovery).catch((reason: Error) => setError(reason.message));
@@ -79,6 +83,17 @@ export function DevelopmentPage({ say }: { say: Say }) {
           say={say}
         />
       </Section>
+      <Section title="Remote access">
+        <Toggle
+          title="Remote access для новых чатов"
+          detail="Новый чат сразу виден на сайте Докки и в приложении на телефоне. Выключите - новые чаты останутся только на этом компьютере, а показать отдельный чат можно переключателем в «Среде» рабочей области."
+          checked={remoteStatus?.share_new !== false}
+          disabled={!remoteStatus}
+          save={(value) => saveRemote({ share_new: value })}
+          say={say}
+        />
+      </Section>
+      <QualitySettings project={project} say={say} />
       <ComputerControl say={say} />
       {project && error && <Section><Row title="Записи файлов" detail={error} /></Section>}
       {project && recovery.length > 0 && (

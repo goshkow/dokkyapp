@@ -55,6 +55,20 @@ describe('journal', () => {
     expect(blocks.map((block) => block.type)).toEqual(['commentary', 'segment']);
   });
 
+  it('несколько запросов правил подряд - одна строка этапа', () => {
+    const events = ['src', 'src/static', 'src/templates'].flatMap((path, index) => [
+      call(`r${index}`, 'project.instructions', path, 3 + index * 2, '2026-10-17T10:00:10+00:00'),
+      result(`r${index}`, 'project.instructions', path, 4 + index * 2, '2026-10-17T10:00:11+00:00', { instructions: [] }),
+    ]);
+    const journal = projectLocalJournal([
+      { id: 1, role: 'user', content: 'вопрос', metadata: { turn_id: 7 } },
+      { id: 2, role: 'assistant', content: '', metadata: { kind: 'activity', channel: 'commentary', status: 'completed', sequence: 2, turn, turn_id: 7, events } },
+    ])[1] as Message;
+    const blocks = journalSegments(orderedJournalEntries(journal.metadata ?? {}), journal.metadata ?? {});
+    const rules = blocks.flatMap((block) => block.entries).filter((entry) => entry.event?.data?.name === 'project.instructions');
+    expect(rules).toHaveLength(1);
+  });
+
   it('считает время работы без пауз на сжатие контекста', () => {
     expect(journalDuration(turn)).toBe('2 мин. 13 сек.');
     const paused = {
@@ -81,6 +95,16 @@ describe('короткие подписи состояния', () => {
     expect(conciseStatus('Редактирую: backend/koddi/desktop/web_host.py')).toBe('Редактирую desktop/web_host.py');
     expect(conciseStatus('Думаю…')).toBe('Думаю…');
     expect(liveLabel({ event: 'tool.call', data: { name: 'file.read', arguments: { path: ['C:', 'proj', 'src', 'app.py'].join(String.fromCharCode(92)) } } })).toBe('Читаю src/app.py');
-    expect(liveLabel({ event: 'tool.call', data: { name: 'search.text', arguments: { query: 'a|b|c' } } })).toBe('Ищу в файлах проекта');
+    expect(liveLabel({ event: 'tool.call', data: { name: 'search.text', arguments: { query: 'a|b|c' } } })).toBe('Ищу в файлах проекта');    expect(liveLabel({ event: 'tool.call', data: { name: 'qa.run', arguments: { expect: 'fail' } } })).toBe('Проверяю красный тест');
+    expect(liveLabel({ event: 'tool.call', data: { name: 'quality.run', arguments: { gates: ['crap'] } } })).toBe('Проверяю качество кода');
+  });
+  it('показывает работу с картой проекта', () => {
+    const entry = (key: string, name: string, sequence: number) => ({
+      key, type: 'action' as const, sequence, order: sequence, event: { event: 'tool.result', sequence, data: { id: key, name, arguments: { path: 'app' }, result: { ok: true } } },
+    });
+    const summary = journalSummary([entry('m1', 'project.map', 1), entry('m2', 'project.map_update', 2)]);
+    expect(summary.text).toBe('Изучил проект, обновил карту проекта');
+    expect(actionText({ event: 'tool.call', data: { name: 'project.map', arguments: {} } })).toBe('Смотрю карту проекта');
+    expect(actionText({ event: 'tool.result', data: { name: 'project.map_update', arguments: {}, result: { ok: true } } })).toBe('Карта проекта обновлена');
   });
 });

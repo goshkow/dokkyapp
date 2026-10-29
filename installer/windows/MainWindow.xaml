@@ -51,8 +51,9 @@
         <Border x:Name="DoneMark" Width="22" Height="22" CornerRadius="11" Background="{StaticResource Positive}"
                 HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-4,-4" Visibility="Collapsed"
                 BorderBrush="{StaticResource Bg}" BorderThickness="3">
-          <Path Data="M 3.5,8 L 6.6,11 L 12.5,4.8" Stroke="#0E2A1C" StrokeThickness="2.2" Stretch="Uniform" Width="10" Height="8"
-                HorizontalAlignment="Center" VerticalAlignment="Center"
+          <!-- путь от нуля и по центру: со сдвигом в координатах галочка уезжала из кружка -->
+          <Path Data="M 0,3.2 L 3.1,6.2 L 9,0" Stroke="#0E2A1C" StrokeThickness="2.2"
+                HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,1,0,0"
                 StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
         </Border>
       </Grid>

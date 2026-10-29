@@ -6,6 +6,7 @@ from pathlib import Path
 READ_ONLY_TOOLS = {
     "computer.status",
     "workspace.inspect",
+    "project.map",
     "task.history",
     'attachment.read',
     "tool.output_read",
@@ -23,6 +24,10 @@ READ_ONLY_TOOLS = {
     "symbol.search",
     "code.outline",
     "code.references",
+    "code.definition",
+    "code.impact",
+    "context.retrieve",
+    "skill.load",
     "git.status",
     "git.diff",
     "git.log",
@@ -69,6 +74,7 @@ WRITE_TOOLS = {
     "format.run",
     "refactor.rename",
     "refactor.extract",
+    "code.symbol_edit",
     "git.checkout",
     "git.create_branch",
     "git.worktree_create",
@@ -165,6 +171,18 @@ class Decision:
     dangerous: bool = False
 
 
+def quality_runs_processes(args: dict) -> bool:
+    """quality.run запускает тесты проекта только для мутаций и сбора покрытия; без явных gates - по бюджету."""
+    if args.get("report_id") is not None:
+        return False
+    if args.get("coverage") == "collect":
+        return True
+    gates = args.get("gates")
+    if gates:
+        return "mutation" in gates
+    return not (args.get("decisions") or args.get("architecture_proposal") or args.get("suggest_layers"))
+
+
 def _confirm(profile: str, reason: str, **extra) -> Decision:
     """Действие, которое меняет что-то или выходит за проект: решение зависит от режима подтверждений."""
     if profile == "full":
@@ -219,6 +237,24 @@ def _decide_browser(tool_name: str, args: dict, workspace: Path | None, profile:
     return Decision("block", f"unknown tool {tool_name}")
 
 
+def _plugin_script(command: str) -> bool:
+    """Команда обращается к файлам установленного плагина (по пути папки данных или через переменную плагина)."""
+    from koddi.plugins.store import plugins_root
+
+    # кавычки и экранированные пробелы (Application\ Support) не должны прятать путь
+    text = command.replace("\\ ", " ").replace('"', "").replace("'", "").replace("\\", "/").casefold()
+    root = plugins_root().resolve()
+    home = Path.home().resolve().as_posix().casefold()
+    roots = set()
+    # папка данных вместе со словом plugins - переход в папку данных и запуск plugins/... относительным путём
+    for folder in (root.as_posix().casefold(), root.parent.as_posix().casefold()):
+        roots.add(folder)
+        if folder.startswith(home + "/"):
+            roots |= {"~" + folder[len(home):], "$home" + folder[len(home):], "${home}" + folder[len(home):]}
+    near_data = any(item in text for item in roots) and "plugins" in text
+    return "claude_plugin_root" in text or "dokky_plugin_root" in text or "plugin://" in text or near_data
+
+
 def _mcp_servers_enabled() -> bool:
     from koddi.integrations.mcp import _load_servers
 
@@ -253,10 +289,20 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         "patch.apply",
         "patch.preview",
         "code.outline",
+        "code.references",
+        "code.definition",
+        "code.symbol_edit",
+        "code.impact",
+        "context.retrieve",
+        "docs.lookup",
+        "refactor.rename",
+        "refactor.extract",
         "document.parse",
         "vision.inspect",
         "ocr.run",
         "verification.run",
+        "qa.run",
+        "quality.run",
         "ide.open_file",
         "git.restore_file",
         "git.add",
@@ -299,6 +345,13 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         return Decision("ask", "each computer action requires explicit approval")
     if tool_name.startswith("browser."):
         return _decide_browser(tool_name, args, workspace, profile)
+    if tool_name == "ui.verify":
+        # шаги нажимают в странице проекта, как browser.click; чужие сайты ui.verify не открывает
+        if profile == "read-only":
+            return Decision("block", "read-only permission profile")
+        if workspace is None or not _local_target(str(args.get("url", ""))):
+            return Decision("block", "ui.verify checks only project pages (localhost or project files)")
+        return Decision("allow", "local preview")
     if external:
         reads = tool_name in READ_ONLY_TOOLS
         if profile == "read-only" and not reads:
@@ -308,6 +361,28 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         return _confirm(profile, "file outside the project", external=tuple(external))
     if tool_name in READ_ONLY_TOOLS:
         return Decision("allow", "read-only tool")
+    if tool_name == "docs.lookup":
+        if not args.get("remote"):
+            return Decision("allow", "local package documentation")
+        if profile == "read-only":
+            return Decision("block", "read-only permission profile")
+        # Context7 - внешний MCP-сервер: как любой вызов MCP, по режиму подтверждений
+        return _confirm(profile, "documentation request to Context7 through MCP")
+    if tool_name == "project.knowledge":
+        # поиск и сверка заметок в данных Докки; выгрузка в папку проекта включается только пользователем
+        return Decision("allow", "project knowledge") if workspace else Decision("block", "workspace is required")
+    if tool_name == "project.map_update":
+        # заметки агента лежат в данных Докки и не меняют файлы проекта, как и план хода
+        return Decision("allow", "agent notes in the project map") if workspace else Decision("block", "workspace is required")
+    if tool_name == "quality.run":
+        if workspace is None:
+            return Decision("block", "workspace is required")
+        if not quality_runs_processes(args):
+            # разбор кода, отчёты и предложения слоёв не запускают ничего из проекта
+            return Decision("allow", "static analysis of project code")
+        if profile == "read-only":
+            return Decision("block", "read-only permission profile")
+        return _confirm(profile, "run project tests for coverage or mutation testing")
     if tool_name == "mcp.tools_list" and not _mcp_servers_enabled():
         # без включённых серверов список ничего не запускает, спрашивать не о чем
         return Decision("allow", "no MCP servers configured")
@@ -328,6 +403,14 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         "process.list",
     }:
         return Decision("block", "workspace is required")
+    command = args.get("command")
+    if isinstance(command, str) and tool_name != "safety.review" and _plugin_script(command):
+        # скрипты плагинов запускает только человек: вопрос в любом режиме, включая «Разрешить всё»,
+        # и для любого инструмента с командой (test.run, build.run, devserver.start и т.д.)
+        return Decision("ask", "runs a file of an installed plugin: every run needs the user's approval")
+    if tool_name == "qa.run":
+        # команды находит Докки, но тесты и скрипты проекта - это выполнение кода проекта
+        return _confirm(profile, "run project checks: lint, types, tests")
     if tool_name in WRITE_TOOLS or tool_name.startswith(("test.", "build.", "lint.", "process.")):
         return _confirm(profile, f"profile={profile}")
     if tool_name == "shell.run":

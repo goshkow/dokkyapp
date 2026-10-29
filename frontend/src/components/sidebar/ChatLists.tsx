@@ -194,7 +194,9 @@ export function ChatLists() {
 
   const matches = (chat: Chat) => !query || (chat.title ?? '').toLowerCase().includes(query);
   const visible = (development ? localChats : cloudChats).filter(matches);
-  const free = development ? visible.filter((chat) => !chat.project_id) : visible;
+  // чаты без проекта живут в скрытой папке «Докки»: её нет в списке проектов, поэтому они в «Недавнем»
+  const known = useMemo(() => new Set(projects.map((project) => project.id)), [projects]);
+  const free = development ? visible.filter((chat) => chat.project_id == null || !known.has(chat.project_id)) : visible;
 
   const groups = useMemo(() => {
     if (!development) return [];
@@ -231,7 +233,14 @@ export function ChatLists() {
         </section>
       )}
       <section className="recent-chats" aria-label="Недавние чаты">
-        <h2 className="section-title">Недавнее</h2>
+        <div className="section-head">
+          <h2 className="section-title">Недавнее</h2>
+          {development && (
+            <button type="button" className="icon-btn" title="Новый чат без проекта" aria-label="Новый чат без проекта" onClick={() => newChat(null)}>
+              <Plus aria-hidden="true" />
+            </button>
+          )}
+        </div>
         <div id="chats">
           <ChatList
             chats={free}

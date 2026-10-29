@@ -205,4 +205,11 @@ def external_path(value: str) -> Path:
     private = data_dir().resolve()
     if resolved == private or resolved.is_relative_to(private):
         raise PathAccessError("Dokky application data is not accessible to the agent")
+    # на macOS и Windows ФС не различает регистр: «.../application support/koddi» - та же папка, сверяем по inode
+    for parent in (resolved, *resolved.parents):
+        try:
+            if os.path.samefile(parent, private):
+                raise PathAccessError("Dokky application data is not accessible to the agent")
+        except OSError:
+            continue
     return resolved

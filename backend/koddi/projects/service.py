@@ -8,6 +8,36 @@ from koddi.storage.db import db
 
 
 HIDDEN_SUBPROCESS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+HOME_NAME = "Докки"
+
+
+def home_directory() -> Path:
+    """Папка чатов без проекта: в документах, рядом с проектами, на macOS и Windows одинаково."""
+    return Path.home() / "Documents" / HOME_NAME
+
+
+def home_project() -> dict:
+    """Скрытый проект чатов без проекта. Через него у такого чата те же разрешения, журнал изменений и откат,
+    что у проекта; файлы вне папки агент открывает по абсолютному пути через режим разрешений."""
+    root = home_directory()
+    root.mkdir(parents=True, exist_ok=True)
+    root = root.resolve()
+    with db() as conn:
+        row = conn.execute("SELECT * FROM projects WHERE path=?", (str(root),)).fetchone()
+        if row is None:
+            row = conn.execute(
+                "INSERT INTO projects(name, path, hidden) VALUES (?, ?, 1) RETURNING *", (HOME_NAME, str(root))
+            ).fetchone()
+    return dict(row)
+
+
+def is_home(workspace: Path | None) -> bool:
+    if workspace is None:
+        return False
+    try:
+        return workspace.resolve() == home_directory().resolve()
+    except OSError:
+        return False
 
 
 def add_project(path: str, name: str | None = None) -> dict:
@@ -18,7 +48,7 @@ def add_project(path: str, name: str | None = None) -> dict:
         cur = conn.execute(
             """
             INSERT INTO projects(name, path, last_opened_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(path) DO UPDATE SET name=excluded.name, last_opened_at=CURRENT_TIMESTAMP
+            ON CONFLICT(path) DO UPDATE SET name=excluded.name, last_opened_at=CURRENT_TIMESTAMP, hidden=0
             RETURNING *
             """,
             (project_name, str(root)),
@@ -29,7 +59,7 @@ def add_project(path: str, name: str | None = None) -> dict:
 def list_projects(*, include_status: bool = True) -> list[dict]:
     with db() as conn:
         rows = conn.execute(
-            "SELECT * FROM projects ORDER BY pinned DESC, last_opened_at DESC"
+            "SELECT * FROM projects WHERE hidden=0 ORDER BY pinned DESC, last_opened_at DESC"
         ).fetchall()
     projects: list[dict] = []
     for row in rows:
@@ -66,7 +96,7 @@ def project_status(path: Path) -> dict:
             creationflags=HIDDEN_SUBPROCESS,
         )
         dirty = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "-c", "core.fsmonitor=false", "status", "--porcelain"],
             cwd=path,
             text=True,
             capture_output=True,
@@ -82,6 +112,10 @@ def project_status(path: Path) -> dict:
 
 
 def create_worktree(project_id: int, path: str, branch: str, task_id: int | None = None) -> dict:
+    """Идемпотентно: повтор с тем же путём и веткой (например, после сбоя) возвращает существующий worktree,
+    а запись в базе сверяется с git."""
+    from koddi.projects.gitsafe import ensure_worktree
+
     project = get_project(project_id)
     if not project:
         return {"ok": False, "error": "project not found"}
@@ -89,24 +123,17 @@ def create_worktree(project_id: int, path: str, branch: str, task_id: int | None
     target = Path(path).expanduser().resolve()
     if not (root / ".git").exists():
         return {"ok": False, "error": "project is not a Git repository"}
-    completed = subprocess.run(
-        ["git", "worktree", "add", "-b", branch, str(target)],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
-        creationflags=HIDDEN_SUBPROCESS,
-    )
-    if completed.returncode != 0:
-        return {"ok": False, "error": completed.stderr.strip() or completed.stdout.strip()}
+    created = ensure_worktree(root, target, branch)
+    if not created["ok"]:
+        return created
     with db() as conn:
-        cursor = conn.execute(
-            "INSERT INTO worktrees(project_id, name, path, branch, task_id) VALUES (?, ?, ?, ?, ?)",
-            (project_id, target.name, str(target), branch, task_id),
+        conn.execute(
+            "INSERT INTO worktrees(project_id, name, path, branch, task_id) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET branch=excluded.branch, status='active'",
+            (project_id, target.name, created["path"], created["branch"], task_id),
         )
-        row = conn.execute("SELECT * FROM worktrees WHERE id=?", (cursor.lastrowid,)).fetchone()
-    return {"ok": True, "worktree": dict(row)}
+        row = conn.execute("SELECT * FROM worktrees WHERE path=?", (created["path"],)).fetchone()
+    return {"ok": True, "worktree": dict(row), "reused": created["reused"]}
 
 
 def remove_worktree(worktree_id: int, force: bool = False) -> dict:
@@ -118,18 +145,11 @@ def remove_worktree(worktree_id: int, force: bool = False) -> dict:
     project = get_project(item["project_id"])
     if not project:
         return {"ok": False, "error": "parent project not found"}
-    command = ["git", "worktree", "remove"] + (["--force"] if force else []) + [item["path"]]
-    completed = subprocess.run(
-        command,
-        cwd=project["path"],
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
-        creationflags=HIDDEN_SUBPROCESS,
-    )
-    if completed.returncode != 0:
-        return {"ok": False, "error": completed.stderr.strip() or completed.stdout.strip()}
+    from koddi.projects.gitsafe import remove_worktree as safe_remove
+
+    result = safe_remove(Path(project["path"]), Path(item["path"]), force=force)
+    if not result["ok"]:
+        return {"ok": False, "error": result.get("error") or result.get("stderr", "").strip() or result.get("stdout", "").strip()}
     with db() as conn:
         conn.execute("DELETE FROM worktrees WHERE id=?", (worktree_id,))
     return {"ok": True, "id": worktree_id}

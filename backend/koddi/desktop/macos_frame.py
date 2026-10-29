@@ -175,3 +175,10 @@ def hide_dock_icon() -> None:
     from AppKit import NSApplication
 
     NSApplication.sharedApplication().setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
+
+
+def activate_app() -> None:
+    """Программа выходит вперёд, даже если окно открыли из меню строки меню, когда активна другая."""
+    from AppKit import NSApplication
+
+    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)

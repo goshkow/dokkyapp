@@ -248,6 +248,9 @@ class RegionGlass:
         self.views: dict[str, object] = {}
         # движение, которое хост уже проигрывает: ключ -> (куда, до какого момента)
         self.flights: dict[str, tuple] = {}
+        # угасание, которое хост проигрывает сам: ключ -> (вид, угасание со страницы)
+        self.fades: dict[str, tuple] = {}
+        self._fade_timer = None
         # как рамка блока зависит от размера страницы: во время ресайза хост двигает стекло сам, не дожидаясь страницы
         self.models: dict[str, dict] = {}
         # размеры окна по времени: стекло берёт тот, который страница показывает сейчас
@@ -259,6 +262,7 @@ class RegionGlass:
             view.removeFromSuperview()
         self.views.clear()
         self.flights.clear()
+        self.fades.clear()
         self.models.clear()
 
     def dress_all(self) -> None:
@@ -267,6 +271,8 @@ class RegionGlass:
 
     def set_above(self, above: bool) -> None:
         """Над страницей или под ней: пока открыто модальное окно, стекло уходит под страницу."""
+        # запоминаем: стекло, которое появится позже (поле во время заставки), тоже должно встать под страницу
+        self.above = above
         content = self.container()
         web = self.anchor(content)
         for view in self.views.values():
@@ -421,6 +427,7 @@ class RegionGlass:
                 self.views[key] = view
                 dress(glass, self.theme())
             view.setHidden_(False)
+            self._fade(key, view, item)
             if flight:
                 view.layer().removeAllAnimations()
                 self.flights.pop(key, None)
@@ -435,6 +442,44 @@ class RegionGlass:
                 self.flights[key] = (target_key, now + ms / 1000.0)
         for key in [key for key in self.flights if key not in wanted]:
             del self.flights[key]
+        for key in [key for key in self.fades if key not in wanted]:
+            del self.fades[key]
+
+    def _fade(self, key: str, view, item: dict) -> None:
+        """Блок страницы гаснет или проявляется вместе со своим слоем (переход «Чат / Поиск»), стекло - так же.
+
+        Рамки приходят с опозданием на пару кадров, поэтому угасание по кривой и от момента начала анимации
+        страницы считает хост. Анимацию Core Animation стекло не видит (рисуется по итоговой прозрачности слоя),
+        поэтому прозрачность ставится каждый кадр таймером.
+        """
+        fade = item.get("fade")
+        if not fade:
+            self.fades.pop(key, None)
+            view.setAlphaValue_(float(item.get("o", 1.0)))
+            return
+        self.fades[key] = (view, fade)
+        self._fade_step()
+
+    def _fade_step(self) -> None:
+        from PySide6.QtCore import QTimer
+
+        now_ms = time.time() * 1000
+        for key, (view, fade) in list(self.fades.items()):
+            motion = {"x": fade["from"], "y": 0.0, "w": 0.0, "h": 0.0, "ms": fade["ms"], "c": fade["c"], "at": fade["at"],
+                      "to": {"x": fade["to"], "y": 0.0, "w": 0.0, "h": 0.0}}
+            value, left, _curve = advance_flight(motion, now_ms)
+            view.setAlphaValue_(min(1.0, max(0.0, value["x"])))
+            if left <= 0:
+                del self.fades[key]
+        if self._fade_timer is None:
+            self._fade_timer = QTimer()
+            self._fade_timer.setTimerType(self._fade_timer.timerType().PreciseTimer)
+            self._fade_timer.setInterval(8)
+            self._fade_timer.timeout.connect(self._fade_step)
+        if self.fades and not self._fade_timer.isActive():
+            self._fade_timer.start()
+        elif not self.fades:
+            self._fade_timer.stop()
 
 
 def advance_flight(item: dict, now_ms: float):
@@ -494,6 +539,23 @@ def clean_regions(payload: object) -> list[dict]:
                     raise ValueError
                 region[name] = value
             region["r"] = min(200.0, max(0.0, float(item.get("r", 20))))
+            if "o" in item:
+                opacity = float(item["o"])
+                if not math.isfinite(opacity):
+                    raise ValueError
+                region["o"] = min(1.0, max(0.0, opacity))
+            fade = item.get("fade")
+            if fade:
+                region["fade"] = {name: float(fade[name]) for name in ("from", "to", "ms", "at")}
+                region["fade"]["c"] = [float(value) for value in fade["c"]]
+                if (
+                    not all(0.0 <= region["fade"][name] <= 1.0 for name in ("from", "to"))
+                    or not 0 < region["fade"]["ms"] <= 2000
+                    or not (math.isfinite(region["fade"]["at"]) and region["fade"]["at"] > 0)
+                    or len(region["fade"]["c"]) != 4
+                    or not all(-2 <= value <= 3 for value in region["fade"]["c"])
+                ):
+                    raise ValueError
             target = item.get("to")
             if target:
                 region["to"] = {name: float(target[name]) for name in ("x", "y", "w", "h")}

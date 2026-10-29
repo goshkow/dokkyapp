@@ -85,7 +85,10 @@ def test_shell_argv_loads_zshrc_path(tmp_path, monkeypatch):
 def test_git_workflow(tool):
     tool("file.create", {"path": "a.txt", "content": "one\n"})
     assert tool("shell.run", {"command": "git init -q && git config user.email a@b.c && git config user.name t"})["ok"]
-    assert tool("git.add", {"paths": ["."]})["ok"]
+    # «всё подряд» в индекс не кладётся: только явные файлы
+    assert not tool("git.add", {"paths": ["."]})["ok"]
+    assert not tool("git.add", {})["ok"]
+    assert tool("git.add", {"paths": ["a.txt"]})["ok"]
     assert tool("git.commit", {"message": "init"})["ok"]
     tool("file.edit", {"path": "a.txt", "old_text": "one", "new_text": "two"})
     assert "two" in tool("git.diff")["stdout"]
@@ -175,3 +178,75 @@ def test_open_file_and_terminal_use_macos_tools(monkeypatch, tmp_path):
     calls.clear()
     assert service.terminal_open(str(tmp_path))["ok"]
     assert calls == [["open", "-a", "Terminal", str(tmp_path)]]
+
+
+def _repo(tool):
+    tool("file.create", {"path": "a.txt", "content": "one\n"})
+    tool("file.create", {"path": "b.txt", "content": "bee\n"})
+    assert tool("shell.run", {"command": "git init -q && git config user.email a@b.c && git config user.name t"})["ok"]
+    assert tool("git.add", {"paths": ["a.txt", "b.txt"]})["ok"]
+    assert tool("git.commit", {"message": "init"})["ok"]
+    # правки человека, которых нет ни в одном коммите
+    (tool.root / "a.txt").write_text("user a\n", encoding="utf-8")
+    (tool.root / "b.txt").write_text("user b\n", encoding="utf-8")
+
+
+@posix_only
+def test_git_tools_do_not_discard_uncommitted_changes(tool):
+    _repo(tool)
+    for branch in (".", "-f", "--orphan=x", "", "--", "HEAD~1", "x..y", "@{-1}"):
+        assert not tool("git.checkout", {"branch": branch})["ok"], branch
+        assert not tool("git.create_branch", {"branch": branch})["ok"], branch
+    # имя файла - не ветка: с «--» git не примет его за путь и не перезапишет файл
+    assert not tool("git.checkout", {"branch": "a.txt"})["ok"]
+    for path in (".", "./", "*", ":(top)*", ":/", "-f", "../a.txt", ""):
+        assert not tool("git.restore_file", {"path": path}).get("ok"), path
+    assert (tool.root / "a.txt").read_text(encoding="utf-8") == "user a\n"
+    assert (tool.root / "b.txt").read_text(encoding="utf-8") == "user b\n"
+
+    restored = tool("git.restore_file", {"path": "a.txt"})
+    assert restored["ok"] and restored["change_set_id"], restored
+    assert (tool.root / "a.txt").read_text(encoding="utf-8") == "one\n"
+    assert (tool.root / "b.txt").read_text(encoding="utf-8") == "user b\n"
+    # возврат из git - обычная правка в журнале: правку человека можно вернуть
+    assert tool("file.restore", {"change_set_id": restored["change_set_id"]})["ok"]
+    assert (tool.root / "a.txt").read_text(encoding="utf-8") == "user a\n"
+
+
+@posix_only
+def test_agent_does_not_write_git_internals_and_git_ignores_fsmonitor(tool):
+    _repo(tool)
+    for path in (".git/hooks/pre-commit", ".git/config", "sub/.git/config"):
+        assert not tool("file.create", {"path": path, "content": "x"}).get("ok"), path
+    assert not (tool.root / ".git/hooks/pre-commit").exists()
+    marker = tool.root.parent / "fsmonitor-ran"
+    # так конфиг мог бы оставить чужой репозиторий: status не должен исполнять команду
+    assert tool("shell.run", {"command": f"git config core.fsmonitor 'touch {marker}'"})["ok"]
+    assert tool("git.status")["ok"] and tool("git.diff")["ok"]
+    from koddi.projects.service import project_status
+
+    assert project_status(tool.root)["dirty_files"] == 2
+    assert not marker.exists()
+
+
+def test_process_kill_never_signals_groups_or_dokky_itself(tool, monkeypatch):
+    sent = []
+    monkeypatch.setattr(runner_module.os, "kill", lambda pid, sig: sent.append(pid))
+    monkeypatch.setattr(runner_module.subprocess, "run", lambda *a, **k: sent.append(a))
+    for pid in (-1, 0, 1, -os.getpid(), os.getpid(), os.getppid(), 2**70, "x", None):
+        assert not tool("process.kill", {"pid": pid}).get("ok"), pid
+    assert sent == []
+
+
+def test_dokky_data_folder_is_closed_in_any_letter_case(tmp_path):
+    from koddi.config import data_dir
+    from koddi.policy.paths import PathAccessError, external_path
+
+    private = data_dir().resolve()
+    (private / "probe.txt").write_text("x", encoding="utf-8")
+    variant = Path(str(private).swapcase())
+    if not (variant / "probe.txt").exists():
+        pytest.skip("файловая система различает регистр")
+    for value in (variant / "probe.txt", variant / "new.db", variant):
+        with pytest.raises(PathAccessError):
+            external_path(str(value))

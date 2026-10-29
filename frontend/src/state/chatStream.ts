@@ -14,6 +14,7 @@ import { revoke } from './data';
 import { applyBillingLimits } from './limits';
 import { view } from './view';
 import { notify } from './overlay';
+import { onQualityEvent } from './quality';
 import {
   beginProgress, bindProgress, finishProgress, progress, progressAnswer, progressCommentary, progressStatus,
 } from './cloudProgress';
@@ -165,7 +166,9 @@ function localJournal(kind: string, data: Record<string, any>): void {
     patch.liveStatus = data.text || (kind === 'agent.step' ? 'Думаю…' : kind === 'agent.input_required' ? 'Ожидаю подтверждение' : 'Контекст сохранён');
     scheduleSync();
   } else if (kind === 'tool.progress') {
-    patch.liveStatus = data.name ? `${liveLabel({ event: 'tool.call', data })} · ${Math.round((data.bytes_received || 0) / 1024)} КБ` : 'Готовлю действие…';
+    // путь берётся из ещё недописанного вызова: «Редактирую templates/landing.html · 12 КБ»
+    const kb = Math.round((data.bytes_received || 0) / 1024);
+    patch.liveStatus = data.name ? `${liveLabel({ event: 'tool.call', data: { ...data, arguments: { path: data.path } } })}${kb ? ` · ${kb} КБ` : ''}` : 'Готовлю действие…';
   } else if (kind === 'tool.call' || kind === 'tool.result') patch.liveStatus = liveLabel({ event: kind, data });
   else if (terminal.includes(kind)) {
     patch.turnEnded = true;
@@ -246,9 +249,13 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     if (kind === 'agent.warning') notify(payload.error || 'Предупреждение агента', true);
     if (kind === 'tool.waiting') setStatus(`${liveLabel({ event: 'tool.call', data: payload })} · ${payload.seconds} с`);
     if (kind === 'tool.progress') {
-      setStatus(payload.name ? `Подготавливаю действие: ${String(payload.display_name || payload.name).replaceAll('__', '.')}` : 'Подготавливаю действие…');
+      // подпись собирает компьютер по имени и пути действия, которое модель ещё пишет
+      setStatus(payload.text || (payload.name ? liveLabel({ event: 'tool.call', data: { name: payload.name, display_name: payload.display_name, arguments: { path: payload.path } } }) : 'Подготавливаю действие…'));
     }
     if (kind === 'tool.call' || kind === 'tool.result') scheduleSync();
+    // гейты, red/green и решения меняют карточку «Качество»
+    if (kind === 'quality.gates' || kind === 'quality.updated' || kind === 'turn.completed'
+      || (kind === 'tool.result' && ['qa.run', 'quality.run', 'plan.update'].includes(String(payload.name ?? '')))) onQualityEvent();
     if (kind === 'plan.updated') setPlan({ ...payload, turn_id: payload.turn_id ?? chat.get().turnId ?? undefined });
     if (kind === 'agent.input_required') await showRequests();
     if (kind === 'context.compacting' || kind === 'context.compacted') setStatus(payload.text || 'Сжимаю контекст…');

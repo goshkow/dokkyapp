@@ -1,10 +1,12 @@
 import { useState, type UIEvent } from 'react';
 import { useLimits } from '../../state/limits';
 import { openBilling } from '../../state/remote';
+import { useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { AccountRow } from './AccountRow';
 import { ChatLists } from './ChatLists';
 import { Nav } from './Nav';
+import { OtherComputerChats, SurfaceChatLists } from './SurfaceChats';
 
 /** Остаток почти закончился: кнопка под плитками, как на сайте, ведёт к сбросу использования. */
 function ResetButton() {
@@ -16,6 +18,7 @@ function ResetButton() {
 /** Левое меню по образцу нового меню сайта: название с переключателем «Code», плитки разделов, список чатов и нижний блок с аккаунтом. */
 export function Sidebar() {
   const development = useUi((state) => state.scope === 'development');
+  const site = useSurface((state) => state.status !== 'off');
   const [scrolled, setScrolled] = useState(false);
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const next = event.currentTarget.scrollTop > 2;
@@ -34,7 +37,8 @@ export function Sidebar() {
       <div className="sidebar-scroll" onScroll={onScroll}>
         <Nav />
         <ResetButton />
-        <ChatLists />
+        {site && !development ? <SurfaceChatLists /> : <ChatLists />}
+        {site && development && <OtherComputerChats />}
       </div>
       <AccountRow />
     </>

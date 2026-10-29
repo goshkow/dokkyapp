@@ -51,6 +51,7 @@ def test_native_bridge_only_accepts_local_page_and_http_links(monkeypatch):
     )
     host = SimpleNamespace(api_base="http://127.0.0.1:8877")
     host.handle_app_url = lambda url, current: web_host.WebHost.handle_app_url(host, url, current)
+    host.navigation_allowed = lambda *args: web_host.WebHost.navigation_allowed(host, *args)
     page = SimpleNamespace(host=host, url=lambda: QUrl("http://127.0.0.1:8877/ui/"))
     kind = QWebEnginePage.NavigationType.NavigationTypeOther
     assert not web_host.KoddiPage.acceptNavigationRequest(
@@ -115,6 +116,7 @@ def test_native_view_navigation_policy(monkeypatch):
     monkeypatch.setattr(web_host.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
     host = SimpleNamespace(api_base="http://127.0.0.1:8877")
     host.handle_app_url = lambda url, current: web_host.WebHost.handle_app_url(host, url, current)
+    host.navigation_allowed = lambda *args: web_host.WebHost.navigation_allowed(host, *args)
     view = SimpleNamespace(url=lambda: QUrl("http://127.0.0.1:8877/ui/"))
 
     def decide(url, main=True, clicked=False):
@@ -127,3 +129,47 @@ def test_native_view_navigation_policy(monkeypatch):
     assert not decide("koddi://open-url?url=https%3A%2F%2Fexample.org") and len(opened) == 2
     view.url = lambda: QUrl("https://evil.example/")
     assert not decide("koddi://open-url?url=https%3A%2F%2Fexample.net") and len(opened) == 2
+
+
+def test_site_frame_of_chat_mode_stays_on_its_page(monkeypatch):
+    opened = []
+    monkeypatch.setattr(web_host.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    host = SimpleNamespace(api_base="http://127.0.0.1:8877")
+    host.handle_app_url = lambda url, current: web_host.WebHost.handle_app_url(host, url, current)
+    host.navigation_allowed = lambda *args: web_host.WebHost.navigation_allowed(host, *args)
+    view = SimpleNamespace(url=lambda: QUrl("http://127.0.0.1:8877/ui/"))
+
+    def decide(url, main=False, clicked=False):
+        return web_host.WebHost.decide_navigation(host, view, QUrl(url), main, clicked)
+
+    assert decide("https://dokky.goshkow.com/app-surface?theme=dark")
+    assert decide("https://dokky.goshkow.com/app-surface#x", clicked=True)
+    # ссылка внутри фрейма уводит не фрейм, а в браузер системы
+    assert not decide("https://dokky.goshkow.com/pay/abc", clicked=True)
+    assert not decide("https://example.com/", clicked=True)
+    assert opened == ["https://dokky.goshkow.com/pay/abc", "https://example.com/"]
+    assert not decide("file:///etc/passwd", clicked=True) and len(opened) == 2
+    # команды окна из фрейма не принимаются, даже когда главная страница своя
+    assert not decide("koddi://open-url?url=https%3A%2F%2Fexample.org", clicked=True) and len(opened) == 2
+    # сайт не может стать главной страницей окна
+    assert not decide("https://dokky.goshkow.com/app-surface", main=True)
+
+
+def test_site_frame_may_use_microphone_and_downloads_but_nothing_else():
+    assert web_host.trusted_origin(QUrl("https://dokky.goshkow.com"), "http://127.0.0.1:8877")
+    assert web_host.trusted_origin(QUrl("blob:https://dokky.goshkow.com/id"), "http://127.0.0.1:8877")
+    assert web_host.trusted_origin(QUrl("http://127.0.0.1:8877/ui/"), "http://127.0.0.1:8877")
+    for url in ("http://dokky.goshkow.com", "https://dokky.goshkow.com.evil.example", "https://evil.example",
+                "http://127.0.0.1:8878", "blob:https://evil.example/id"):
+        assert not web_host.trusted_origin(QUrl(url), "http://127.0.0.1:8877")
+
+
+def test_new_windows_from_page_open_in_system_browser(monkeypatch):
+    opened = []
+    monkeypatch.setattr(web_host.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    page = SimpleNamespace(deleteLater=lambda: opened.append("closed"))
+    kind = QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+    assert not web_host.ExternalPage.acceptNavigationRequest(page, QUrl("https://example.com/a"), kind, True)
+    assert not web_host.ExternalPage.acceptNavigationRequest(page, QUrl("javascript:alert(1)"), kind, True)
+    assert not web_host.ExternalPage.acceptNavigationRequest(page, QUrl("https://u:p@example.com/"), kind, True)
+    assert opened == ["https://example.com/a", "closed", "closed", "closed"]

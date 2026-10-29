@@ -11,6 +11,8 @@ export interface MarkdownHooks {
   copy?: (text: string, event: MouseEvent, success: string) => void;
   /** Режим Докки (чат/поиск): картинки, видео и файлы сайта. */
   richEnabled?: () => boolean;
+  /** Ссылка в браузерной панели рабочей области; false - панели нет, ссылка уходит в системный браузер. */
+  openLink?: (href: string) => boolean;
 }
 
 export const markdownHooks: MarkdownHooks = {};
@@ -54,6 +56,8 @@ export function renderMarkdown(target: HTMLElement, source: string, highlight = 
     } else if (desktopHost() && /^https?:\/\//i.test(href)) {
       link.onclick = (event) => {
         event.preventDefault();
+        // в режиме кода ссылка открывается во вкладке браузера рабочей области, с ⌘/Ctrl - в системном браузере
+        if (!(event.metaKey || event.ctrlKey) && markdownHooks.openLink?.(href)) return;
         window.location.href = `koddi://open-url?url=${encodeURIComponent(href)}`;
       };
     }

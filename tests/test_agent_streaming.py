@@ -378,6 +378,9 @@ async def test_large_tool_output_is_retained_and_model_receives_bounded_excerpt(
     (tmp_path / "large.txt").write_bytes(b"x" * 40000)
 
     class Client:
+        # проверяется усечение вывода, а не сжатие истории: окно модели больше набора инструментов и выдержки
+        config = {"context_tokens": 65536}
+
         async def stream(self, **kwargs):
             messages = kwargs["messages"]
             if "Generate only" in messages[0]["content"]:
@@ -411,3 +414,26 @@ async def test_large_tool_output_is_retained_and_model_receives_bounded_excerpt(
         )
     ]
     assert "turn.completed" in events[-1]
+
+
+@pytest.mark.asyncio
+async def test_server_progress_names_the_action_before_the_call_is_complete():
+    from koddi.agents.progress import progress_text
+    from koddi.tools import TOOL_SCHEMAS
+
+    def server(_request):
+        progress = {"choices": [], "dokky_progress": {"tool": {"index": 0, "name": "file__edit", "path": "src/templates/landing.html", "chars": 2048}}}
+        broken = {"choices": [], "dokky_progress": {"tool": {"name": 5, "path": "x"}}}
+        data = "data: " + json.dumps(progress) + "\n\n" + "data: " + json.dumps(broken) + "\n\n"
+        data += response({"tool_calls": [tool("file.edit", {"path": "src/templates/landing.html", "old_text": "a", "new_text": "b"})]}, "tool_calls")
+        return httpx.Response(200, text=data + "data: [DONE]\n\n")
+
+    client = RemoteAIClient({"base_url": "https://mock.example/v1"}, transport=httpx.MockTransport(server))
+    chunks = [c async for c in client.stream(model="test", messages=[], tools=TOOL_SCHEMAS)]
+    early = chunks[0]["tool_progress"]
+    assert early == {"id": "", "name": "file.edit", "path": "src/templates/landing.html", "bytes_received": 2048}
+    # подпись без имени действия отбрасывается, сам вызов приходит как раньше
+    assert sum("tool_progress" in chunk and chunk["tool_progress"].get("path") is not None for chunk in chunks) == 1
+    assert chunks[-1]["tool_call"]["name"] == "file.edit"
+    assert progress_text(early) == "Правлю файл · templates/landing.html"
+    assert progress_text({"name": ""}) == "Подготавливаю действие…"

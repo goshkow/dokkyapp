@@ -18,6 +18,7 @@ const labels: Record<string, string> = {
   'devserver.start': 'Запустить сервер проекта', 'devserver.stop': 'Остановить сервер проекта',
   'test.run': 'Запустить тесты', 'build.run': 'Собрать проект', 'lint.run': 'Проверить код', 'format.run': 'Отформатировать код',
   'refactor.rename': 'Переименовать символ в проекте', 'refactor.extract': 'Изменить структуру кода',
+  'qa.run': 'Запустить проверки проекта', 'quality.run': 'Проверить качество кода',
 };
 const computerActions: Record<string, string> = {
   launch: 'Открыть приложение', list_windows: 'Найти окно приложения', observe: 'Прочитать окно приложения',
@@ -65,6 +66,12 @@ export function summarizeApproval(name: unknown, raw: unknown): ApprovalSummary 
   if (Array.isArray(args.edits)) details.push(`Замен в файле: ${args.edits.length.toLocaleString('ru-RU')}`);
   else if (typeof args.new_text === 'string') details.push('Заменить выбранный фрагмент текста');
   if (args.replace_all === true) details.push('Заменить все совпадения');
+  if (tool === 'quality.run') {
+    const gates = Array.isArray(args.gates) ? args.gates.filter((item): item is string => typeof item === 'string').slice(0, 8) : [];
+    if (gates.length) details.push(`Гейты: ${gates.map((item) => text(item, 20)).join(', ')}`);
+    if (gates.includes('mutation')) details.push('Мутации запускают тесты проекта в изолированной копии; файлы проекта не меняются');
+    if (args.coverage === 'collect') details.push('Сбор покрытия запускает тесты проекта');
+  }
   if (typeof args.branch === 'string') add(`Ветка: ${text(args.branch)}`);
   if (typeof args.server === 'string') add(`Сервер: ${text(args.server)}`);
   if (!labels[tool] && tool !== 'shell.run' && tool !== 'computer.use') details.push(`Инструмент: ${tool || 'внешний'}`);

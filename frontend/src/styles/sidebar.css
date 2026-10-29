@@ -54,6 +54,11 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 .side-search-field .icon-btn { width: 26px; height: 26px; border-radius: 13px; }
 
 .section-title { margin: 18px 11px 6px; font-size: var(--fs-14); font-weight: 550; color: var(--muted); }
+/* заголовок с кнопкой справа («Недавнее» в режиме кода: новый чат без проекта) */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 18px 6px 6px 11px; }
+.section-head .section-title { margin: 0; }
+.section-head .icon-btn { width: 24px; height: 24px; }
+.section-head .icon-btn svg { width: 15px; height: 15px; }
 .list-empty { display: block; padding: 6px 10px; font-size: var(--fs-13); color: var(--faint); }
 
 /* группы проектов */

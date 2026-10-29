@@ -7,6 +7,7 @@ vi.mock('./codingSession', () => ({ recordCodingActivity: vi.fn() }));
 vi.mock('./queue', () => ({ enqueueDraft: vi.fn(), interruptAndSend: vi.fn() }));
 vi.mock('./voice', () => ({ cancelVoice: vi.fn(), stopVoice: vi.fn(), toggleVoice: vi.fn(), voiceLevels: vi.fn() }));
 vi.mock('./overlay', () => ({ notify: vi.fn(), guarded: (fn: unknown) => fn }));
+vi.mock('./siteField', () => ({ siteFieldActive: () => false, attachFromField: vi.fn() }));
 import { uploadFromField } from './field';
 import { clearAttachments, composer, restorePastedText } from './composer';
 afterEach(() => { clearAttachments(); composer.set({ text: '' }); vi.clearAllMocks(); });

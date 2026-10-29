@@ -46,6 +46,10 @@ class TurnMetrics:
     replayed_responses: int = 0
     passed_checks: int = 0
     failed_checks: int = 0
+    # объективные гейты: счётчики по статусам и последние значения метрик (None - не измерялось)
+    quality_gates: dict = field(default_factory=lambda: {status: 0 for status in (
+        "attempted", "passed", "failed", "skipped", "unavailable", "cancelled", "error")})
+    quality_metrics: dict = field(default_factory=dict)
     stop_reason: str = "running"
     request_timings: list[dict] = field(default_factory=list)
 
@@ -114,10 +118,31 @@ class TurnMetrics:
         self.tool_results += 1
         self.tool_seconds += max(0, elapsed)
         self.tool_errors += int(result.get("ok") is False)
+        if isinstance(result.get("gates"), list):
+            self.gates(result["gates"])
         checks = result.get("checks")
         if isinstance(checks, list):
             self.passed_checks += sum(isinstance(c, dict) and c.get("ok") is True for c in checks)
             self.failed_checks += sum(isinstance(c, dict) and c.get("ok") is False for c in checks)
+
+    def gates(self, items: list) -> None:
+        """Результаты гейтов (выжимки quality.run или автоматического прогона) в метриках хода."""
+        for item in items:
+            if not isinstance(item, dict) or item.get("status") not in self.quality_gates:
+                continue
+            self.quality_gates["attempted"] += 1
+            self.quality_gates[item["status"]] += 1
+            summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+            gate = item.get("gate")
+            values = {"crap": {"crap_max": summary.get("max_crap"), "crap_violations": summary.get("violations")},
+                      "dry": {"dry_open": summary.get("open_candidates")},
+                      "mutation": {"mutation_score": summary.get("score"), "mutants_survived": summary.get("survived")},
+                      "architecture": {"layer_violations_new": summary.get("new")}}.get(gate, {})
+            for key, value in values.items():
+                if value is None:
+                    continue
+                entry = self.quality_metrics.setdefault(key, {"first": value, "last": value})
+                entry["last"] = value
 
     def snapshot(self) -> dict:
         result = {

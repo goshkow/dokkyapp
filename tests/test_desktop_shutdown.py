@@ -42,6 +42,29 @@ def test_window_waits_for_backend_before_loading_page(monkeypatch):
     assert "локальный сервер" in errors[0]
 
 
+def test_window_keeps_splash_and_retries_until_page_loads(monkeypatch):
+    callbacks, retried, errors = [], [], []
+    backend = SimpleNamespace(server=SimpleNamespace(started=True), failed=threading.Event())
+    page = SimpleNamespace(requestedUrl=lambda: web_host.QUrl("http://127.0.0.1:12345/ui/"))
+    host = SimpleNamespace(
+        backend=backend, _ui_loaded=False, _load_attempts=0, api_base="http://127.0.0.1:12345",
+        view=SimpleNamespace(page=lambda: page), startup_label=SimpleNamespace(setText=errors.append),
+        _load_ui=lambda: retried.append(1),
+    )
+    host._retry_initial_load = lambda: web_host.WebHost._retry_initial_load(host)
+    monkeypatch.setattr(web_host.QTimer, "singleShot", lambda ms, fn: callbacks.append((ms, fn)))
+    # медленный первый запуск: сотня отказов подряд не обрывает попытки, пауза не больше 2 секунд
+    for attempt in range(1, 101):
+        host._load_attempts = attempt
+        web_host.WebHost._on_load_finished(host, False)
+    assert len(callbacks) == 100 and max(ms for ms, _ in callbacks) == 2000
+    callbacks[-1][1]()
+    assert retried == [1] and not errors
+    backend.failed.set()
+    callbacks[-1][1]()
+    assert retried == [1] and "локальный сервер" in errors[0]
+
+
 @pytest.mark.parametrize("case", ["normal", "early", "stream", "write", "bind_failure"])
 def test_real_uvicorn_shutdown_in_isolated_profile(tmp_path, case):
     source = r'''
@@ -260,7 +283,7 @@ async def test_existing_backend_lifespan_runs_all_cleanup_hooks(monkeypatch):
 @pytest.mark.parametrize("failure", [None, "backend", "window"])
 def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch, failure):
     from koddi import config
-    from koddi.desktop import session
+    from koddi.desktop import session, tray
 
     calls = []
 
@@ -275,7 +298,7 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
         about_to_quit.callback()
         return 7
 
-    app = SimpleNamespace(setApplicationName=lambda name: None, aboutToQuit=about_to_quit, exec=execute)
+    app = SimpleNamespace(setApplicationName=lambda name: None, aboutToQuit=about_to_quit, exec=execute, quit=lambda: None)
     timer = SimpleNamespace(timeout=Signal(), start=lambda interval: None, stop=lambda: calls.append("timer-stop"))
 
     class Backend:
@@ -298,13 +321,14 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
     def window(*args):
         if failure == "window":
             raise RuntimeError("window creation failed")
-        return SimpleNamespace(restore_geometry=lambda: None, show=lambda: None)
+        return SimpleNamespace(restore_geometry=lambda: None, show=lambda: None, bring_to_front=lambda: None, tray=None)
 
     monkeypatch.setattr(web_host, "QApplication", lambda args: app)
     monkeypatch.setattr(web_host, "QTimer", lambda parent: timer)
     monkeypatch.setattr(web_host, "DesktopBackend", Backend)
     monkeypatch.setattr(web_host, "WebHost", window)
     monkeypatch.setattr(web_host, "_api_port", lambda: 12345)
+    monkeypatch.setattr(tray, "install", lambda actions, parent: None)
     monkeypatch.setattr(session, "activation_server", lambda: broker)
     monkeypatch.setattr(session, "register_protocol", lambda: None)
     monkeypatch.setattr(config, "data_dir", lambda: tmp_path)

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from billing_mock import Billing  # noqa: E402
 from ui_testkit import Api, browser_page  # noqa: E402
+from koddi.skills.catalog import BUILTIN as BUILTIN_SKILLS  # noqa: E402
 
 TURN = {"id": 7, "status": "completed", "created_at": "2026-10-17T10:00:00+00:00", "completed_at": "2026-10-17T10:02:13+00:00", "timeline": []}
 DIFF = "--- a/app.py\n+++ b/app.py\n@@ -1,3 +1,4 @@\n import os\n-print('a')\n+print('b')\n+print('c')\n x = 1\n"
@@ -122,7 +123,6 @@ def scenario_send_stream():
         page.fill("#prompt", "Привет")
         page.click("#send")
         page.wait_for_timeout(300)
-        page.click("text=Продолжить")
         page.wait_for_timeout(2500)
         check(page.locator("#title").inner_text() == "Приветствие", "название чата пришло с сервера")
         check(page.locator("article.message.user").count() == 1, "ровно одно сообщение пользователя")
@@ -242,6 +242,148 @@ def scenario_inspector():
         page.wait_for_timeout(700)
         check(page.locator("#task-plan .plan-list li").count() == 2, "план в панели")
         check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
+def map_payload():
+    """Мозаика карты настоящего кода (часть этого репозитория), разобранный тем же модулем, что и в приложении."""
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "backend"))
+    from koddi.projectmap.graph import Graph
+    from koddi.projectmap.parse import language_of, parse_file
+    from koddi.projectmap.views import treemap_payload
+
+    files = {}
+    for folder in ("backend/koddi/projectmap", "backend/koddi/tools", "frontend/src/state", "frontend/src/components/inspector"):
+        for path in sorted((root / folder).iterdir()):
+            relative = path.relative_to(root).as_posix()
+            if path.is_file() and language_of(relative):
+                data = path.read_bytes()
+                files[relative] = {"size": len(data), "sha256": "0" * 64, "info": parse_file(relative, data)}
+    note = {"id": 1, "kind": "decision", "title": "Карта строится на сервере", "body": "Интерфейс только показывает [[backend/koddi/projectmap/service.py]].", "targets": [{"ref": "file:backend/koddi/projectmap/views.py"}]}
+    graph = Graph(files, [note], version=3)
+    payload = treemap_payload(graph)
+    payload["state"] = {"status": "ready", "files": len(files), "truncated": False, "built_at": "2026-10-26 10:00:00", "error": None}
+    payload["watch"] = "events"
+    return payload
+
+
+def scenario_quality_card():
+    api = development_api()
+    runs = [
+        {"id": 3, "gate": "crap", "status": "unavailable", "turn_id": 7, "started_at": "", "duration_ms": 12,
+         "summary": {"unknown_coverage": 2, "notes": ["для 2 функций нет пригодного покрытия"]}, "findings": []},
+        {"id": 4, "gate": "mutation", "status": "failed", "turn_id": 7, "started_at": "", "duration_ms": 900,
+         "summary": {"evaluated": 6, "killed": 5, "survived": 1}, "findings": [
+             {"key": "calc.py|grade|1", "path": "calc.py", "line_start": 2, "kind": "survived", "severity": "high",
+              "evidence": {"original": ">=", "replacement": ">", "operator": "compare"}, "advice": "допиши поведенческий тест"}]},
+        {"id": 5, "gate": "dry", "status": "skipped", "turn_id": 7, "started_at": "", "duration_ms": 3, "summary": {}, "findings": []},
+    ]
+    api.extra["/api/projects/1/quality/runs"] = lambda m, p, b, q: {"runs": runs}
+    api.extra["/api/projects/1/architecture"] = lambda m, p, b, q: {"policy": None, "proposal_label": "ПРЕДЛОЖЕНИЕ - не применено", "proposals": [
+        {"id": 9, "name": "три слоя", "note": "по графу импортов", "created_at": "", "label": "ПРЕДЛОЖЕНИЕ - не применено",
+         "policy": {"version": 0, "layers": [{"name": "domain", "paths": ["app/domain/**"]}, {"name": "api", "paths": ["app/api/**"]}]}}]}
+    api.extra["/api/chats/1/engineering"] = lambda m, p, b, q: {"turn_id": 7, "workflow": {
+        "stage": "make_it_right", "red": {"verified": True, "checks": ["python:test:pytest@"]}, "green": ["python:test:pytest@"],
+        "root_cause": "строгое сравнение"}, "decisions": [{"id": 1, "kind": "approach", "summary": "правлю условие, а не тест", "created_at": "", "turn_id": 7}]}
+    api.extra["/api/projects/1/quality/decision"] = lambda m, p, b, q: {"ok": True}
+    api.extra["/api/projects/1/quality/heatmap"] = lambda m, p, b, q: {"files": {"app.py": {"score": 0.6, "max_complexity": 12, "max_crap": None, "dry": 0, "survived": 1, "violations": 0}}}
+    screens = Path(__file__).resolve().parents[1] / "_screens"
+    with browser_page(api) as page:
+        page.wait_for_timeout(1200)
+        open_chat(page)
+        page.wait_for_timeout(700)
+        page.click("#inspector-quality .card-head")
+        page.wait_for_timeout(1000)
+        card = page.locator("#inspector-quality.open")
+        check(card.count() == 1, "карточка «Качество» открыта")
+        text = card.inner_text()
+        check("Make It Right" in text and "red подтверждён" in text and "строгое сравнение" in text, f"стадия и red/green: {text[:300]}")
+        statuses = page.eval_on_selector_all(".quality-gate", "els => els.map(e => [e.querySelector('strong').textContent, e.dataset.status])")
+        check(statuses == [["CRAP", "unavailable"], ["Дубли", "skipped"], ["Мутации", "failed"]], f"порядок и статусы гейтов: {statuses}")
+        check("не измерен" in text and "пропущен" in text and "провал" in text, "разные статусы подписаны по-разному")
+        check("убито 5 из 6, выжило 1" in text and "> (survived)" in text, f"число и находка мутаций: {text[:500]}")
+        check("ПРЕДЛОЖЕНИЕ - не применено" in text and "правлю условие" in text, "предложение слоёв и журнал решений")
+        page.screenshot(path=str(screens / "quality-card.png"))
+        page.click(".quality-finding .quality-decide button:has-text('Принять')")
+        page.wait_for_timeout(500)
+        posts = [c[2] for c in api.calls if c[0] == "POST" and c[1] == "/api/projects/1/quality/decision"]
+        check(posts == [{"gate": "mutation", "key": "calc.py|grade|1", "decision": "accepted"}], f"решение человека: {posts}")
+        check("принято человеком" in page.locator(".quality-finding").inner_text(), "решение видно в находке")
+        page.click(".quality-actions button:has-text('На карте')")
+        page.wait_for_timeout(500)
+        check(any(c[1] == "/api/projects/1/quality/heatmap" for c in api.calls), "тепловая карта загружена")
+
+
+def scenario_project_map():
+    api = development_api()
+    payload = map_payload()
+    service = next(item for item in payload["files"] if item["p"] == "backend/koddi/projectmap/service.py")
+    api.extra["/api/projects/1/map"] = lambda m, p, b, q: payload
+    screens = Path(__file__).resolve().parents[1] / "_screens"
+    with browser_page(api) as page:
+        page.wait_for_timeout(1200)
+        open_chat(page)
+        page.wait_for_timeout(700)
+        page.click("#inspector-map .card-head")
+        page.wait_for_timeout(1500)
+        check(page.locator("#inspector-map.open .map-canvas").count() == 1, "холст карты")
+        check(page.locator(".map-top, .map-meta, .map-sheet").count() == 0, "над и под мозаикой нет панелей")
+        drawn = page.evaluate("""(() => { const c = document.querySelector('.map-canvas'); const x = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          let n = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) n++; return {w: c.width, h: c.height, n}; })()""")
+        check(drawn["w"] > 200 and drawn["h"] > 150 and drawn["n"] > drawn["w"] * drawn["h"] * 0.3, f"мозаика не нарисована: {drawn}")
+        box = page.locator(".map-canvas").bounding_box()
+        # плитку файла ищем перебором точек: раскладка зависит от размера панели
+        found = None
+        for row in range(1, 32):
+            for col in range(1, 32):
+                x, y = box["x"] + box["width"] * col / 32, box["y"] + box["height"] * row / 32
+                page.mouse.move(x, y)
+                tip = page.locator(".map-tip strong")
+                if tip.count() and tip.inner_text() == "service.py":
+                    # точка у края плитки при щелчке может попасть в соседнюю: берём ту, где вокруг тот же файл
+                    inside = True
+                    for dx, dy in ((-5, 0), (5, 0), (0, -5), (0, 5)):
+                        page.mouse.move(x + dx, y + dy)
+                        if not (tip.count() and tip.inner_text() == "service.py"):
+                            inside = False
+                            break
+                    page.mouse.move(x, y)
+                    if inside:
+                        found = (x, y)
+                        break
+            if found:
+                break
+        check(found is not None, "подсказка над файлом service.py")
+        text = page.locator(".map-tip").inner_text()
+        check("backend/koddi/projectmap" in text and "строк" in text, f"подсказка файла: {text}")
+        if service.get("i"):
+            check("импортирует" in text, f"связи в подсказке: {text}")
+        page.screenshot(path=str(screens / "project-map.png"))
+        page.mouse.click(*found)
+        page.wait_for_timeout(800)
+        check(page.locator("#editor-view .editor-header span").inner_text() == service["p"], "щелчок по файлу открывает его в редакторе")
+        page.click("#inspector-map .card-head")
+        page.wait_for_timeout(800)
+        page.mouse.move(box["x"] + 1, box["y"] + 1)
+        page.mouse.move(found[0], found[1])
+        # заголовок папки над файлом: идём вверх, пока подсказка не станет папкой
+        folder = None
+        for step in range(1, 400, 2):
+            page.mouse.move(found[0], found[1] - step)
+            tip = page.locator(".map-tip strong")
+            if tip.count() and tip.inner_text().endswith("/"):
+                folder = tip.inner_text()
+                page.mouse.click(found[0], found[1] - step)
+                break
+        check(folder is not None, "плитка папки над файлом")
+        page.wait_for_timeout(800)
+        check(page.locator(".file-folder").count() == 1, "щелчок по папке открывает её в «Файлах»")
+        check(folder.rstrip("/") in page.locator(".file-folder").inner_text(), f"папка в «Файлах»: {folder}")
+        page.click(".file-folder button")
+        page.wait_for_timeout(300)
+        check(page.locator(".file-folder").count() == 0, "кнопка показывает все файлы")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+        check(not api.unexpected, f"лишние запросы: {api.unexpected}")
 
 
 def scenario_settings_pages_library():
@@ -457,7 +599,6 @@ def scenario_live_stream():
         page.fill("#prompt", "Расскажи")
         page.click("#send")
         page.wait_for_timeout(300)
-        page.click("text=Продолжить")
         page.wait_for_timeout(900)
         check(page.locator("article.message.assistant.streaming").count() == 1, "идёт потоковый ответ")
         page.evaluate("document.querySelector('article.message.assistant .message-body').__mark = 'same'")
@@ -771,6 +912,7 @@ def scenario_tiles_library_media_auth():
     with browser_page(guest, viewport=(900, 700)) as page:
         page.wait_for_timeout(1200)
         check(page.locator("#auth-screen h2").count() == 0 and page.locator("#auth-register").inner_text() == "Регистрация", "экран входа: без «Вход», с регистрацией")
+        check(page.locator("#auth-status").count() == 0 and page.locator("#auth-cancel").count() == 0, "под кнопками нет статуса и «Отмены»")
 
 
 def scenario_par_login():
@@ -795,24 +937,21 @@ def scenario_par_login():
         check(len(opened) == 1 and "client_id=dokky-app" in opened[0] and "request_uri=urn" in opened[0], f"ссылка входа: {opened}")
         check("state" not in opened[0] and "code_challenge" not in opened[0], "в ссылке нет state и code_challenge")
         check(page.locator("#auth-cancel").count() == 1 and page.locator("#auth-login").is_disabled(), "во время ожидания есть «Отмена»")
+        check(page.locator("#auth-register").count() == 0, "«Отмена» заменяет «Регистрацию»")
         # отмена закрывает слушатель и возвращает кнопку входа
         page.click("#auth-cancel")
         page.wait_for_timeout(300)
         check(any(path == "/api/dokky/auth/cancel" for _, path, _ in api.calls), "«Отмена» не закрыла попытку на сервере")
         check(page.locator("#auth-cancel").count() == 0 and page.locator("#auth-login").is_enabled(), "после отмены кнопка входа свободна")
-        # время вышло: сообщение и «Войти снова»
-        state["status"] = "expired"
-        state["message"] = "Время на вход вышло"
-        page.click("#auth-login")
-        page.wait_for_timeout(1800)
-        check(page.locator("#auth-status").inner_text() == "Время на вход вышло", "нет сообщения «Время на вход вышло»")
-        check(page.locator("#auth-login").inner_text() == "Войти снова" and page.locator("#auth-login").is_enabled(), "нет кнопки «Войти снова»")
-        # сгоревший код
-        state["status"] = "invalid"
-        state["message"] = "Попытка входа закончилась, войдите снова"
-        page.click("#auth-login")
-        page.wait_for_timeout(1800)
-        check("войдите снова" in page.locator("#auth-status").inner_text(), "нет сообщения о закончившейся попытке")
+        check(page.locator("#auth-register").inner_text() == "Регистрация", "после отмены вернулась «Регистрация»")
+        # время вышло или код сгорел: молча возвращаемся к «Войти» и «Регистрации», без статуса
+        for status in ("expired", "invalid"):
+            state["status"] = status
+            state["message"] = "Время на вход вышло"
+            page.click("#auth-login")
+            page.wait_for_timeout(1800)
+            check(page.locator("#auth-login").inner_text() == "Войти с помощью Докки" and page.locator("#auth-login").is_enabled(), f"{status}: кнопка входа не вернулась")
+            check(page.locator("#auth-register").count() == 1 and page.locator("#auth-status").count() == 0 and page.locator(".toast").count() == 0, f"{status}: лишний статус")
         # новая попытка - новая ссылка, успех пускает в приложение
         state["status"] = "done"
         state["authed"] = True
@@ -829,7 +968,7 @@ def scenario_par_login():
         page.click("#auth-login")
         page.wait_for_timeout(500)
         check(page.evaluate("window.__opened.length") == 0, "при ошибке PAR браузер не должен открываться")
-        check("Слишком много попыток" in page.locator("#auth-status").inner_text() and page.locator("#auth-login").is_enabled(), "ошибка PAR не показана")
+        check("Слишком много попыток" in page.locator(".toast").inner_text() and page.locator("#auth-login").is_enabled(), "ошибка PAR не показана уведомлением")
 
 
 def scenario_context_menu_rail_title():
@@ -1365,7 +1504,7 @@ def scenario_skills_menu_and_project_menu():
         check(any("Навыки" in x for x in items) and any("Открыть папку" in x for x in items) and any("Планирование" in x for x in items), f"пункты меню: {items}")
         page.click(".composer-actions .menu-item:has-text('Навыки')")
         page.wait_for_selector(".skill-option")
-        check(page.locator(".skill-option").count() == 15, "в подменю не все навыки")
+        check(page.locator(".skill-option").count() == len(BUILTIN_SKILLS), "в подменю не все навыки")
         check(page.locator(".skill-category").count() >= 6, "навыки не разложены по категориям")
         page.fill(".skill-search input", "написание")
         page.wait_for_timeout(200)
@@ -1439,7 +1578,7 @@ def scenario_tasks_automations_skills_pages():
             page.wait_for_timeout(300)
         page.click("[aria-label='Навыки']")
         page.wait_for_selector(".skill-card")
-        check(page.locator(".skill-card").count() == 15 and page.locator(".skill-badge").count() == 15, "не все стандартные навыки")
+        check(page.locator(".skill-card").count() == len(BUILTIN_SKILLS) and page.locator(".skill-badge").count() == len(BUILTIN_SKILLS), "не все стандартные навыки")
         check(page.locator(".skill-card button[aria-label='Изменить']").count() == 0 and page.locator(".skill-card button[aria-label='Удалить']").count() == 0, "стандартные навыки нельзя менять")
         page.fill(".page-search input", "git")
         page.wait_for_timeout(200)
@@ -1455,11 +1594,141 @@ def scenario_tasks_automations_skills_pages():
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
+SITE = "https://dokky.goshkow.com"
+# подменная страница сайта для режима чата: говорит по протоколу dokky/docs/APP_SURFACE.md и записывает команды
+SURFACE_PAGE = """<!doctype html><meta charset="utf-8"><body style="margin:0;background:#202020">
+<script>
+window.received = [];
+let parentOrigin = '';
+const icon = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>');
+const state = {
+  user: {id: 1, name: 'Иван'},
+  sections: [
+    {key: 'cloud', label: 'Облако', icon, active: false, badge: false},
+    {key: 'scheduled', label: 'Запланированное', icon: '', active: false, badge: true},
+  ],
+  chats: [
+    {id: 10, group: 'pinned', title: 'Облачный сайт', kinds: ['cloud'], icon, workspace: 'Сайт', remote: null, actions: [{action: 'rename', label: 'Переименовать'}]},
+    {id: 11, group: 'recent', title: 'Рецепт борща', kinds: [], icon: '', remote: null, working: true,
+     actions: [{action: 'rename', label: 'Переименовать'}, {action: 'delete', label: 'Удалить', danger: true}]},
+    {id: 12, group: 'recent', title: 'Чат этого компьютера', kinds: ['remote'], remote: {host_id: 'me', host_name: 'Этот Mac', online: true}},
+    {id: 13, group: 'recent', title: 'Сборка на работе', kinds: ['remote'], remote: {host_id: 'other', host_name: 'Рабочий ПК', online: true}},
+  ],
+  hasMore: false, multiChat: true, product: 'chat',
+};
+window.parentPost = message => window.parent.postMessage({dokkySurface: 1, ...message}, parentOrigin || '*');
+addEventListener('message', event => {
+  const data = event.data;
+  if (event.source !== window.parent || !data || data.dokkySurface !== 1) return;
+  window.received.push({type: data.type, name: data.name, args: data.args, token: data.token});
+  if (data.type === 'session' && !parentOrigin) { parentOrigin = event.origin; parentPost({type: 'state', state}); parentPost({type: 'ready'}); }
+});
+window.parent.postMessage({dokkySurface: 1, type: 'hello'}, '*');
+</script>"""
+
+
+def scenario_site_surface():
+    api = Api(scope="chat")
+    api.extra["/api/dokky/surface"] = lambda m, p, b, q: {"available": True, "url": SITE + "/app-surface", "origin": SITE, "release": "r1", "host_id": "me"}
+    api.extra["/api/dokky/surface/session"] = lambda m, p, b, q: {"token": "dks1.test", "expires_in": 900} if m == "POST" else None
+
+    def setup(page):
+        page.route(SITE + "/app-surface**", lambda route: route.fulfill(content_type="text/html", body=SURFACE_PAGE))
+
+    with browser_page(api, setup=setup) as page:
+        page.wait_for_selector(".site-surface[data-status=ready]", timeout=8000)
+        frame = page.frame(url=lambda url: url.startswith(SITE + "/app-surface"))
+        check(frame is not None and "theme=dark" in frame.url, "фрейм сайта открыт с темой приложения")
+        received = lambda: frame.evaluate("window.received")  # noqa: E731
+        commands = lambda name: [item for item in received() if item.get("name") == name]  # noqa: E731
+        first = received()[0]
+        check(first["type"] == "session" and first["token"] == "dks1.test", f"странице сначала уходит токен: {first}")
+        check(commands("theme") and commands("layout"), "тема и отступы ушли странице")
+        check(page.locator("#composer").count() == 0, "в режиме чата нет своего поля ввода: чат рисует сайт")
+        # плитки разделов - с сайта, вместо своей библиотеки
+        check(page.locator("#site-section-cloud .surface-icon").count() == 1, "плитка облака с иконкой сайта")
+        check(page.locator("#site-section-scheduled .surface-badge").count() == 1, "отметка на плитке")
+        check(page.locator("#cloud-library-button").count() == 0, "своей библиотеки нет: разделы задаёт сайт")
+        rows = page.locator(".sidebar-scroll .chat-row .chat-item").all_inner_texts()
+        check(rows == ["Облачный сайт", "Рецепт борща"], f"удалённые чаты в режиме чата скрыты: {rows}")
+        check(page.locator(".chat-row[data-chat-id='10'] .surface-icon").count() == 1, "значок типа чата")
+        check(page.locator(".chat-row[data-chat-id='11'] .chat-working").count() == 1, "чат в работе")
+        page.click("#site-section-cloud")
+        page.click("text=Рецепт борща")
+        page.click("#new-chat")
+        page.wait_for_timeout(200)
+        check(commands("open-section") == [{"type": "command", "name": "open-section", "args": {"key": "cloud"}, "token": None}], "раздел открывается на сайте")
+        check([item["args"] for item in commands("open-chat")] == [{"id": 11}], "чат открывается на сайте")
+        check(len(commands("new-chat")) == 1, "новый чат создаёт сайт")
+        page.click(".chat-row[data-chat-id='11']", button="right")
+        page.wait_for_selector(".menu-item.danger")
+        check(page.locator(".menu-item").all_inner_texts() == ["Переименовать", "Удалить"], "действия чата берутся с сайта")
+        page.click(".menu-item >> text=Удалить")
+        page.wait_for_timeout(150)
+        check([item["args"] for item in commands("chat-action")] == [{"id": 11, "action": "delete"}], "действие уходит сайту")
+        frame.evaluate("parentPost({type: 'billing', intent: 'plans'})")
+        page.wait_for_selector("#settings-heading")
+        check(page.locator("[data-settings-section=billing][aria-current=page]").count() == 1, "оплата со страницы - своя оплата приложения")
+        page.click("button[aria-label='Закрыть настройки']")
+        # режим кода: свой чат, а чаты других компьютеров - свёрнутым списком
+        page.click("#scope-toggle")
+        page.wait_for_timeout(700)
+        check(page.locator(".site-surface").is_hidden() and page.locator("#composer").count() == 1, "в режиме кода свой чат")
+        check(page.locator(".remote-chats").count() == 1 and page.locator(".remote-chats .chat-row").count() == 0, "список других компьютеров свёрнут")
+        page.click(".remote-chats .section-toggle")
+        remote = page.locator(".remote-chats .chat-row .chat-item").all_inner_texts()
+        check(remote == ["Сборка на работе"], f"только чужие компьютеры: {remote}")
+        check("Рабочий ПК" in page.locator(".remote-chats .chat-host").inner_text(), "имя компьютера")
+        page.click(".remote-chats >> text=Сборка на работе")
+        page.wait_for_timeout(200)
+        check(page.locator(".site-surface").is_visible() and page.locator("#composer").count() == 0, "чат другого компьютера открывается страницей сайта")
+        check([item["args"] for item in commands("open-chat")][-1] == {"id": 13}, "открыт чат другого компьютера")
+        page.click("text=zaprethub.new")
+        page.wait_for_timeout(400)
+        check(page.locator(".site-surface").is_hidden(), "переход к своему чату закрывает чужой")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+        check(not api.unexpected, f"лишние запросы: {api.unexpected}")
+
+
+def scenario_chat_without_project():
+    api = development_api()
+    created = []
+
+    def chats(method, path, body, query):
+        if method == "POST":
+            created.append(body)
+            chat = {"id": 50, "title": "Новый чат", "mode": "development", "model": "dokky-code", "project_id": 99, "updated_at": "2026-10-19T09:00:00+00:00"}
+            api.local_chats.insert(0, chat)
+            return chat
+        return None
+
+    api.extra["/api/chats"] = chats
+    with browser_page(api) as page:
+        page.wait_for_timeout(1200)
+        # чат служебной папки (её нет среди проектов) и прежний чат без проекта - в «Недавнем»
+        api.local_chats.append({"id": 51, "title": "Заметки в Документах", "mode": "development", "model": "dokky-code", "project_id": 99, "updated_at": "2026-10-12T09:00:00+00:00"})
+        page.click("#scope-toggle")
+        page.wait_for_timeout(300)
+        page.click("#scope-toggle")
+        page.wait_for_timeout(700)
+        recent = page.locator(".recent-chats .chat-item").all_inner_texts()
+        check("Заметки в Документах" in recent and "Идеи для улучшения" in recent, f"чаты без проекта в «Недавнем»: {recent}")
+        page.click(".recent-chats button[aria-label='Новый чат без проекта']")
+        page.wait_for_timeout(300)
+        page.fill("#composer textarea", "Сделай список дел")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(800)
+        check(page.locator("dialog.form-dialog[open]").count() == 0, "без вопроса о папке: чат без проекта работает в «Документы/Докки»")
+        check(created and created[0]["project_id"] is None, f"чат создан без проекта: {created}")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
 SCENARIOS = [
-    scenario_boot_and_open, scenario_send_stream, scenario_requests_queue_plan, scenario_permission_modes, scenario_inspector,
+    scenario_boot_and_open, scenario_send_stream, scenario_requests_queue_plan, scenario_permission_modes, scenario_inspector, scenario_project_map, scenario_quality_card,
     scenario_settings_pages_library, scenario_cloud, scenario_cloud_send, scenario_search, scenario_attachments_and_mode,
     scenario_live_stream, scenario_shell_stability, scenario_audit_items,
     scenario_sidebar_search_reorder, scenario_pin_and_expand, scenario_shell_rules, scenario_motion_rules, scenario_long_chat_list, scenario_tiles_library_media_auth, scenario_par_login, scenario_context_menu_rail_title, scenario_media_files_viewer, scenario_voice_segments, scenario_settings_overhaul, scenario_math_and_map, scenario_developer_access, scenario_usage_hints, scenario_payment_states, scenario_subscription_sync, scenario_skills_menu_and_project_menu, scenario_tasks_automations_skills_pages,
+    scenario_site_surface, scenario_chat_without_project,
 ]
 
 

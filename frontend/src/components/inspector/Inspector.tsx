@@ -1,11 +1,11 @@
 import {
-  ChevronDown, ChevronRight, Eye, FileCode2, FolderGit2, Files, Gauge, GitCompare, Globe, ListChecks, Code2, Save, Undo2, X, type LucideIcon,
+  ChevronDown, ChevronRight, Eye, FileCode2, Folder, FolderGit2, Files, Gauge, GitCompare, Globe, History, ListChecks, Code2, Network, ShieldCheck, Save, Undo2, X, type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { changeDiffModel, diffStats, pruneDiffCache, type DiffFile } from '../../lib/diff';
 import { compactPath, numberText } from '../../lib/format';
 import { permissionLabel } from '../../lib/permissions';
-import { rollbackChange, selectChange } from '../../state/remote';
+import { restoreTurn, rollbackChange, selectChange } from '../../state/remote';
 import { useChat } from '../../state/chatCore';
 import { data, useData } from '../../state/data';
 import { guarded } from '../../state/overlay';
@@ -13,7 +13,7 @@ import { setPanel } from '../../state/panels';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 import {
-  collapseFocus, editFile, loadFiles, openFile, previewFile, saveFile, selectInspector, toggleOverview, useWorkspace, type Focus,
+  collapseFocus, editFile, loadFiles, openFile, previewFile, saveFile, selectInspector, showAllFiles, toggleOverview, useWorkspace, type Focus,
 } from '../../state/workspace';
 import { DiffView } from '../chat/DiffView';
 import { Markdown } from '../chat/Markdown';
@@ -22,6 +22,11 @@ import { currentReasoningMode } from '../../state/codingSession';
 import { useBrowser } from '../../state/browser';
 import { BrowserView } from './BrowserCard';
 import { ContextBreakdown } from './ContextCard';
+import { ProjectMapView } from './ProjectMap';
+import { useProjectMap } from '../../state/projectMap';
+import { RemoteAccess } from './RemoteAccess';
+import { QualityView } from './QualityCard';
+import { latestByGate, useQuality } from '../../state/quality';
 
 function Card({ id, name, icon: Icon, title, meta, focus, open, children }: {
   id: string; name: string; icon: LucideIcon; title: string; meta?: ReactNode; focus: boolean; open: boolean; children: ReactNode;
@@ -114,6 +119,8 @@ function Changes() {
   if (!entries.length) return <section id="turn"><div id="change-summary" className="change-summary">Изменений пока нет</div></section>;
   const current = entries.find((entry) => entry.key === selection) ?? (entries[0] as (typeof entries)[number]);
   const rolled = current.change.status === 'rolled_back';
+  const turnId = current.change.turn_id ?? null;
+  const turnSets = turnId == null ? 0 : changes.filter((change) => change.turn_id === turnId && change.status !== 'rolled_back').length;
   return (
     <section id="turn">
       <div id="change-summary" className="change-summary">
@@ -157,6 +164,16 @@ function Changes() {
         >
           <Undo2 aria-hidden="true" /><span>Откатить изменения</span>
         </button>
+        {turnId != null && turnSets > 1 && (
+          <button
+            type="button"
+            className="secondary"
+            title={`Вернуть все файлы хода к состоянию до него (наборов изменений: ${turnSets})`}
+            onClick={guarded(() => restoreTurn(turnId))}
+          >
+            <History aria-hidden="true" /><span>Откатить весь ход</span>
+          </button>
+        )}
       </div>
     </section>
   );
@@ -166,6 +183,8 @@ function FilesCard() {
   const project = useView((s) => s.project);
   const tree = useWorkspace((s) => s.tree);
   const editor = useWorkspace((s) => s.editor);
+  const folder = useWorkspace((s) => s.folder);
+  const files = folder ? tree.files.filter((path) => path.startsWith(`${folder}/`)) : tree.files;
   const body = !project ? (
     <div className="empty-list"><FolderGit2 size={24} aria-hidden="true" /><h3>Проект не выбран</h3></div>
   ) : tree.state === 'loading' ? (
@@ -175,18 +194,24 @@ function FilesCard() {
       <FolderGit2 size={24} aria-hidden="true" /><h3>Не удалось загрузить файлы</h3><p>{tree.error}</p>
       <button type="button" className="secondary" onClick={guarded(loadFiles)}><span>Повторить</span></button>
     </div>
-  ) : tree.state === 'ready' && !tree.files.length ? (
+  ) : tree.state === 'ready' && !files.length ? (
     <div className="empty-list"><FolderGit2 size={24} aria-hidden="true" /><h3>Папка пуста</h3></div>
   ) : (
-    tree.files.map((path) => (
+    files.map((path) => (
       <button key={path} type="button" className="file-row" title={path} onClick={guarded(() => openFile(path))}>
-        <FileCode2 size={15} aria-hidden="true" /><span>{path}</span>
+        <FileCode2 size={15} aria-hidden="true" /><span>{folder ? path.slice(folder.length + 1) : path}</span>
       </button>
     ))
   );
   return (
     <>
-      <nav id="file-tree" className="file-tree" aria-label="Файлы проекта">{body}</nav>
+      {folder && project && (
+        <div className="file-folder">
+          <Folder size={14} aria-hidden="true" /><span title={folder}>{folder}</span>
+          <button type="button" className="icon-button" title="Показать все файлы" aria-label="Показать все файлы" onClick={showAllFiles}><X aria-hidden="true" /></button>
+        </div>
+      )}
+      <nav id="file-tree" className="file-tree" aria-label={folder ? `Файлы папки ${folder}` : 'Файлы проекта'}>{body}</nav>
       {editor && (
         <div id="editor-view" className="editor-view" aria-label="Содержимое файла">
           <div className="editor-header">
@@ -217,6 +242,9 @@ export function Inspector() {
   const changes = useChat((s) => s.changes);
   const context = useContext();
   const browserCount = useBrowser((state) => state.sessions.length);
+  const mapFiles = useProjectMap((state) => state.tree?.totals.files);
+  const gateRuns = useQuality((state) => state.runs);
+  const failedGates = useMemo(() => latestByGate(gateRuns).filter((run) => run.status === 'failed' || run.status === 'error').length, [gateRuns]);
   const steps = plan?.tracking_steps ?? plan?.steps ?? [];
   const done = steps.filter((step) => step.status === 'completed').length;
   const stats = useMemo(() => diffStats(changes.flatMap((change) => changeDiffModel(change))), [changes]);
@@ -238,6 +266,7 @@ export function Inspector() {
       <div id="inspector-content" className="inspector-cards" data-focus={focus}>
         <Card id="card-environment" name="environment" icon={FolderGit2} title="Среда" focus={false} open={overview.environment}>
           <Environment />
+          <RemoteAccess />
         </Card>
         <Card id="card-context" name="context" icon={Gauge} title="Контекст" meta={context.percent == null ? '—' : `${context.percent}%`} focus={false} open={overview.context}>
           <div className="context-meter" role="progressbar" aria-label="Заполнено окно контекста" aria-valuemin={0} aria-valuemax={100} aria-valuenow={context.percent ?? 0} data-level={context.level || undefined}>
@@ -259,6 +288,12 @@ export function Inspector() {
         </Card>
         <Card id="inspector-files" name="files" icon={Files} title="Файлы" focus open={focus === 'files'}>
           <FilesCard />
+        </Card>
+        <Card id="inspector-map" name="map" icon={Network} title="Карта проекта" meta={mapFiles ? String(mapFiles) : ''} focus open={focus === 'map'}>
+          <ProjectMapView active={focus === 'map' && rightOpen} />
+        </Card>
+        <Card id="inspector-quality" name="quality" icon={ShieldCheck} title="Качество" meta={failedGates ? <span className="danger">{failedGates}</span> : ''} focus open={focus === 'quality'}>
+          <QualityView active={focus === 'quality' && rightOpen} />
         </Card>
         <Card id="inspector-browser" name="browser" icon={Globe} title="Браузер" meta={browserCount ? String(browserCount) : ''} focus open={focus === 'browser'}>
           <BrowserView active={focus === 'browser' && rightOpen} />

@@ -271,8 +271,27 @@ def due_automations(now: datetime | None = None) -> list[dict]:
     return due
 
 
+def recover_interrupted() -> int:
+    """«running» в базе без запуска в этом процессе - приложение закрылось или упало посреди запуска.
+    Без сброса такая автоматизация навсегда выпадает из расписания, и удалить её нельзя."""
+    with _LOCK:
+        active = list(_RUNNING)
+    marks = ",".join("?" * len(active))
+    with db() as conn:
+        cursor = conn.execute(
+            "UPDATE automations SET status='failed', last_result=? WHERE status='running'"
+            + (f" AND id NOT IN ({marks})" if active else ""),
+            ("Прервано: приложение закрылось во время запуска", *active),
+        )
+    return cursor.rowcount
+
+
 async def run_scheduler(launch_agent: AgentLauncher, *, period: float = 30.0) -> None:
     """Фоновый цикл: раз в полминуты запускает то, что пора. Работает, пока открыто приложение."""
+    try:
+        recover_interrupted()
+    except Exception as exc:  # noqa: BLE001
+        log_event("ERROR", "automation.recover", str(exc), {})
     while True:
         try:
             for item in await asyncio.to_thread(due_automations):

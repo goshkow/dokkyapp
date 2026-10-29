@@ -8,7 +8,7 @@ const root = document.documentElement;
 const IDLE_FRAMES = 24;
 
 interface Box { x: number; y: number; w: number; h: number }
-interface Region extends Box { id: string; r: number; to?: Box; ms?: number; c?: number[]; at?: number }
+interface Region extends Box { id: string; r: number; o?: number; fade?: GlassFade; to?: Box; ms?: number; c?: number[]; at?: number }
 
 /** Хост умеет стекло: macOS 26 и новее, окно создано прозрачным. */
 export const glassCapable = (): boolean => root.classList.contains('glass-capable');
@@ -98,6 +98,16 @@ function pendingShift(node: Element): { dx: number; dy: number; ms: number; c: n
 
 const near = (a: Box, b: Box): boolean => Math.abs(a.x - b.x) < 1.5 && Math.abs(a.y - b.y) < 1.5 && Math.abs(a.w - b.w) < 1.5 && Math.abs(a.h - b.h) < 1.5;
 
+/** Блоки стекла не из своей разметки (поле ввода страницы сайта во фрейме): источник отдаёт их в координатах окна. */
+/** Угасание блока, которое хост проигрывает сам: прозрачность from -> to за ms по кривой c, начало - at (Date.now). */
+export interface GlassFade { from: number; to: number; ms: number; c: number[]; at: number }
+export type GlassBlock = Box & { id: string; r: number; o?: number; fade?: GlassFade };
+let external: () => GlassBlock[] = () => [];
+export function setGlassSource(source: () => GlassBlock[]): void {
+  external = source;
+  kickGlass();
+}
+
 function collect(): Region[] {
   const regions: Region[] = [];
   const seen = new Set<string>();
@@ -130,13 +140,17 @@ function collect(): Region[] {
     regions.push({ id, ...box, r: radius });
   });
   for (const id of [...flights.keys()]) if (!seen.has(id)) flights.delete(id);
+  for (const block of external()) {
+    if (block.x + block.w <= 0 || block.y + block.h <= 0 || block.x >= innerWidth || block.y >= innerHeight) continue;
+    regions.push(block);
+  }
   return regions;
 }
 
 /** Обычный цвет фона приложения: стекло подкладывается под блоки, а палитра остаётся прежней. */
-export function appColor(): number[] | null {
+export function appColor(variable = '--bg'): number[] | null {
   const probe = document.createElement('div');
-  probe.style.cssText = 'position:fixed;width:0;height:0;visibility:hidden;background:var(--bg)';
+  probe.style.cssText = `position:fixed;width:0;height:0;visibility:hidden;background:var(${variable})`;
   document.body.append(probe);
   const value = getComputedStyle(probe).backgroundColor;
   probe.remove();

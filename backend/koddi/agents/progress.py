@@ -49,3 +49,19 @@ def local_title(text: str) -> str:
         (line.strip().lstrip("# ") for line in text.splitlines() if line.strip()), "Новая задача"
     )
     return " ".join(redact(line).split())[:72] or "Новая задача"
+
+
+def progress_text(progress: dict) -> str:
+    """Подпись действия, которое модель ещё пишет: «Правлю файл · templates/landing.html», без полного пути."""
+    from koddi.remote_control.mirror import title
+
+    name = str(progress.get("name") or "")
+    if not name:
+        return "Подготавливаю действие…"
+    text = title(name, str(progress.get("display_name") or ""))
+    path = progress.get("path")
+    if isinstance(path, str) and path.strip():
+        tail = "/".join(part for part in path.replace("\\", "/").split("/") if part)
+        tail = "/".join(tail.split("/")[-2:])
+        text = f"{text} · {tail[-60:]}"
+    return text

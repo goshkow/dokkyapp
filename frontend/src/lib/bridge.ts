@@ -16,12 +16,17 @@ interface WindowBridge {
   panels?(payload: string): void;
   /** Клавиатуру нужно вернуть в поле ввода: у него свой веб-вид над лентой. */
   focusComposer?(payload: string): void;
+  /** Тариф и лимиты для меню значка в трее (JSON). */
+  tray?(payload: string): void;
+  /** Список выбора системным меню поверх плиток стекла; ответ приходит в koddiPopupResult (JSON). */
+  popupMenu?(payload: string): void;
 }
 
 declare global {
   interface Window {
     koddiWindowBridge?: WindowBridge;
     koddiDesktop?: boolean;
+    koddiPopupResult?: (id: number, value: string | null) => void;
   }
 }
 
@@ -94,4 +99,49 @@ export function announceComposerFocus(): void {
   } catch {
     /* окно без моста */
   }
+}
+
+export interface TrayLimit { remaining: number; resets_at: number | null }
+export interface TrayPayload {
+  plan: string | null;
+  window: (TrayLimit & { hours: number }) | null;
+  total: TrayLimit | null;
+}
+
+/** Передаёт хосту лимиты для меню значка в трее; false - моста ещё нет, отправить позже. */
+export function announceTray(payload: string): boolean {
+  const bridge = window.koddiWindowBridge;
+  if (!bridge?.tray) return false;
+  try {
+    bridge.tray(payload);
+    return true;
+  } catch {
+    return false; /* окно без моста */
+  }
+}
+
+export interface PopupItem { value: string; label: string; disabled?: boolean }
+
+let popupSeq = 0;
+const popupWaiting = new Map<number, (value: string | null) => void>();
+
+/** Системное меню хоста у точки страницы; null - закрыли без выбора. Без моста сразу null. */
+export function popupMenu(at: { x: number; y: number }, items: PopupItem[], selected: string | null): Promise<string | null> {
+  const bridge = window.koddiWindowBridge;
+  if (!bridge?.popupMenu) return Promise.resolve(null);
+  window.koddiPopupResult ??= (id, value) => {
+    const done = popupWaiting.get(id);
+    popupWaiting.delete(id);
+    done?.(value);
+  };
+  const id = ++popupSeq;
+  return new Promise((resolve) => {
+    popupWaiting.set(id, resolve);
+    try {
+      bridge.popupMenu!(JSON.stringify({ id, x: Math.max(0, at.x), y: Math.max(0, at.y), vw: innerWidth, vh: innerHeight, items, selected }));
+    } catch {
+      popupWaiting.delete(id);
+      resolve(null);
+    }
+  });
 }

@@ -12,9 +12,10 @@ import { loadLimits as realLoadLimits } from './limits';
 import { confirmDialog } from './overlay';
 import { setPanel as realSetPanel, togglePanel as realTogglePanel } from './panels';
 import { syncChat } from './chat';
-import { rollbackChange as realRollbackChange, selectChange as realSelectChange } from './chatAgent';
+import { restoreTurn as realRestoreTurn, rollbackChange as realRollbackChange, selectChange as realSelectChange } from './chatAgent';
 import type { Change } from './chatTypes';
 import { openBilling as realOpenBilling, openSettings as realOpenSettings } from './settingsUi';
+import { startChat, surfaceActions } from './surface';
 import { goBack as realGoBack, goForward as realGoForward, newChat as realNewChat, openChat as realOpenChat, openPage as realOpenPage, view } from './view';
 
 /** Убрать проект из списка: подтверждение показывает главный вид, папка на диске остаётся. */
@@ -27,10 +28,11 @@ async function realRemoveProject(project: Project): Promise<void> {
 
 /** Откат изменения агента: подтверждение показывает главный вид. */
 const realRollback = (id: Change['id'], fileCount: number): Promise<void> => realRollbackChange(id, fileCount, syncChat);
+const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncChat);
 
 const table = {
   openChat: realOpenChat,
-  newChat: realNewChat,
+  newChat: startChat,
   openPage: realOpenPage,
   goBack: realGoBack,
   goForward: realGoForward,
@@ -50,11 +52,13 @@ const table = {
   setPanel: realSetPanel,
   selectChange: realSelectChange,
   rollbackChange: realRollback,
+  restoreTurn: realRestore,
+  ...surfaceActions,
 };
 exposeActions(table as unknown as Record<string, (...args: never[]) => unknown>);
 
 export const openChat = remote('openChat', (chat: Chat) => realOpenChat(chat));
-export const newChat = remote('newChat', (project: Project | null = null) => realNewChat(project));
+export const newChat = remote('newChat', (project: Project | null = null) => startChat(project));
 export const openPage = remote('openPage', realOpenPage);
 export const goBack = remote('goBack', realGoBack);
 export const goForward = remote('goForward', realGoForward);
@@ -73,3 +77,4 @@ export const openLibrary = remote('openLibrary', realOpenLibrary);
 export const togglePanel = remote('togglePanel', realTogglePanel);
 export const selectChange = remote('selectChange', realSelectChange);
 export const rollbackChange = remote('rollbackChange', realRollback);
+export const restoreTurn = remote('restoreTurn', realRestore);

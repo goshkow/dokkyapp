@@ -7,6 +7,7 @@ import './state/hooks';
 import './state/access';
 import './state/subscriptionSync';
 import './state/menu';
+import { startTray } from './state/tray';
 import { initEdgeFade } from './lib/edgeFade';
 import { appColor, initGlass } from './lib/glass';
 import { announceAppearance, announceOverlay, announceProduct } from './lib/bridge';
@@ -18,6 +19,7 @@ import './state/remote';
 import { nav, view } from './state/view';
 import { chat } from './state/chatCore';
 import { startFieldMirror } from './state/field';
+import { startSiteField } from './state/siteField';
 import { applyAppearance, ui } from './state/ui';
 
 // плитки Liquid Glass (виды sidebar) показывают зеркало этого состояния
@@ -25,6 +27,8 @@ for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limit
 // правой панели из состояния чата нужны план, изменения, выбранное изменение, сессия и расход
 exposeStore('chat', chat, ['plan', 'changes', 'changeSelection', 'coding', 'usage', 'running', 'stopping']);
 startFieldMirror();
+startSiteField();
+startTray();
 
 applyAppearance();
 initGlass();
@@ -57,12 +61,15 @@ setTimeout(markShellReady, 700);
 // меню поля располагаются выше нативной плитки; её порядок меняем только для модальных окон
 let overlayOpen = false;
 const syncOverlay = () => {
-  const open = Boolean(document.querySelector('dialog[open]'));
+  // затемнение вокруг фрейма сайта (новость), заставка и экран входа закрывают всё окно - тоже поверх плиток
+  const open = Boolean(document.querySelector('dialog[open], .surface-scrim, #auth-screen'));
   if (open === overlayOpen) return;
   overlayOpen = open;
   announceOverlay(open);
 };
 new MutationObserver(syncOverlay).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'data-state'] });
+// заставка открыта ещё до моста окна: без повтора хост так и не узнал бы о ней
+if (!window.koddiWindowBridge) addEventListener('koddi-bridge', () => announceOverlay(overlayOpen), { once: true });
 
 // тема и цвет фона запоминаются хостом для заставки следующего запуска
 const rememberLook = () => announceAppearance(document.documentElement.dataset.theme ?? 'dark', appColor());

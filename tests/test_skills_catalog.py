@@ -16,9 +16,9 @@ def isolated(tmp_path, monkeypatch):
     storage.init_db()
 
 
-def test_catalog_has_fifteen_complete_skills():
-    assert len(BUILTIN) == 15
-    assert len({item["key"] for item in BUILTIN}) == 15 and len({item["name"] for item in BUILTIN}) == 15
+def test_catalog_has_eighteen_complete_skills():
+    assert len(BUILTIN) == 18
+    assert len({item["key"] for item in BUILTIN}) == 18 and len({item["name"] for item in BUILTIN}) == 18
     for item in BUILTIN:
         assert 30 < len(item["description"]) < 200, item["key"]
         assert 800 < len(item["instructions"]) <= MAX_INSTRUCTIONS, item["key"]
@@ -31,7 +31,7 @@ def test_catalog_has_fifteen_complete_skills():
 def test_builtin_skills_appear_by_themselves_and_are_not_duplicated():
     first = list_skills()
     second = list_skills()
-    assert len(first) == len(second) == 15 and all(item["builtin"] for item in first)
+    assert len(first) == len(second) == 18 and all(item["builtin"] for item in first)
     assert {item["category"] for item in first} >= {"Код", "Архитектура", "Маркетинг", "Дизайн", "Git"}
 
 
@@ -48,7 +48,7 @@ def test_builtin_skills_are_read_only_but_can_be_copied():
     updated = create_skill("Ревью кода (мой)", "Новое", {"instructions": "Коротко."}, skill_id=copy["id"])
     assert updated["workflow"]["instructions"] == "Коротко."
     delete_skill(copy["id"])
-    assert len(list_skills()) == 15
+    assert len(list_skills()) == 18
 
 
 def test_user_skill_cannot_claim_to_be_builtin_or_exceed_limits():

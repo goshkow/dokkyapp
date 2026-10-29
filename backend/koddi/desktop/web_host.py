@@ -22,6 +22,7 @@ from PySide6.QtCore import (
     QFile,
     QIODevice,
     QObject,
+    QPoint,
     QPointF,
     QRect,
     QTimer,
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QMainWindow,
+    QMenu,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -58,6 +60,8 @@ from koddi.desktop import server as desktop_server
 
 LOGGER = logging.getLogger("koddi.desktop")
 IS_MAC = sys.platform == "darwin"
+# плитки, у которых вид страницы лежит внутри стекла над лентой: поле ввода и «Чат / Поиск» режима чата
+CONTENT_TILES = ("composer", "product")
 
 
 class UrlHandler(QObject):
@@ -268,15 +272,18 @@ class DesktopRequestInterceptor(QWebEngineUrlRequestInterceptor):
         self.key = host.session_key
 
     def interceptRequest(self, info):  # noqa: N802
-        url, first = info.requestUrl(), info.firstPartyUrl()
+        url, first, initiator = info.requestUrl(), info.firstPartyUrl(), info.initiator()
 
         def origin(item):
             return item.scheme(), item.host(), item.port()
 
+        # firstPartyUrl у запроса из iframe сайта - всё равно страница приложения; кто реально шлёт запрос, видно
+        # по initiator (пустой - навигация самого окна)
         if (
             self.key
             and origin(url) == origin(self.base)
             and (origin(first) == origin(self.base) or first.isEmpty())
+            and (initiator.isEmpty() or origin(initiator) == origin(self.base))
         ):
             info.setHttpHeader(
                 QByteArray(b"X-Koddi-Desktop-Session"), QByteArray(self.key.encode("ascii"))
@@ -359,6 +366,29 @@ class WindowBridge(QObject):
                 return
             if isinstance(data, dict):
                 self.host.apply_panels(data)
+
+    @Slot(str)
+    def tray(self, payload: str):
+        """Главная страница сообщает тариф и лимиты для меню значка в трее."""
+        if self.role != "main" or not self._own_page() or self.host.tray is None:
+            return
+        from koddi.desktop import tray
+
+        state = tray.parse(payload)
+        if state is not None:
+            self.host.tray.update(state)
+
+    @Slot(str)
+    def popupMenu(self, payload: str):  # noqa: N802
+        """Список выбора у поля ввода: системное меню ложится поверх плиток стекла, страница получает выбранное значение."""
+        if self.role != "main" or not self._own_page() or len(payload) > 16 * 1024:
+            return
+        from koddi.desktop import popup_menu
+
+        request = popup_menu.parse(payload)
+        if request is not None:
+            # меню крутит свой цикл событий: из обработчика сообщения страницы его не запускаем
+            QTimer.singleShot(0, lambda: self.host.show_popup_menu(request))
 
     @Slot(str)
     def focusComposer(self, payload: str):  # noqa: N802
@@ -484,6 +514,33 @@ class WindowBridge(QObject):
                 handle.startSystemMove()
 
 
+def _origin(url: QUrl) -> tuple[str, str, int]:
+    return url.scheme(), url.host(), url.port()
+
+
+def site_origin() -> QUrl:
+    from koddi.dokky.client import ORIGIN
+
+    return QUrl(ORIGIN)
+
+
+def trusted_origin(url: QUrl, api_base: str) -> bool:
+    """Своя страница приложения или сайт Докки, который режим чата показывает во фрейме."""
+    if url.scheme() == "blob":
+        url = QUrl(url.toString()[5:])
+    return _origin(url) in {_origin(QUrl(api_base)), _origin(site_origin())}
+
+
+class ExternalPage(QWebEnginePage):
+    """Новое окно со страницы (target=_blank, window.open): адрес уходит в браузер системы, окно не создаётся."""
+
+    def acceptNavigationRequest(self, url: QUrl, navigation_type, is_main_frame: bool) -> bool:  # type: ignore[override]
+        if url.scheme() in {"http", "https"} and url.host() and not url.userName():
+            QDesktopServices.openUrl(url)
+        self.deleteLater()
+        return False
+
+
 class KoddiPage(QWebEnginePage):
     def __init__(self, profile: QWebEngineProfile, host: "WebHost") -> None:
         super().__init__(profile, host)
@@ -491,31 +548,21 @@ class KoddiPage(QWebEnginePage):
         self.permissionRequested.connect(self._permission)
 
     def _permission(self, permission) -> None:
-        """Микрофон нужен только голосовому вводу собственной страницы приложения; остальное по умолчанию запрещено."""
-        origin = permission.origin()
-        base = QUrl(self.host.api_base)
-        own = (origin.scheme(), origin.host(), origin.port()) == (base.scheme(), base.host(), base.port())
-        if own and permission.permissionType() == QWebEnginePermission.PermissionType.MediaAudioCapture:
+        """Микрофон нужен только голосовому вводу: своей страницы и сайта в режиме чата; остальное запрещено."""
+        if (
+            trusted_origin(permission.origin(), self.host.api_base)
+            and permission.permissionType() == QWebEnginePermission.PermissionType.MediaAudioCapture
+        ):
             permission.grant()
         else:
             permission.deny()
 
+    def createWindow(self, _type) -> QWebEnginePage:  # type: ignore[override]
+        return ExternalPage(self.profile(), self)
+
     def acceptNavigationRequest(self, url: QUrl, navigation_type, is_main_frame: bool) -> bool:  # type: ignore[override]
-        base = QUrl(self.host.api_base)
-        if url.scheme() == "koddi":
-            self.host.handle_app_url(url, self.url())
-            return False
-        internal = (url.scheme(), url.host(), url.port()) == (
-            base.scheme(),
-            base.host(),
-            base.port(),
-        )
-        if is_main_frame and not internal:
-            if (
-                navigation_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
-                and url.scheme() in {"http", "https"}
-            ):
-                QDesktopServices.openUrl(url)
+        clicked = navigation_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+        if not self.host.navigation_allowed(url, self.url(), is_main_frame, clicked):
             return False
         return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
 
@@ -555,6 +602,8 @@ class WebHost(QMainWindow):
         # Liquid Glass только на macOS 26+; окно сразу прозрачное, а обычный вид рисует страница сама
         self.glass = macos_glass.GlassLayer(self) if IS_MAC and macos_glass.supported() else None
         self.tiles: dict = {}
+        # значок в трее ставит main() после создания окна
+        self.tray = None
         self._last_regions = None
         self._final_width = None
         if self.glass:
@@ -779,24 +828,32 @@ class WebHost(QMainWindow):
                 QDesktopServices.openUrl(target)
 
     def decide_navigation(self, view, url: QUrl, is_main_frame: bool, link_clicked: bool) -> bool:
-        """Правила переходов нативного вида: внутри приложения можно, наружу - только по ссылке и в системном браузере."""
-        base = QUrl(self.api_base)
+        return self.navigation_allowed(url, view.url(), is_main_frame, link_clicked)
+
+    def navigation_allowed(self, url: QUrl, current: QUrl, is_main_frame: bool, link_clicked: bool) -> bool:
+        """Правила переходов для Qt и WebKit: внутри приложения можно, наружу - только по ссылке и в браузере системы.
+
+        Во фрейме режима чата живёт сайт Докки: сам фрейм остаётся на его странице, ссылки из него и из вложенных
+        фреймов (видео, превью) открываются в браузере, а команды koddi:// принимаются только от своей страницы.
+        """
         if url.scheme() == "koddi":
-            self.handle_app_url(url, view.url())
+            if is_main_frame:
+                self.handle_app_url(url, current)
             return False
-        internal = (url.scheme(), url.host(), url.port()) == (base.scheme(), base.host(), base.port())
+        internal = _origin(url) == _origin(QUrl(self.api_base))
         if is_main_frame and not internal:
             if link_clicked and url.scheme() in {"http", "https"}:
+                QDesktopServices.openUrl(url)
+            return False
+        surface = _origin(url) == _origin(site_origin()) and url.path() == "/app-surface"
+        if not is_main_frame and link_clicked and not internal and not surface:
+            if url.scheme() in {"http", "https"} and url.host():
                 QDesktopServices.openUrl(url)
             return False
         return True
 
     def _save_download(self, download) -> None:
-        url = download.url()
-        if url.scheme() == "blob":
-            url = QUrl(url.toString()[5:])
-        base = QUrl(self.api_base)
-        if (url.scheme(), url.host(), url.port()) != (base.scheme(), base.host(), base.port()):
+        if not trusted_origin(download.url(), self.api_base):
             download.cancel()
             return
         name = Path(download.downloadFileName()).name or "file"
@@ -824,7 +881,11 @@ class WebHost(QMainWindow):
             tile = PanelTile(self, role, side)
             tile.attach()
             self.tiles[role] = tile
-        self.tiles["composer"] = ComposerTile(self)
+        for role in CONTENT_TILES:
+            self.tiles[role] = ComposerTile(self, role)
+        # заставка или экран входа могли открыться раньше плиток: тогда плитки сразу под страницей
+        if getattr(self, "_overlay_active", False):
+            self.apply_overlay(True)
         # страница могла прислать рамку поля раньше, чем появился его вид
         if self._last_regions is not None:
             self._apply_composer(*self._last_regions)
@@ -873,6 +934,7 @@ class WebHost(QMainWindow):
         self._glass_tuner.activateWindow()
 
     def apply_overlay(self, active: bool) -> None:
+        self._overlay_active = active
         for tile in self.tiles.values():
             tile.set_overlay(active)
 
@@ -917,16 +979,17 @@ class WebHost(QMainWindow):
         cleaned = macos_glass.clean_regions(regions) if enabled else []
         self._last_regions = (cleaned, size)
         self._apply_composer(cleaned, size)
-        glass.set_regions([item for item in cleaned if item["id"] != "composer"], size)
+        glass.set_regions([item for item in cleaned if item["id"] not in CONTENT_TILES], size)
         from koddi.desktop import splash
 
         splash.save(glass.theme, enabled, glass.color)
 
     def _apply_composer(self, regions: list[dict], size=None) -> None:
-        """Рамка поля ввода идёт его плитке: стекло над лентой; нет плитки - блок остаётся без стекла."""
-        tile = self.tiles.get("composer")
-        if tile is not None:
-            tile.set_regions([item for item in regions if item["id"] == "composer"], size)
+        """Рамки поля ввода и «Чат / Поиск» идут их плиткам: стекло над лентой; нет плитки - блок остаётся без стекла."""
+        for role in CONTENT_TILES:
+            tile = self.tiles.get(role)
+            if tile is not None:
+                tile.set_regions([item for item in regions if item["id"] == role], size)
 
     def focus_composer(self) -> None:
         """Клавиатура переходит в поле ввода: в его собственный вид, если он стоит над лентой, иначе в главный."""
@@ -934,14 +997,51 @@ class WebHost(QMainWindow):
         shown = tile is not None and any(not view.isHidden() for view in tile.regions.views.values())
         (tile.view if shown else self.view).web.window().makeFirstResponder_((tile.view if shown else self.view).web)
 
+    def show_popup_menu(self, request: dict) -> None:
+        """Системное меню у точки страницы; текущий пункт с галочкой встаёт на место кнопки, как у списков macOS."""
+        from koddi.desktop import popup_menu
+
+        menu = QMenu(self)
+        current = None
+        for item in request["items"]:
+            action = menu.addAction(item["label"])
+            action.setData(item["value"])
+            action.setEnabled(not item["disabled"])
+            if item["value"] == request["selected"]:
+                action.setCheckable(True)
+                action.setChecked(True)
+                current = action
+        scale_x = self.view.width() / request["vw"]
+        scale_y = self.view.height() / request["vh"]
+        point = self.view.mapToGlobal(QPoint(round(request["x"] * scale_x), round(request["y"] * scale_y)))
+        picked = menu.exec(point, current)
+        menu.deleteLater()
+        value = picked.data() if picked is not None else None
+        base, url = QUrl(self.api_base), self.view.url()
+        # пока меню было открыто, страница могла смениться: чужой адрес ответа не получает
+        if (url.scheme(), url.host(), url.port()) == (base.scheme(), base.host(), base.port()):
+            self.view.page().runJavaScript(popup_menu.result_script(request["id"], value if isinstance(value, str) else None))
+
     def menu_action(self, action: str) -> None:
-        """Команда строки меню macOS выполняется страницей; чужой адрес команд не получает."""
+        """Команда строки меню macOS или меню трея выполняется страницей; чужой адрес команд не получает."""
         base, current = QUrl(self.api_base), self.view.url()
         if (current.scheme(), current.host(), current.port()) != (base.scheme(), base.host(), base.port()):
             return
         from koddi.desktop import macos_menu
 
         self.view.page().runJavaScript(macos_menu.dispatch_script(action))
+
+    def bring_to_front(self) -> None:
+        """Окно из Dock, трея или второго запуска: свёрнутое разворачивается в прежнее состояние, программа активируется."""
+        if self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        self.raise_()
+        if IS_MAC:
+            from koddi.desktop import macos_frame
+
+            macos_frame.activate_app()
+        self.activateWindow()
 
     def toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
@@ -1119,14 +1219,18 @@ class WebHost(QMainWindow):
         requested = self.view.page().requestedUrl()
         if (
             not self._ui_loaded
-            and self._load_attempts < 30
             and requested.toString().startswith(f"{self.api_base}/ui/")
         ):
-            QTimer.singleShot(300, self._retry_initial_load)
+            # заставка держится, пока сервер не ответит: медленный первый запуск не должен упираться в лимит попыток
+            QTimer.singleShot(min(2000, 300 * self._load_attempts), self._retry_initial_load)
 
     def _retry_initial_load(self) -> None:
-        if not self._ui_loaded:
-            self._load_ui()
+        if self._ui_loaded:
+            return
+        if self.backend is not None and self.backend.failed.is_set():
+            self.startup_label.setText("Не удалось запустить локальный сервер. Перезапустите Докки.")
+            return
+        self._load_ui()
 
     def _geometry_file(self) -> Path:
         from koddi.config import data_dir
@@ -1452,10 +1556,17 @@ def main() -> None:
         host.restore_geometry()
         host.show()
 
-        def activate():
-            host.showNormal()
-            host.raise_()
-            host.activateWindow()
+        activate = host.bring_to_front
+        from koddi.desktop import tray
+
+        def open_usage():
+            activate()
+            host.menu_action("usage")
+
+        host.tray = tray.install(tray.Actions(open=activate, usage=open_usage, quit=app.quit), host)
+        if host.tray is not None:
+            # значок пропадает сразу, а не после остановки локального сервера
+            app.aboutToQuit.connect(host.tray.remove)
 
         def incoming():
             connection = broker.nextPendingConnection()

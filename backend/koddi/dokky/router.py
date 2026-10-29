@@ -91,6 +91,50 @@ async def bootstrap():
         raise failure(exc) from exc
 
 
+# режим чата показывает страницу сайта во фрейме; путь и формат токена задаёт сайт, приложение их только проверяет
+SURFACE_PATH = "/app-surface"
+
+
+def own_remote_host() -> str:
+    """Id этого компьютера в удалённом доступе: его чаты сайт показывает как удалённые, у нас они и так свои."""
+    from koddi.remote_control import remote_control
+
+    value = remote_control.config().get("host_id")
+    return value if isinstance(value, str) else ""
+
+
+@router.get("/surface")
+async def surface():
+    """Есть ли на сервере страница для режима чата. Без неё приложение остаётся на своём чате."""
+    if not dokky.store.load():
+        return {"available": False}
+    try:
+        value = (await dokky.request("GET", "/app/surface")).json()
+    except DokkyError as exc:
+        if exc.status in {404, 405}:
+            return {"available": False}
+        raise failure(exc) from exc
+    if value.get("protocol") != 1 or value.get("path") != SURFACE_PATH:
+        return {"available": False}
+    return {"available": True, "url": ORIGIN + SURFACE_PATH, "origin": ORIGIN,
+            "release": str(value.get("release") or "")[:128], "host_id": own_remote_host()}
+
+
+@router.post("/surface/session")
+async def surface_session():
+    """Короткий токен страницы сайта. Bearer приложения остаётся здесь, во фрейм уходит только этот токен."""
+    try:
+        value = (await dokky.request("POST", "/app/surface/session")).json()
+    except DokkyError as exc:
+        raise failure(exc) from exc
+    token = value.get("token")
+    if not isinstance(token, str) or not token.startswith("dks1.") or len(token) > 2048:
+        raise HTTPException(502, {"code": "bad_surface_token", "message": "Сервер вернул непонятный ответ"})
+    expires = value.get("expires_in")
+    expires = expires if isinstance(expires, int) and 60 <= expires <= 3600 else 900
+    return {"token": token, "expires_in": expires}
+
+
 @router.post("/cloud/files")
 async def upload(file: UploadFile, request: Request):
     content = await file.read(25 * 1024 * 1024 + 1)

@@ -1,9 +1,7 @@
-import { Smartphone } from 'lucide-react';
 import { useEffect } from 'react';
 import { switchScope } from '../../state/actions';
 import { followFeed, isFollowing, useChat } from '../../state/chatCore';
 import { guarded } from '../../state/overlay';
-import { refreshRemote, sharedOnPhone, useRemote } from '../../state/remoteControl';
 import { useUi } from '../../state/ui';
 import { pageNames, useView } from '../../state/view';
 import { CloudSearch } from '../search/CloudSearch';
@@ -115,20 +113,6 @@ function ProductPill() {
   );
 }
 
-/** Значок в шапке: этот чат разработки виден и управляется из Докки на телефоне. */
-function PhoneMark() {
-  const development = useUi((s) => s.scope === 'development');
-  const chatId = useView((s) => s.chat?.id);
-  const shown = useRemote((s) => development && sharedOnPhone(s.status, chatId));
-  useEffect(() => { if (development && chatId !== undefined) refreshRemote(); }, [development, chatId]);
-  if (!shown) return null;
-  return (
-    <span className="chat-phone-mark" title="Этот чат виден в Докки на телефоне" aria-label="Этот чат виден в Докки на телефоне" role="img">
-      <Smartphone aria-hidden="true" />
-    </span>
-  );
-}
-
 export function Chat() {
   const scope = useUi((s) => s.scope);
   const page = useView((s) => s.page);
@@ -142,7 +126,7 @@ export function Chat() {
       <header className="chat-header">
         <div className="header-start"><Title /></div>
         <ProductPill />
-        <div className="header-end"><PhoneMark /></div>
+        <div className="header-end" />
       </header>
       <div className="chat-edge-fade chat-edge-fade-top" aria-hidden="true" />
       <div className="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true" />

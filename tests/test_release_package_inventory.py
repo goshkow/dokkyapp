@@ -32,8 +32,8 @@ def package(tmp_path):
 
 def test_package_matches_sources(package):
     report = inventory.verify(*package)
-    assert report["ok"] and report["assets_verified"] == 5
-    assert report["file_count"] == 6
+    assert report["ok"] and report["assets_verified"] == len(inventory.ASSET_ROOTS)
+    assert report["file_count"] == len(inventory.ASSET_ROOTS) + 1
 
 
 @pytest.mark.parametrize("change", ["missing", "modified", "unexpected", "profile", "traversal"])
@@ -61,7 +61,7 @@ def test_public_ca_bundle_is_not_private_key(package):
     cert = directory / "certifi/cacert.pem"
     cert.parent.mkdir()
     cert.write_bytes(b"public certificates")
-    assert inventory.verify(directory, sources)["file_count"] == 7
+    assert inventory.verify(directory, sources)["file_count"] == len(inventory.ASSET_ROOTS) + 2
     (directory / "private.pem").write_bytes(b"private key")
     with pytest.raises(ValueError):
         inventory.verify(directory, sources)
@@ -102,7 +102,7 @@ def test_optional_computer_helpers_and_license_notices_are_verified(package):
         path.write_bytes(b'notice or native source')
         manifest[source + 'payload.txt'] = hashlib.sha256(path.read_bytes()).hexdigest()
     sources.write_text(json.dumps(manifest))
-    assert inventory.verify(directory, sources)['assets_verified'] == 7
+    assert inventory.verify(directory, sources)['assets_verified'] == len(inventory.ASSET_ROOTS) + 2
     (directory / 'koddi/licenses/payload.txt').write_bytes(b'modified notice')
     with pytest.raises(ValueError):
         inventory.verify(directory, sources)

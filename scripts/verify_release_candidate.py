@@ -13,6 +13,7 @@ ASSET_ROOTS = {
     "backend/koddi/desktop/web/": "koddi/desktop/web/",
     "backend/koddi/desktop/web-next/": "koddi/desktop/web-next/",
     "backend/koddi/storage/migrations/": "koddi/storage/migrations/",
+    "backend/koddi/codeintel/native/": "koddi/codeintel/native/",
     "prompts/": "prompts/",
     "locales/": "locales/",
 }

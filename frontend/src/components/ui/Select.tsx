@@ -1,5 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
+import { popupMenu } from '../../lib/bridge';
+import { nativeTiles } from '../../lib/glass';
 import { Popover } from './Popover';
 
 export interface SelectOption<T extends string | number> {
@@ -26,8 +28,26 @@ interface SelectProps<T extends string | number> {
 export function Select<T extends string | number>({ value, options, onChange, label, className = '', disabled, hidden, side = 'below' }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const native = useRef(false);
   if (hidden) return null;
   const current = options.find((option) => option.value === value);
+  const toggle = () => {
+    const button = trigger.current;
+    // у поля ввода на стекле список рисует сам macOS: плитка поля лежит над страницей и закрыла бы веб-меню
+    if (!open && button?.closest('#composer') && nativeTiles() && window.koddiWindowBridge?.popupMenu) {
+      const rect = button.getBoundingClientRect();
+      native.current = true;
+      setOpen(true);
+      void popupMenu({ x: rect.left, y: rect.top }, options.map((option) => ({ value: String(option.value), label: option.label, disabled: option.disabled })), String(value)).then((picked) => {
+        setOpen(false);
+        const option = options.find((item) => String(item.value) === picked);
+        if (option && option.value !== value && !option.disabled) onChange(option.value);
+      });
+      return;
+    }
+    native.current = false;
+    setOpen((state) => !state);
+  };
   return (
     <>
       <button
@@ -39,7 +59,7 @@ export function Select<T extends string | number>({ value, options, onChange, la
         aria-label={label}
         className={`select-trigger ${className}`}
         disabled={disabled}
-        onClick={() => setOpen((state) => !state)}
+        onClick={toggle}
         onKeyDown={(event) => {
           // удержанный Enter из поля ввода долетает сюда, когда открывается диалог, и щёлкал бы список туда-сюда
           if (event.key === 'Enter' && event.repeat) {
@@ -48,14 +68,14 @@ export function Select<T extends string | number>({ value, options, onChange, la
           }
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault();
-            setOpen(true);
+            if (!open) toggle();
           }
         }}
       >
         <span style={current?.style}>{current?.label ?? '—'}</span>
         <ChevronDown aria-hidden="true" />
       </button>
-      <Popover open={open} anchor={trigger} onClose={() => setOpen(false)} role="listbox" label={label} side={side} className="select-menu" minWidth="anchor">
+      <Popover open={open && !native.current} anchor={trigger} onClose={() => setOpen(false)} role="listbox" label={label} side={side} className="select-menu" minWidth="anchor">
         {options.map((option) => (
           <button
             key={String(option.value)}

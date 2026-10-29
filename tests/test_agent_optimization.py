@@ -349,6 +349,11 @@ async def test_completion_requires_fixing_known_syntax_errors(project, monkeypat
                         "new_text": "def broken():\n    pass",
                     },
                 )
+            elif self.count == 4:
+                # после правок гейт качества требует прогон проверок проекта
+                result = json.loads(request["messages"][-1]["content"])
+                assert result["ok"] is True
+                name, args = "qa.run", {}
             else:
                 name, args = "task.complete", {"summary": "Синтаксис исправлен"}
             yield {
@@ -363,7 +368,9 @@ async def test_completion_requires_fixing_known_syntax_errors(project, monkeypat
             chat_id=chat, project_id=pid, workspace=path, user_message="Исправь синтаксис"
         )
     ]
-    assert "turn.completed" in events[-1] and model.count == 4
+    assert "turn.completed" in events[-1] and model.count == 5
+    # в проекте нет настроенных проверок: итог честно говорит «не проверено», а не «проверено»
+    assert any("Проверка Докки: не проверено" in event for event in events)
     compile((path / "code.py").read_bytes(), "code.py", "exec")
     with storage.db() as conn:
         completed = conn.execute(

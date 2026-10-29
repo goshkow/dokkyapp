@@ -15,6 +15,8 @@ export interface RemoteStatus {
   power: 'ac' | 'battery' | 'unknown';
   pending: number;
   new_session_project_id: number | null;
+  /** новые чаты окна сразу видны на сайте и телефоне */
+  share_new: boolean;
   shared: Record<string, boolean>;
   site: string;
 }
@@ -30,7 +32,7 @@ export async function loadRemote(): Promise<RemoteStatus> {
   return status;
 }
 
-export async function saveRemote(patch: Partial<Pick<RemoteStatus, 'enabled' | 'prevent_sleep' | 'new_session_project_id'>>): Promise<RemoteStatus> {
+export async function saveRemote(patch: Partial<Pick<RemoteStatus, 'enabled' | 'prevent_sleep' | 'new_session_project_id' | 'share_new'>>): Promise<RemoteStatus> {
   const status = await put<RemoteStatus>('/api/remote-control', patch);
   remote.set({ status });
   return status;

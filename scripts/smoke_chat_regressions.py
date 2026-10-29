@@ -33,9 +33,8 @@ def scenario_enter_single_submission():
         page.keyboard.down("Enter")
         for _ in range(8):
             page.keyboard.down("Enter")
-        page.wait_for_selector("dialog[open]")
-        check(page.locator("dialog[open]").count() == 1, "один выбор рабочей папки при удержании Enter")
-        page.click("dialog[open] button[type=submit]")
+        # без проекта папку не спрашиваем: чат идёт в «Документы/Докки»
+        check(page.locator("dialog[open]").count() == 0, "без вопроса о рабочей папке")
         # одновременно проверяем защиту отправки до завершения создания чата
         page.evaluate("""() => { const input = document.querySelector('#prompt'); for (let i=0; i<12; i++) input.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true, repeat:false })); }""")
         page.keyboard.up("Enter")
@@ -97,7 +96,6 @@ def scenario_submission_failure_retry():
         page.route("**/api/chats/50/messages", send)
         page.fill("#prompt", "Попытка отправки")
         page.keyboard.down("Enter")
-        page.click("dialog[open] button[type=submit]")
         page.wait_for_selector(".toast.error")
         page.keyboard.up("Enter")
         check(counts == {"create": 1, "send": 0}, str(counts))
@@ -133,7 +131,6 @@ def scenario_navigation_during_preparation():
         page.route("**/api/chats/1/messages", send)
         page.fill("#prompt", "Зависшая подготовка")
         page.locator("#prompt").press("Enter")
-        page.click("dialog[open] button[type=submit]")
         page.wait_for_timeout(200)
         check(len(pending) == 1, "первый запрос ожидает ответа")
         open_chat(page)

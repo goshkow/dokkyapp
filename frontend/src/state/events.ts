@@ -6,6 +6,7 @@ import { showRequests } from './chatAgent';
 import { chat, ctl, currentChatId, isDevelopment } from './chatCore';
 import { data, loadCloud, loadLocal, revoke } from './data';
 import { loadLimits } from './limits';
+import { onMapUpdated } from './projectMap';
 import { refreshRemote } from './remoteControl';
 import { ui } from './ui';
 import { announceReady, applyUpdateState, loadUpdates } from './updates';
@@ -63,6 +64,10 @@ function listen(): void {
   // агент открыл или закрыл страницу во встроенном браузере
   source.addEventListener('browser.session', (event) => {
     try { onBrowserSession(JSON.parse((event as MessageEvent<string>).data) as { action?: string }); } catch { /* повреждённое событие */ }
+  });
+  // карта проекта обновилась после правок файлов или новой заметки агента
+  source.addEventListener('project_map.updated', (event) => {
+    try { onMapUpdated(JSON.parse((event as MessageEvent<string>).data) as { project_id?: unknown; version?: unknown }); } catch { /* повреждённое событие */ }
   });
   source.addEventListener('remote.turn', (event) => { void remoteTurn(event).catch(() => undefined); });
   // новый чат с телефона появляется в списке сразу

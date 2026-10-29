@@ -308,6 +308,14 @@ def test_glass_regions_come_from_the_page_and_are_sanitized():
     assert [item["id"] for item in result] == ["r"] and result[0]["r"] == 200.0
     assert clean_regions("не список") == []
     assert len(clean_regions([good] * 100)) == MAX_REGIONS
+    # прозрачность блока во время перехода страницы: только 0..1, не число - блок отбрасывается
+    faded = clean_regions([{**good, "o": 0.35}, {**good, "id": "x", "o": 5}, {**good, "id": "y", "o": float("nan")}, {**good, "id": "z", "o": "a"}])
+    assert [(item["id"], item["o"]) for item in faded] == [("sidebar", 0.35), ("x", 1.0)]
+    fade = {"from": 1, "to": 0, "ms": 220, "c": [0.22, 1, 0.36, 1], "at": 1_700_000_000_000}
+    assert clean_regions([{**good, "fade": fade}])[0]["fade"] == {"from": 1.0, "to": 0.0, "ms": 220.0, "at": 1.7e12, "c": [0.22, 1.0, 0.36, 1.0]}
+    for broken in ({**fade, "to": 2}, {**fade, "ms": 0}, {**fade, "ms": 9000}, {**fade, "c": [0, 0, 1]}, {**fade, "c": [0, 9, 1, 1]},
+                   {**fade, "at": float("nan")}, {k: v for k, v in fade.items() if k != "at"}):
+        assert clean_regions([{**good, "fade": broken}]) == []
 
 
 def test_glass_flight_catches_up_with_delivery_and_finishes_without_delay():

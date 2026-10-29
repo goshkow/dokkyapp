@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { copyText } from '../../lib/clipboard';
 import { Popover } from './Popover';
 import { mod } from '../../lib/platform';
+import { markdownHooks } from '../../lib/markdown';
+import { ui } from '../../state/ui';
 
 /* Своё контекстное меню вместо родного меню браузера (назад, перезагрузить, исходный код страницы).
    Показывается там, где есть что делать: выделенный текст, поле ввода, ссылка. Свои меню (чаты) не трогаются. */
@@ -75,7 +77,11 @@ function buildEntries(target: Element): Entry[] {
   const text = selectedText(editable);
   const entries: Entry[] = [];
   if (href) {
-    entries.push({ label: 'Открыть ссылку', run: () => openLink(href) });
+    // в режиме кода у ссылки два пути: вкладка браузера рабочей области или системный браузер
+    if (ui.get().scope === 'development' && markdownHooks.openLink) {
+      entries.push({ label: 'Открыть в рабочей области', run: () => { if (!markdownHooks.openLink?.(href)) openLink(href); } });
+      entries.push({ label: 'Открыть в браузере по умолчанию', run: () => openLink(href) });
+    } else entries.push({ label: 'Открыть ссылку', run: () => openLink(href) });
     entries.push({ label: 'Копировать ссылку', run: async (event) => { await copyText(href, event as MouseEvent, 'Ссылка скопирована'); } });
   }
   if (editable) {

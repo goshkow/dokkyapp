@@ -37,6 +37,8 @@ export function createFollower(options: FollowOptions): Follower {
   // читатель потянул вверх, а прокрутка ещё не успела отойти от конца: возвращать к концу нельзя
   let leaving = false;
   let anchored = false;
+  // ответ, посреди которого читатель сам вернулся к концу: за ним лента идёт к концу, а не к его началу
+  let tail: HTMLElement | null = null;
   let frame = 0;
   let gestureFrame = 0;
   let lastFrame = 0;
@@ -52,16 +54,25 @@ export function createFollower(options: FollowOptions): Follower {
     frame = 0;
   };
 
-  const desired = (): number => {
+  const aim = (): number => {
     const bottom = bottomOf();
     const target = options.target();
-    if (!target || (!options.isRunning() && !anchored)) return bottom;
-    anchored = true;
+    if (!target || target === tail || (!options.isRunning() && !anchored)) return bottom;
     const bounds = scroller.getBoundingClientRect();
     const inset = options.topInset() + 8;
     const beginning = target.getBoundingClientRect().top - bounds.top + scroller.scrollTop - inset;
     return Math.min(bottom, Math.max(0, beginning));
   };
+
+  const desired = (): number => {
+    const target = options.target();
+    if (target && target !== tail && options.isRunning()) anchored = true;
+    return aim();
+  };
+
+  // лента и так идёт к концу, а сам конец уже виден: прокрутка вниз ничего не меняет
+  const atEnd = () => enabled && aim() >= bottomOf() - 1
+    && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 10;
 
   const watch = () => {
     const target = options.target();
@@ -112,11 +123,15 @@ export function createFollower(options: FollowOptions): Follower {
       manual = false;
       enabled = true;
       anchored = false;
+      tail = options.isRunning() ? options.target() : null;
       update();
     } else if (gap >= 15) stop();
   };
 
   const gesture = (event?: Event) => {
+    // у конца лишний жест вниз не трогает слежение: иначе кадр спустя лента снова ставится к концу
+    // и перебивает отскок резиновой прокрутки, её бросает вверх и вниз
+    if (event instanceof WheelEvent && event.deltaY > 0 && Math.abs(event.deltaY) >= Math.abs(event.deltaX) && atEnd()) return;
     if (event instanceof WheelEvent && event.deltaY < 0) leaving = true;
     else if (event instanceof WheelEvent && event.deltaY > 0) leaving = false;
     manual = true;
@@ -130,6 +145,7 @@ export function createFollower(options: FollowOptions): Follower {
     });
   };
   const key = (event: KeyboardEvent) => {
+    if (['ArrowDown', 'PageDown', 'End', ' '].includes(event.key) && !event.shiftKey && atEnd()) return;
     if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) leaving = true;
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) gesture();
   };
@@ -153,6 +169,7 @@ export function createFollower(options: FollowOptions): Follower {
       leaving = false;
       enabled = true;
       anchored = false;
+      tail = null;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       scroller.scrollTop = bottomOf();
@@ -171,6 +188,7 @@ export function createFollower(options: FollowOptions): Follower {
       leaving = false;
       enabled = true;
       anchored = false;
+      tail = null;
     },
     destroy() {
       closed = true;

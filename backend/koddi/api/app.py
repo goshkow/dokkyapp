@@ -9,12 +9,12 @@ import re
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from koddi.agents import AgentOrchestrator, agent_runs
 from koddi.agents.queue import request_queue
@@ -29,7 +29,9 @@ from koddi.browser import (
     browser_frame,
     browser_input,
     browser_open,
+    is_loopback_url,
     live_sessions,
+    local_preview_allowed,
     web_fetch,
     web_search,
 )
@@ -59,7 +61,7 @@ from koddi.integrations import (
 from koddi.logs import list_logs, log_event, search_logs
 from koddi.remote import RemoteAIClient, remote_config, save_remote_config
 from koddi.remote_control import Hooks, remote_control
-from koddi.projects import add_project, create_worktree, get_project, list_projects, remove_worktree
+from koddi.projects import add_project, create_worktree, get_project, home_project, list_projects, remove_worktree
 from koddi.review import diff_review, safety_review, secret_scan
 from koddi.skills import SkillError, apply_skill, create_skill, delete_skill, list_skills, skill_block
 from koddi.speech import consent_status, set_consent, transcribe_audio, whisper_model_status
@@ -68,6 +70,73 @@ from koddi.storage.db import db, get_setting, set_setting
 from koddi.tools import TOOL_SCHEMAS, ToolRunner
 from koddi.tools.schemas import AGENT_UNAVAILABLE_TOOLS
 from koddi.policy.account import local_owner, owns, require_chat
+
+
+class SkillEnabledIn(BaseModel):
+    enabled: bool
+
+
+class ProjectSkillDecisionIn(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    sha256: str = Field(pattern="^[a-f0-9]{64}$")
+    trust: bool
+
+
+class KnowledgeSettingsIn(BaseModel):
+    location: str = Field(pattern="^(app|workspace|off)$")
+
+
+class QaCommandIn(BaseModel):
+    kind: str = Field(pattern="^(lint|typecheck|test|build)$")
+    command: str = Field(min_length=1, max_length=2000)
+    cwd: str = Field(default="", max_length=500)
+
+
+class QaCommandsIn(BaseModel):
+    commands: list[QaCommandIn] = Field(default_factory=list, max_length=20)
+
+
+class AiReviewIn(BaseModel):
+    mode: str = Field(pattern="^(auto|always|off)$")
+
+
+class QualityRunIn(BaseModel):
+    gates: list[str] = Field(default_factory=list, max_length=5)
+    scope: str = Field(default="changed", pattern="^(changed|full)$")
+    paths: list[str] = Field(default_factory=list, max_length=200)
+    coverage: str | None = Field(default=None, pattern="^(existing|collect|none)$")
+    max_mutants: int | None = Field(default=None, ge=0, le=60)
+
+
+class QualityDecisionIn(BaseModel):
+    gate: str = Field(pattern="^(dry|mutation|architecture)$")
+    key: str = Field(min_length=1, max_length=600)
+    decision: str = Field(pattern="^(review|accepted|refactor)$")
+    reason: str = Field(default="", max_length=500)
+
+
+class ArchitecturePolicyIn(BaseModel):
+    policy: dict[str, Any] | None = None
+
+
+class QualityBudgetIn(BaseModel):
+    mode: str = Field(pattern="^(auto|economy|strict|off)$")
+
+
+class WorktreeCleanupIn(BaseModel):
+    dry_run: bool = True
+
+
+class CheckpointRestoreIn(BaseModel):
+    paths: list[str] = Field(default_factory=list, max_length=500)
+    force: bool = False
+
+
+class KnowledgeNoteIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=20)
+    title: str = Field(min_length=1, max_length=120)
+    body: str = Field(default="", max_length=4000)
+    targets: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ProjectIn(BaseModel):
@@ -100,7 +169,9 @@ class MessageIn(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
     attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     # подключённые навыки: их инструкции идут в начале этого сообщения как указание пользователя
-    skill_ids: list[int] = Field(default_factory=list, max_length=5)
+    # навыки и команды плагинов идут строками plugin:<плагин>:<имя>
+    skill_ids: list[int | Annotated[str, StringConstraints(pattern=r"^plugin:[a-z0-9._-]{1,64}:[a-z0-9._:-]{1,64}$")]] = Field(
+        default_factory=list, max_length=5)
 
 
 class QueueIn(MessageIn):
@@ -229,10 +300,14 @@ def create_app() -> FastAPI:
                 asyncio.run_coroutine_threadsafe(event_bus.publish(event, data), loop)
 
         set_notifier(browser_notice)
+        from koddi import projectmap
+
+        projectmap.enable_background(browser_notice)
         try:
             yield
         finally:
             set_notifier(None)
+            await asyncio.to_thread(projectmap.shutdown)
             await updater.stop()
             monitor.cancel()
             scheduler.cancel()
@@ -248,13 +323,16 @@ def create_app() -> FastAPI:
 
             await asyncio.to_thread(browser_close_all)
 
-    app = FastAPI(title="Докки API", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="Докки API", version="0.2.2", lifespan=lifespan)
     from koddi.desktop.transport import DesktopTransportGuard
 
     app.add_middleware(DesktopTransportGuard)
     from koddi.dokky.router import router as dokky_router
 
     app.include_router(dokky_router)
+    from koddi.plugins.api import router as plugins_router
+
+    app.include_router(plugins_router)
 
     @app.middleware("http")
     async def local_chat_access(request: Request, call_next):
@@ -521,7 +599,361 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Сначала остановите агента в проекте")
             conn.execute("UPDATE chats SET project_id=NULL WHERE project_id=?", (project_id,))
             conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        from koddi.projectmap import forget
+
+        forget(project_id)
         return {"ok": True, "files_deleted": False}
+
+    def _map_project(project_id: int) -> tuple[dict, Path]:
+        project = get_project(project_id)
+        if not project:
+            raise HTTPException(404, "Проект не найден")
+        root = Path(project["path"])
+        if not root.is_dir():
+            raise HTTPException(409, "Папка проекта недоступна")
+        return project, root
+
+    @app.get("/api/projects/{project_id}/map")
+    def project_map_get(project_id: int) -> dict:
+        from koddi.projectmap import MapError
+        from koddi.projectmap.service import ui_tree
+
+        _, root = _map_project(project_id)
+        try:
+            return ui_tree(project_id, root, local_owner())
+        except MapError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/map/state")
+    def project_map_state(project_id: int) -> dict:
+        from koddi.projectmap import schedule
+        from koddi.projectmap.service import state, watched_mode
+
+        _, root = _map_project(project_id)
+        # открытие проекта в окне: первая сборка или проверка изменений идёт в фоне
+        schedule(project_id, root)
+        return {**state(project_id), "watch": watched_mode(project_id)}
+
+    @app.post("/api/projects/{project_id}/map/rescan")
+    def project_map_rescan(project_id: int) -> dict:
+        from koddi.projectmap import MapError, mark_dirty
+        from koddi.projectmap.service import ensure
+
+        _, root = _map_project(project_id)
+        mark_dirty(project_id)
+        try:
+            return ensure(project_id, root, wait=30.0)
+        except MapError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}/map/notes/{note_id}")
+    def project_map_note_delete(project_id: int, note_id: int) -> dict:
+        from koddi.projectmap import MapError
+        from koddi.projectmap.service import delete_note
+
+        _map_project(project_id)
+        try:
+            return delete_note(project_id, local_owner(), note_id, source="user")
+        except MapError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/knowledge")
+    def project_knowledge_get(project_id: int) -> dict:
+        from koddi.knowledge.service import folder, location
+        from koddi.projectmap.service import ensure, graph as map_graph
+
+        _, root = _map_project(project_id)
+        ensure(project_id, root, wait=3.0)
+        value = map_graph(project_id, local_owner())
+        from koddi.knowledge.service import _view
+
+        where = location(project_id)
+        return {"location": where, "folder": str(folder(project_id, local_owner(), root, where)) if where != "off" else None,
+                "notes": [_view(value, note, limit=4000) for note in value.notes]}
+
+    @app.post("/api/projects/{project_id}/knowledge/settings")
+    def project_knowledge_settings(project_id: int, payload: KnowledgeSettingsIn) -> dict:
+        from koddi.knowledge.service import KnowledgeError, export_sync, set_location
+
+        _, root = _map_project(project_id)
+        try:
+            set_location(project_id, payload.location)
+            return export_sync(project_id, local_owner(), root)
+        except (KnowledgeError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/projects/{project_id}/knowledge/sync")
+    def project_knowledge_sync(project_id: int) -> dict:
+        from koddi.knowledge.service import KnowledgeError, export_sync
+
+        _, root = _map_project(project_id)
+        try:
+            return export_sync(project_id, local_owner(), root)
+        except (KnowledgeError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.put("/api/projects/{project_id}/knowledge/{note_id}")
+    def project_knowledge_put(project_id: int, note_id: int, payload: KnowledgeNoteIn) -> dict:
+        from koddi.knowledge.service import sync_after_change
+        from koddi.projectmap import MapError
+        from koddi.projectmap.service import save_note
+
+        _, root = _map_project(project_id)
+        try:
+            # правка человека: агент её больше не перезаписывает
+            result = save_note(project_id, local_owner(), kind=payload.kind, title=payload.title, body=payload.body,
+                               targets=payload.targets, note=note_id, source="user", confidence="high",
+                               basis="edited by the user", root=root)
+        except MapError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        sync_after_change(project_id, local_owner(), root)
+        return result
+
+    @app.get("/api/projects/{project_id}/qa-commands")
+    def project_qa_commands(project_id: int) -> dict:
+        from koddi.quality.checks import user_checks
+
+        _map_project(project_id)
+        return {"commands": user_checks(project_id)}
+
+    @app.put("/api/projects/{project_id}/qa-commands")
+    def project_qa_commands_put(project_id: int, payload: QaCommandsIn) -> dict:
+        from koddi.quality.checks import set_user_checks
+
+        _map_project(project_id)
+        try:
+            return {"commands": set_user_checks(project_id, [item.model_dump() for item in payload.commands])}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/quality/runs")
+    def project_quality_runs(project_id: int, gate: str | None = None, limit: int = 30) -> dict:
+        from koddi.quality.contract import latest
+
+        _map_project(project_id)
+        return {"runs": latest(project_id, local_owner(), gate=gate, limit=limit)}
+
+    @app.get("/api/projects/{project_id}/quality/runs/{run_id}")
+    def project_quality_report(project_id: int, run_id: int) -> dict:
+        from koddi.quality.contract import report
+
+        _map_project(project_id)
+        found = report(run_id, local_owner(), project_id=project_id)
+        if found is None:
+            raise HTTPException(404, "Отчёт не найден")
+        return found
+
+    @app.post("/api/projects/{project_id}/quality/run")
+    def project_quality_run(project_id: int, payload: QualityRunIn) -> dict:
+        _, root = _map_project(project_id)
+        args: dict[str, Any] = {"scope": payload.scope}
+        if payload.gates:
+            args["gates"] = payload.gates
+        if payload.paths:
+            args["paths"] = payload.paths
+        if payload.coverage:
+            args["coverage"] = payload.coverage
+        if payload.max_mutants is not None:
+            args["max_mutants"] = payload.max_mutants
+        # запуск кнопкой - явное согласие человека, как подтверждение действия агента
+        result = ToolRunner(root, project_id).run("quality.run", args, approved=True)
+        if result.get("blocked"):
+            raise HTTPException(403, str(result.get("reason") or "действие запрещено профилем доступа"))
+        return result
+
+    @app.post("/api/projects/{project_id}/quality/decision")
+    def project_quality_decision(project_id: int, payload: QualityDecisionIn) -> dict:
+        from koddi.quality.metrics import set_decision
+
+        _map_project(project_id)
+        set_decision(project_id, local_owner(), payload.gate, payload.key, payload.decision)
+        log_event("INFO", "quality.decision", payload.gate,
+                  {"decision": payload.decision, "key": payload.key[:200], "reason": payload.reason[:200]})
+        return {"ok": True, "gate": payload.gate, "key": payload.key, "decision": payload.decision}
+
+    @app.get("/api/projects/{project_id}/quality/heatmap")
+    def project_quality_heatmap(project_id: int) -> dict:
+        from koddi.quality.architecture import heatmap
+
+        _map_project(project_id)
+        return {"files": heatmap(project_id, local_owner())}
+
+    @app.get("/api/projects/{project_id}/architecture")
+    def project_architecture(project_id: int) -> dict:
+        from koddi.quality.architecture import PROPOSAL_LABEL, get_policy, proposals
+
+        _map_project(project_id)
+        return {"policy": get_policy(project_id), "proposals": proposals(project_id, local_owner()),
+                "proposal_label": PROPOSAL_LABEL}
+
+    @app.put("/api/projects/{project_id}/architecture/policy")
+    def project_architecture_policy(project_id: int, payload: ArchitecturePolicyIn) -> dict:
+        from koddi.quality.architecture import set_policy
+
+        _map_project(project_id)
+        try:
+            policy = set_policy(project_id, payload.policy)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        log_event("INFO", "architecture.policy", "policy updated" if policy else "policy removed",
+                  {"project_id": project_id, "layers": len((policy or {}).get("layers", []))})
+        return {"policy": policy}
+
+    def _architecture_graph(project_id: int, root: Path):
+        from koddi.projectmap import MapError
+        from koddi.projectmap.service import ensure, graph
+
+        try:
+            ensure(project_id, root, wait=20.0)
+            return graph(project_id, local_owner())
+        except MapError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def _reader(root: Path):
+        from koddi.policy.paths import WorkspacePaths
+
+        access = WorkspacePaths(root)
+
+        def read(path: str) -> str | None:
+            target = root / path
+            if not access.accessible(target) or not target.is_file():
+                return None
+            return target.read_text(encoding="utf-8", errors="replace")
+
+        return read
+
+    @app.post("/api/projects/{project_id}/architecture/suggest")
+    def project_architecture_suggest(project_id: int) -> dict:
+        from koddi.quality.architecture import PROPOSAL_LABEL, evaluate_proposal, suggest_layers
+
+        _, root = _map_project(project_id)
+        graph = _architecture_graph(project_id, root)
+        suggestion = suggest_layers(graph)
+        evaluation = evaluate_proposal(graph, {"layers": suggestion["layers"]}, read=_reader(root)) \
+            if len(suggestion["layers"]) >= 2 else None
+        return {**suggestion, "label": PROPOSAL_LABEL, "evaluation": evaluation}
+
+    @app.post("/api/projects/{project_id}/architecture/proposals/{proposal_id}/evaluate")
+    def project_architecture_evaluate(project_id: int, proposal_id: int) -> dict:
+        from koddi.quality.architecture import evaluate_proposal, proposal
+
+        _, root = _map_project(project_id)
+        found = proposal(project_id, local_owner(), proposal_id)
+        if found is None:
+            raise HTTPException(404, "Предложение не найдено")
+        return evaluate_proposal(_architecture_graph(project_id, root), found["policy"], read=_reader(root))
+
+    @app.post("/api/projects/{project_id}/architecture/proposals/{proposal_id}/apply")
+    def project_architecture_apply(project_id: int, proposal_id: int) -> dict:
+        from koddi.quality.architecture import proposal, set_policy
+
+        _map_project(project_id)
+        found = proposal(project_id, local_owner(), proposal_id)
+        if found is None:
+            raise HTTPException(404, "Предложение не найдено")
+        policy = set_policy(project_id, found["policy"])
+        log_event("INFO", "architecture.policy", "proposal applied by the user", {"project_id": project_id,
+                                                                                 "proposal": proposal_id})
+        return {"policy": policy}
+
+    @app.delete("/api/projects/{project_id}/architecture/proposals/{proposal_id}")
+    def project_architecture_proposal_delete(project_id: int, proposal_id: int) -> dict:
+        from koddi.quality.architecture import delete_proposal
+
+        _map_project(project_id)
+        if not delete_proposal(project_id, local_owner(), proposal_id):
+            raise HTTPException(404, "Предложение не найдено")
+        return {"ok": True}
+
+    @app.get("/api/settings/quality-budget")
+    def quality_budget_get() -> dict:
+        from koddi.quality.budgets import BUDGETS, mode
+
+        return {"mode": mode(), "levels": {name: {key: value for key, value in item.items() if key != "blocking"}
+                                           for name, item in BUDGETS.items()}}
+
+    @app.post("/api/settings/quality-budget")
+    def quality_budget_set(payload: QualityBudgetIn) -> dict:
+        from koddi.quality.budgets import set_mode
+
+        return {"mode": set_mode(payload.mode)}
+
+    @app.post("/api/projects/{project_id}/worktrees/cleanup")
+    def project_worktrees_cleanup(project_id: int, payload: WorktreeCleanupIn) -> dict:
+        from koddi.changes.writer import active_keys
+        from koddi.projects.gitsafe import cleanup
+
+        _, root = _map_project(project_id)
+        if not (root / ".git").exists():
+            raise HTTPException(409, "Проект не в git")
+        result = cleanup(project_id, root, dry_run=payload.dry_run, active_paths=active_keys())
+        if not payload.dry_run:
+            log_event("INFO", "worktree.cleanup", str(project_id),
+                      {"removed": len(result["removed"]), "kept": len(result["kept"])})
+        return result
+
+    @app.get("/api/chats/{chat_id}/engineering")
+    def chat_engineering(chat_id: int, limit: int = 50) -> dict:
+        from koddi.quality import workflow
+
+        require_chat(chat_id)
+        turn_id, state = workflow.latest(chat_id)
+        quality = state.get("quality") or {}
+        return {"turn_id": turn_id, "workflow": workflow.summary(state) if state else {},
+                "quality": {gate: {key: item.get(key) for key in ("status", "run_id", "summary", "top")}
+                            for gate, item in quality.items()},
+                "decisions": workflow.decisions(chat_id, limit=limit)}
+
+    @app.get("/api/settings/ai-review")
+    def ai_review_get() -> dict:
+        from koddi.quality.reviewer import policy
+
+        return {"mode": policy()}
+
+    @app.post("/api/settings/ai-review")
+    def ai_review_set(payload: AiReviewIn) -> dict:
+        set_setting("ai_review", payload.mode)
+        return {"mode": payload.mode}
+
+    def _owned_turn(turn_id: int) -> dict:
+        with db() as conn:
+            row = conn.execute("SELECT t.id,t.chat_id,c.owner_id FROM turns t JOIN chats c ON c.id=t.chat_id WHERE t.id=?", (turn_id,)).fetchone()
+        if row is None or not owns(row["owner_id"], local_owner()):
+            raise HTTPException(404, "Ход не найден")
+        return dict(row)
+
+    @app.get("/api/turns/{turn_id}/quality")
+    def turn_quality(turn_id: int) -> dict:
+        from koddi.quality.gate import STATE_LABELS, load
+
+        _owned_turn(turn_id)
+        state = load(turn_id)
+        return {"turn_id": turn_id, **state, "label": STATE_LABELS.get(state["state"], state["state"])}
+
+    @app.get("/api/turns/{turn_id}/checkpoint")
+    def turn_checkpoint(turn_id: int) -> dict:
+        from koddi.changes.checkpoints import preview
+
+        _owned_turn(turn_id)
+        try:
+            return preview(turn_id, local_owner())
+        except (LookupError, ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/turns/{turn_id}/checkpoint/restore")
+    def turn_checkpoint_restore(turn_id: int, payload: CheckpointRestoreIn) -> dict:
+        from koddi.changes.checkpoints import restore
+
+        turn = _owned_turn(turn_id)
+        if agent_runs.active(turn["chat_id"]):
+            raise HTTPException(409, "Задача в этом чате ещё выполняется")
+        try:
+            result = restore(turn_id, local_owner(), payload.paths or None, force=payload.force)
+        except (LookupError, ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        log_event("INFO", "changes.checkpoint_restore", "turn restore requested",
+                  {key: result.get(key) for key in ("restored", "reason", "change_set_id", "forced")})
+        return result
 
     @app.get("/api/projects/{project_id}/files")
     def project_files(project_id: int, query: str = "") -> dict:
@@ -592,6 +1024,10 @@ def create_app() -> FastAPI:
     def projects_post(payload: ProjectIn) -> dict:
         project = add_project(payload.path, payload.name)
         log_event("INFO", "project.open", project["path"], {"project_id": project["id"]})
+        from koddi.projectmap import schedule
+
+        # карта собирается сразу при открытии, к первому вопросу агенту она обычно уже готова
+        schedule(project["id"], Path(project["path"]))
         return project
 
     @app.post("/api/projects/create-empty")
@@ -813,10 +1249,12 @@ def create_app() -> FastAPI:
     @app.post("/api/chats")
     async def chats_post(payload: ChatIn) -> dict:
         await guard_developer()
+        # чат без проекта работает в папке «Докки» в документах, в списке он остаётся в «Недавнем»
+        project_id = payload.project_id if payload.project_id is not None else home_project()["id"]
         with db() as conn:
             cur = conn.execute(
                 "INSERT INTO chats(project_id, title, mode, model, owner_id) VALUES (?, ?, ?, ?, ?)",
-                (payload.project_id, payload.title, payload.mode, payload.model, local_owner()),
+                (project_id, payload.title, payload.mode, payload.model, local_owner()),
             )
             chat_id = int(cur.lastrowid)
             row = conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
@@ -1110,7 +1548,11 @@ def create_app() -> FastAPI:
         if agent_runs.active(chat_id):
             raise HTTPException(status_code=409, detail="Задача уже выполняется")
         try:
-            skills_text, skill_names = skill_block(payload.skill_ids)
+            from koddi.skills.service import slash_skill
+
+            # «/плагин:команда текст» в начале сообщения подключает команду или навык плагина, как в Claude Code
+            slash = slash_skill(payload.content)
+            skills_text, skill_names = skill_block(list(dict.fromkeys([*payload.skill_ids, *([slash] if slash else [])])))
         except SkillError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         attachment_items = bind_attachments(chat_id, payload.attachment_ids)
@@ -1125,6 +1567,11 @@ def create_app() -> FastAPI:
                 "UPDATE chats SET mode=?, model=COALESCE(?, model), updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (normalized_mode, payload.model, chat_id),
             )
+        if chat["project_id"] is None:
+            # чат без проекта из прежних версий получает ту же папку, что новые
+            chat = {**dict(chat), "project_id": home_project()["id"]}
+            with db() as conn:
+                conn.execute("UPDATE chats SET project_id=? WHERE id=? AND project_id IS NULL", (chat["project_id"], chat_id))
         project = get_project(chat["project_id"])
         workspace = Path(project["path"]) if project else None
         if agent_runs.active(chat_id):
@@ -1293,7 +1740,7 @@ def create_app() -> FastAPI:
     async def remote_control_put(payload: dict) -> dict:
         from koddi.remote_control.bridge import LoginRequired
 
-        allowed = {"enabled", "prevent_sleep", "new_session_project_id"}
+        allowed = {"enabled", "prevent_sleep", "new_session_project_id", "share_new"}
         if not payload or set(payload) - allowed:
             raise HTTPException(422, "Неизвестные поля настройки")
         local_owner()
@@ -1702,6 +2149,32 @@ def create_app() -> FastAPI:
         except SkillError as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    @app.post("/api/skills/{skill_id}/enabled")
+    def skills_enabled(skill_id: int, payload: SkillEnabledIn) -> dict:
+        from koddi.skills.service import set_skill_enabled
+
+        try:
+            return set_skill_enabled(skill_id, payload.enabled)
+        except SkillError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/skills")
+    def project_skills_get(project_id: int) -> dict:
+        from koddi.skills.project import sync
+
+        _, root = _map_project(project_id)
+        return {"skills": sync(project_id, local_owner(), root)}
+
+    @app.post("/api/projects/{project_id}/skills/decision")
+    def project_skills_decide(project_id: int, payload: ProjectSkillDecisionIn) -> dict:
+        from koddi.skills.project import ProjectSkillError, decide
+
+        _, root = _map_project(project_id)
+        try:
+            return decide(project_id, local_owner(), root, payload.path, payload.sha256, payload.trust)
+        except ProjectSkillError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.post("/api/skills/{skill_id}/apply")
     def skills_apply(skill_id: int, payload: dict[str, str]) -> dict:
         return apply_skill(skill_id, payload.get("task", ""))
@@ -1758,7 +2231,29 @@ def create_app() -> FastAPI:
 
     @app.post("/api/browser/open")
     def api_browser_open(payload: dict[str, Any]) -> dict:
-        return browser_open(payload["url"], payload.get("project_id"))
+        """Ссылка из чата во вкладке браузерной панели; localhost - по той же политике, что у агента."""
+        from koddi.policy.grants import private_network_allowed
+        from koddi.policy.network import NetworkAccessError
+
+        url = payload.get("url")
+        project_id = payload.get("project_id")
+        if not isinstance(url, str) or not re.match(r"^https?://", url, re.I) or len(url) > 4096:
+            raise HTTPException(422, "нужна ссылка http(s)")
+        if project_id is not None and not isinstance(project_id, int):
+            raise HTTPException(422, "project_id: число")
+        project = get_project(project_id)
+        workspace = Path(project["path"]) if project else None
+        loopback = is_loopback_url(url)
+        if loopback and not local_preview_allowed(project_id if project else None, workspace):
+            raise HTTPException(403, "localhost открывается, когда в проекте запущен сервер")
+        try:
+            return browser_open(
+                url, project_id if project else None,
+                allow_private=private_network_allowed(project_id) if project else False,
+                local_preview=loopback, workspace=workspace,
+            )
+        except NetworkAccessError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/browser/live")
     def api_browser_live() -> list[dict]:
@@ -1770,6 +2265,21 @@ def create_app() -> FastAPI:
         if not result.get("ok"):
             raise HTTPException(404, result.get("error", "browser session not found"))
         return result
+
+    @app.get("/api/browser/{session_id}/frame.jpg")
+    def api_browser_frame_jpeg(session_id: int, quality: int = 60) -> Response:
+        from urllib.parse import quote
+
+        result = browser_frame(session_id, quality, raw=True)
+        if not result.get("ok"):
+            raise HTTPException(404, result.get("error", "browser session not found"))
+        # адрес и заголовок в заголовках ответа: так кадр идёт одним запросом без JSON и base64
+        return Response(result["data"], media_type="image/jpeg", headers={
+            "cache-control": "no-store",
+            "x-browser-url": quote(result["url"], safe=""),
+            "x-browser-title": quote(result["title"], safe=""),
+            "x-browser-size": f"{result['width']}x{result['height']}",
+        })
 
     @app.post("/api/browser/{session_id}/input")
     def api_browser_input(session_id: int, payload: dict[str, Any]) -> dict:

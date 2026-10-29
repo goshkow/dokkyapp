@@ -10,7 +10,7 @@ vi.mock('../ui/Select', () => ({ Select: ({ label }: { label: string }) => <span
 
 const status = (patch: Partial<RemoteStatus> = {}): RemoteStatus => ({
   enabled: true, state: 'online', message: '', name: 'MacBook', prevent_sleep: 'working', prevent_sleep_active: false,
-  power: 'ac', pending: 0, new_session_project_id: null, shared: { '5': true, '6': false }, site: 'https://example.com', ...patch,
+  power: 'ac', pending: 0, new_session_project_id: null, share_new: true, shared: { '5': true, '6': false }, site: 'https://example.com', ...patch,
 });
 const reply = (value: unknown) => new Response(JSON.stringify(value));
 
