@@ -1735,14 +1735,20 @@ def scenario_update_notice():
             notice.wait_for()
             check(notice.is_visible(), f"карточка не видна: {status}")
             check(not page.evaluate("document.documentElement.scrollWidth > innerWidth"), f"горизонтальная прокрутка: {status}")
+            check(notice.bounding_box()["height"] <= 40, f"строка обновления разрослась: {status}")
+            check(page.locator(".side-account .update-dot").count() == 0, f"точка у аватара дублирует строку: {status}")
             if status == "downloading":
-                check(notice.get_by_role("progressbar").get_attribute("aria-valuenow") == "50", "прогресс загрузки")
+                check("50%" in notice.inner_text(), "прогресс загрузки")
             elif status == "ready":
-                notice.get_by_role("button", name="Перезапустить").click()
+                check("Перезапустить" in notice.inner_text(), "подпись перезапуска")
+                notice.click()
+                page.wait_for_timeout(200)
                 check(any(call[1] == "/api/updates/install" for call in api.calls), "запрос установки")
             else:
-                notice.get_by_role("button").click()
-                check(notice.get_by_role("progressbar").get_attribute("aria-valuenow") == "50", f"запуск загрузки: {status}")
+                check(("Повторить" if status == "error" else "Обновить") in notice.inner_text(), f"подпись действия: {status}")
+                notice.click()
+                page.wait_for_timeout(200)
+                check("50%" in notice.inner_text(), f"запуск загрузки: {status}")
             check(not page.errors, f"ошибки карточки: {page.errors}")
 
 
@@ -1752,7 +1758,7 @@ def scenario_update_busy_agent():
     api.extra["/api/updates/status"] = lambda m, p, b, q: state
     api.extra["/api/updates/install"] = lambda m, p, b, q: (409, {"detail": "Агент ещё работает"}) if not (b or {}).get("force") else {"ok": True}
     with browser_page(api) as page:
-        page.locator(".side-update").get_by_role("button", name="Перезапустить").click()
+        page.locator(".side-update").click()
         dialog = page.get_by_role("dialog")
         dialog.wait_for()
         check("Агент ещё работает" in dialog.inner_text(), "нет предупреждения о работающем агенте")

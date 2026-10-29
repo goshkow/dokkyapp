@@ -25,12 +25,13 @@ COMMIT = "c" * 40
 OTHER_COMMIT = "d" * 40
 
 
-def build_tree(files: dict[str, bytes]) -> tuple[str, dict[str, list[dict]], list[dict]]:
+def build_tree(files: dict[str, bytes], executable=()) -> tuple[str, dict[str, list[dict]], list[dict]]:
     """Деревья в формате API GitHub: sha корня, непрямые списки по sha и рекурсивные списки."""
     entries = []
     dirs = set()
     for path, data in files.items():
-        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha(data), "size": len(data)})
+        mode = "100755" if path in executable else "100644"
+        entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob_sha(data), "size": len(data)})
         parts = path.split("/")
         for index in range(1, len(parts)):
             dirs.add("/".join(parts[:index]))
@@ -75,10 +76,11 @@ def tarball(files: dict[str, bytes], *, root: str = "repo-" + COMMIT, extra=None
 class FakeGitHub:
     """GitHub для тестов: API и codeload, с журналом запросов."""
 
-    def __init__(self, files: dict[str, bytes], *, archive: bytes | None = None, commit: str = COMMIT, redirect: str = ""):
+    def __init__(self, files: dict[str, bytes], *, archive: bytes | None = None, commit: str = COMMIT, redirect: str = "",
+                 executable=()):
         self.files = files
         self.commit = commit
-        self.root, self.trees, _ = build_tree(files)
+        self.root, self.trees, _ = build_tree(files, executable)
         self.archive = archive if archive is not None else tarball(files, root=f"repo-{commit}", comment=commit)
         self.redirect = redirect
         self.raw_override: dict[str, bytes] = {}
@@ -500,6 +502,28 @@ def test_tampered_or_extra_file_stops_hooks_and_mcp(env, monkeypatch):
     assert plugin_servers() == {} and turn_context(OWNER, None, workspace, 1, "hi") == []
     (folder / "bin/server").unlink()
     assert list(plugin_servers()) == ["plugin.tools.local"]
+    # служебные файлы Finder и Проводника не считаются подменой, а байткод - считается
+    (folder / ".DS_Store").write_bytes(b"\0")
+    (folder / "bin/Thumbs.db").write_bytes(b"\0")
+    assert list(plugin_servers()) == ["plugin.tools.local"]
+    (folder / "bin/__pycache__").mkdir()
+    (folder / "bin/__pycache__/x.cpython-311.pyc").write_bytes(b"\0")
+    assert plugin_servers() == {}
+
+
+def test_executable_mode_from_github_is_kept(env):
+    files = dict(PLUGIN, **{"hooks/check.sh": b"#!/bin/sh\nexit 0\n"})
+    install(fake=FakeGitHub(files, executable={"hooks/check.sh"}), pinned=COMMIT)
+    folder = next(next((env / "data" / "plugins").iterdir()).iterdir())
+    if os.name != "nt":
+        assert os.access(folder / "hooks/check.sh", os.X_OK)
+        assert not os.access(folder / "docs/guide.md", os.X_OK)
+
+
+def test_plugin_processes_do_not_write_bytecode(env):
+    from koddi.plugins.hooks import _env
+
+    assert _env(env, env)["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_mcp_view_shows_command_folder_and_masks_secrets(env):

@@ -332,3 +332,27 @@ def test_webengine_cache_is_separate_per_version(tmp_path):
     assert (legacy / "old").read_text(encoding="utf-8") == "cached"
     with pytest.raises(ValueError):
         webengine_cache_path(tmp_path, "../../outside")
+
+
+def test_old_webengine_caches_are_removed_after_update(tmp_path):
+    from koddi.desktop import prune_webengine_caches, webengine_cache_path
+
+    for path in (tmp_path / "cache", webengine_cache_path(tmp_path, "0.2.2"), webengine_cache_path(tmp_path, "0.2.3")):
+        path.mkdir(parents=True)
+        (path / "data").write_text("x", encoding="utf-8")
+    (tmp_path / "storage").mkdir()
+    keep = webengine_cache_path(tmp_path, "0.2.3")
+    prune_webengine_caches(tmp_path, keep)
+    assert not (tmp_path / "cache").exists() and not webengine_cache_path(tmp_path, "0.2.2").exists()
+    assert (keep / "data").exists() and (tmp_path / "storage").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="WKWebView только на macOS")
+def test_webkit_cache_is_cleared_once_per_version():
+    from koddi.desktop import native_web
+
+    native_web._cache_marker().unlink(missing_ok=True)
+    assert native_web.cache_outdated("0.2.3")
+    native_web.remember_cache_version("0.2.3")
+    assert not native_web.cache_outdated("0.2.3")
+    assert native_web.cache_outdated("0.2.4")

@@ -125,7 +125,7 @@ def get_plugin(plugin_id: int, owner: str) -> dict:
     return _public(_get(plugin_id, owner))
 
 
-def _write(base: Path, files: dict[str, bytes]) -> dict[str, str]:
+def _write(base: Path, files: dict[str, bytes], executable: set[str] | frozenset[str] = frozenset()) -> dict[str, str]:
     """Файлы плагина на диск: каждый путь ещё раз проверяется, что он внутри папки."""
     hashes = {}
     root = base.resolve()
@@ -137,6 +137,8 @@ def _write(base: Path, files: dict[str, bytes]) -> dict[str, str]:
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "xb") as handle:
                 handle.write(data)
+            if relative in executable and os.name != "nt":
+                target.chmod(target.stat().st_mode | 0o111)
         except OSError as exc:
             # на macOS и Windows имена без учёта регистра, а в Windows ещё и запрещённые знаки
             raise PluginSourceError(f"Файл {relative} нельзя сохранить на этом компьютере (имя совпадает с другим или недопустимо)") from exc
@@ -172,7 +174,7 @@ def install(
         backup = owner_dir / f".old-{token}"
         try:
             staging.mkdir()
-            hashes = _write(staging, snapshot.files)
+            hashes = _write(staging, snapshot.files, snapshot.executable)
             # старая версия на месте, пока новая не записана в базу: при сбое её возвращаем
             if final.exists():
                 os.replace(final, backup)
@@ -413,6 +415,8 @@ def plugin_file_text(plugin_id: int, file: str, owner: str) -> str:
 # ---------- исполняемые части: MCP и хуки, только с разрешения человека
 
 _checked: dict[int, tuple] = {}
+# служебные файлы Finder и Проводника появляются от простого открытия папки и ничего не исполняют
+OS_JUNK = {".ds_store", "thumbs.db", "desktop.ini"}
 
 
 def _files_intact(item: dict) -> bool:
@@ -428,6 +432,8 @@ def _files_intact(item: dict) -> bool:
         for path in sorted(base.rglob("*")):
             if path.is_symlink():
                 return False
+            if path.name.lower() in OS_JUNK and path.relative_to(base).as_posix() not in item["files"]:
+                continue
             if path.is_file():
                 stat = path.stat()
                 found[path.relative_to(base).as_posix()] = (stat.st_size, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns)
@@ -487,6 +493,8 @@ def mcp_servers(owner: str) -> dict[str, dict]:
             config = _substitute(server, root)
             if config.get("command") and not config.get("cwd"):
                 config["cwd"] = root
+            if config.get("command") and isinstance(config.get("env") or {}, dict):
+                config["env"] = {**(config.get("env") or {}), "PYTHONDONTWRITEBYTECODE": "1"}
             servers[f"plugin.{item['name']}.{name}"] = config
     return servers
 

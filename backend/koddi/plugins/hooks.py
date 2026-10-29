@@ -30,6 +30,8 @@ SAFE_ENV = {
 def _env(root: Path, workspace: Path) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key.upper() in SAFE_ENV or key.startswith("LC_")}
     env.update({"CLAUDE_PLUGIN_ROOT": str(root), "CLAUDE_PROJECT_DIR": str(workspace), "DOKKY_PLUGIN_ROOT": str(root)})
+    # иначе python-хук оставит __pycache__ в папке плагина и проверка целостности выключит плагин
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 
@@ -113,12 +115,13 @@ def run_command(command: str, *, root: Path, workspace: Path, payload: dict, tim
 
 def _execute(command: str, *, root: Path, workspace: Path, payload: dict, timeout: int) -> tuple[int, str, str]:
     from koddi.hidden_process import hidden_flags
-    from koddi.tools.runner import shell_argv
+    from koddi.quality.checks import _check_shell_argv
 
     command = expand_root(command, root)
     try:
+        # обычный PowerShell отдаёт 1 вместо кода внешней команды, а запрет хука - это ровно код 2
         result = subprocess.run(
-            shell_argv(command), cwd=workspace, input=json.dumps(payload), capture_output=True, text=True,
+            _check_shell_argv(command), cwd=workspace, input=json.dumps(payload), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=min(max(timeout, 1), MAX_TIMEOUT), env=_env(root, workspace),
             creationflags=hidden_flags(), check=False,
         )

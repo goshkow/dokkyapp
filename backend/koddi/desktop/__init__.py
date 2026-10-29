@@ -15,6 +15,19 @@ def webengine_cache_path(storage: Path, version: str) -> Path:
     return storage / "cache-versions" / version
 
 
+def prune_webengine_caches(storage: Path, keep: Path) -> None:
+    """Кэши прежних версий только занимают место: после обновления их уже никто не читает."""
+    import shutil
+
+    targets = [storage / "cache"]
+    versions = storage / "cache-versions"
+    if versions.is_dir():
+        targets += [item for item in versions.iterdir() if item != keep]
+    for item in targets:
+        if item.is_dir() and not item.is_symlink():
+            shutil.rmtree(item, ignore_errors=True)
+
+
 def render_mode_file() -> Path:
     from koddi.config import data_dir
 

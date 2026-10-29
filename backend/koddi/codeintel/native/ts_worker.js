@@ -19,6 +19,11 @@ function inside(file) {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+// TypeScript отдаёт пути через / и на Windows, где path.sep - обратный слэш
+function vendored(file) {
+  return file.replace(/\\/g, '/').includes('/node_modules/');
+}
+
 function version(file) {
   try {
     const stat = fs.statSync(file);
@@ -152,7 +157,7 @@ function location(fileName, span, extra) {
     end_line: end.line + 1,
     end_character: end.character,
     text: lineText.trim().slice(0, 200),
-    external: !inside(fileName) || fileName.includes(`${path.sep}node_modules${path.sep}`),
+    external: !inside(fileName) || vendored(fileName),
     ...extra,
   };
 }
@@ -234,7 +239,7 @@ const handlers = {
     if (!project) return { symbols: [] };
     const items = project.service.getNavigateToItems(query, 200, undefined, true) || [];
     return {
-      symbols: items.filter((item) => inside(item.fileName) && !item.fileName.includes(`${path.sep}node_modules${path.sep}`))
+      symbols: items.filter((item) => inside(item.fileName) && !vendored(item.fileName))
         .map((item) => location(item.fileName, item.textSpan, {
           name: item.name, kind: item.kind, container: item.containerName || null, match: item.matchKind,
         })),

@@ -37,8 +37,10 @@ def git_env() -> dict[str, str]:
 def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     from koddi.tools.runner import HIDDEN_SUBPROCESS
 
-    return subprocess.run(["git", *SAFE_CONFIG, *args], cwd=root, capture_output=True, text=True, timeout=timeout,
-                          check=False, env=git_env(), creationflags=HIDDEN_SUBPROCESS)
+    # git пишет UTF-8, а text=True без кодировки на Windows читает в ANSI-кодовой странице
+    return subprocess.run(["git", *SAFE_CONFIG, *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=timeout, check=False, env=git_env(),
+                          creationflags=HIDDEN_SUBPROCESS)
 
 
 def branch_error(branch: str) -> str | None:

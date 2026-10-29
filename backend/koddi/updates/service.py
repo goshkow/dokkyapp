@@ -104,6 +104,17 @@ def macos_bundle() -> Path | None:
     return None
 
 
+def _writable(folder: Path) -> bool:
+    if os.name != "nt":
+        return os.access(folder, os.W_OK)
+    # на Windows os.access смотрит только атрибут «только чтение», а права папки - нет
+    try:
+        with tempfile.NamedTemporaryFile(dir=folder, prefix=".dokky-write-"):
+            return True
+    except OSError:
+        return False
+
+
 def install_kind() -> tuple[str | None, str]:
     """(вид файла на сервере, способ установки) или (None, причина)."""
     if not is_packaged_build():
@@ -123,8 +134,8 @@ def install_kind() -> tuple[str | None, str]:
         if root is None:
             return "setup", "manual"
         if (root / "portable.dokky").is_file():
-            return ("portable", "portable") if os.access(root, os.W_OK) else ("portable", "manual")
-        if _program_files(root) or not os.access(root, os.W_OK):
+            return ("portable", "portable") if _writable(root) else ("portable", "manual")
+        if _program_files(root) or not _writable(root):
             return "setup", "setup_elevated"
         return "setup", "setup"
     return None, "unsupported"
@@ -524,14 +535,18 @@ class Updater:
     def _launch(prepared: dict) -> None:
         method = prepared["method"]
         log = updates_dir() / "install.log"
-        if method == "bundle":
-            _spawn_posix(_macos_script(Path(prepared["stage"]), prepared["version"], log))
-        elif method == "portable":
-            _spawn_windows(_windows_portable_script(Path(prepared["stage"]), prepared["version"], log))
-        elif method in {"setup", "setup_elevated"}:
-            _spawn_windows(_windows_setup_script(Path(prepared["file"]), prepared["version"], log, silent=method == "setup"))
-        else:
-            raise UpdateError("Эту версию нужно обновить вручную: скачайте установщик на сайте", "manual")
+        try:
+            if method == "bundle":
+                _spawn_posix(_macos_script(Path(prepared["stage"]), prepared["version"], log))
+            elif method == "portable":
+                _spawn_windows(_windows_portable_script(Path(prepared["stage"]), prepared["version"], log))
+            elif method in {"setup", "setup_elevated"}:
+                _spawn_windows(_windows_setup_script(Path(prepared["file"]), prepared["version"], log,
+                                                     silent=method == "setup"))
+            else:
+                raise UpdateError("Эту версию нужно обновить вручную: скачайте установщик на сайте", "manual")
+        except OSError as exc:
+            raise UpdateError("Не удалось запустить установку: нет доступа к папке программы", "launch_failed") from exc
 
 
 # подпись пока ad-hoc, без Team ID: требуем хотя бы свой идентификатор подписи

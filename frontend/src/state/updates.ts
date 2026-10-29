@@ -28,6 +28,36 @@ export const useUpdates = <S,>(selector: (state: UpdateState | null) => S): S =>
 export const hasUpdate = (state: UpdateState | null): boolean =>
   Boolean(state && ['available', 'downloading', 'preparing', 'ready'].includes(state.status));
 
+export type NoticeAction = 'download' | 'restart' | 'settings' | null;
+
+/** Строка обновления внизу меню: что написать, что показать справа и что сделает нажатие. null - строки нет. */
+export interface UpdateNotice {
+  tone: 'accent' | 'busy' | 'danger';
+  title: string;
+  hint: string;
+  action: NoticeAction;
+  percent: number | null;
+}
+
+const AUTOMATIC: UpdateMethod[] = ['bundle', 'portable', 'setup', 'setup_elevated'];
+
+export function updateNotice(state: UpdateState | null): UpdateNotice | null {
+  const version = state?.available?.version;
+  if (!state || !version) return null;
+  const install: NoticeAction = AUTOMATIC.includes(state.method) ? 'download' : 'settings';
+  const percent = state.progress && state.progress.total > 0
+    ? Math.max(0, Math.min(100, Math.round(state.progress.done / state.progress.total * 100))) : null;
+  switch (state.status) {
+    case 'available': return { tone: 'accent', title: `Докки ${version}`, hint: 'Обновить', action: install, percent: null };
+    case 'downloading': return { tone: 'busy', title: `Загрузка ${version}`, hint: percent === null ? '' : `${percent}%`, action: 'settings', percent: percent ?? 0 };
+    case 'preparing': return { tone: 'busy', title: `Подготовка ${version}`, hint: '', action: 'settings', percent: null };
+    case 'ready': return { tone: 'accent', title: `Докки ${version}`, hint: 'Перезапустить', action: 'restart', percent: null };
+    case 'installing': return { tone: 'busy', title: 'Перезапуск…', hint: '', action: null, percent: null };
+    case 'error': return { tone: 'danger', title: 'Не обновилось', hint: 'Повторить', action: install, percent: null };
+    default: return null;
+  }
+}
+
 export function applyUpdateState(value: unknown): void {
   if (value && typeof value === 'object' && 'status' in value) updates.set({ value: value as UpdateState });
 }
@@ -70,7 +100,7 @@ let announced = '';
 export function announceReady(version: string): void {
   if (!version || announced === version) return;
   announced = version;
-  notify(`Обновление ${version} готово. Перезапустите Докки в настройках, раздел «Обновления»`);
+  notify(`Обновление ${version} готово: «Перезапустить» внизу меню`);
 }
 
 export async function restartForUpdate(): Promise<void> {

@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from koddi.desktop import software_rendering, webengine_cache_path
+from koddi.desktop import prune_webengine_caches, software_rendering, webengine_cache_path
 from koddi.desktop import server as desktop_server
 
 
@@ -700,7 +700,9 @@ class WebHost(QMainWindow):
         self.web_profile.setPersistentStoragePath(str(storage / "storage"))
         from koddi import __version__
 
-        self.web_profile.setCachePath(str(webengine_cache_path(storage, __version__)))
+        cache = webengine_cache_path(storage, __version__)
+        prune_webengine_caches(storage, cache)
+        self.web_profile.setCachePath(str(cache))
         self.web_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         self.view.setPage(KoddiPage(self.web_profile, self))
         profile = self.view.page().profile()

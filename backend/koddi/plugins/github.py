@@ -77,6 +77,8 @@ class Snapshot:
     license: str
     files: dict[str, bytes] = field(default_factory=dict)
     skipped_links: list[str] = field(default_factory=list)
+    # режим 100755 из дерева: GitHub отдаёт файлы без прав, а хук вида ${CLAUDE_PLUGIN_ROOT}/x.sh без них не запустится
+    executable: set[str] = field(default_factory=set)
 
 
 def clean_path(value: str) -> str:
@@ -501,7 +503,8 @@ def fetch(source: Source, *, pinned: str | None = None, github: GitHub | None = 
             if blobs and not files:
                 raise PluginSourceError("Архив GitHub неполный")
         return Snapshot(source=source, commit=commit, tree=sub, default_branch=info["default_branch"],
-                        license=info["license"], files=files, skipped_links=links)
+                        license=info["license"], files=files, skipped_links=links,
+                        executable={entry["path"] for entry in blobs if entry["mode"] == "100755"})
     finally:
         if github is None:
             client.close()

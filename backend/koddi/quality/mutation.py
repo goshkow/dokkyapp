@@ -236,12 +236,15 @@ def _remove(path: Path) -> None:
         path.unlink(missing_ok=True)
         return
     # ссылки на node_modules снимаем до удаления папки, чтобы rmtree не пошёл по ним
+    from koddi.policy.paths import _is_reparse_point
+
     for current, dirs, _files in os.walk(path):
         for name in list(dirs):
             target = Path(current) / name
-            if target.is_symlink() or (hasattr(target, "is_junction") and target.is_junction()):
+            # в Python 3.11 нет Path.is_junction: junction из mklink /J виден только по атрибуту reparse point
+            if _is_reparse_point(target):
                 try:
-                    os.unlink(target) if not (hasattr(target, "is_junction") and target.is_junction()) else os.rmdir(target)
+                    os.unlink(target) if target.is_symlink() and os.name != "nt" else os.rmdir(target)
                 except OSError:
                     pass
                 dirs.remove(name)
@@ -387,9 +390,13 @@ def _python_for(check) -> str | None:
     first = check.argv[0] if check.argv else ""
     if first and Path(first).name.lower().startswith("python"):
         return first
-    candidate = Path(first).with_name("python") if first else None
-    if candidate and candidate.exists():
-        return str(candidate)
+    if not first:
+        return None
+    # в venv на Windows рядом лежит Scripts\python.exe, без расширения файла нет
+    for name in ("python", "python.exe"):
+        candidate = Path(first).with_name(name)
+        if candidate.exists():
+            return str(candidate)
     return None
 
 

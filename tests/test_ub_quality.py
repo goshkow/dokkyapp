@@ -240,6 +240,27 @@ def test_mutation_outside_budget_is_skipped(mutation_project):
     assert _mutate(mutation_project, max_mutants=0).status == "skipped"
 
 
+def test_python_for_finds_windows_venv_interpreter(tmp_path):
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    (scripts / "pytest.exe").write_bytes(b"")
+    (scripts / "python.exe").write_bytes(b"")
+    check = SimpleNamespace(argv=[str(scripts / "pytest.exe"), "-q"])
+    assert mutation._python_for(check) == str(scripts / "python.exe")
+    assert mutation._python_for(SimpleNamespace(argv=[str(tmp_path / "bin" / "pytest")])) is None
+
+
+def test_overlay_removal_unlinks_links_without_entering_them(tmp_path):
+    outside = tmp_path / "node_modules"
+    (outside / "pkg").mkdir(parents=True)
+    (outside / "pkg" / "index.js").write_text("x")
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / "node_modules").symlink_to(outside, target_is_directory=True)
+    mutation._remove(overlay)
+    assert not overlay.exists() and (outside / "pkg" / "index.js").is_file()
+
+
 def test_python_mutants_compile_and_stay_inside_changed_functions():
     text = "X = 1\n\n" + CALC
     functions = functions_of("calc.py", text)

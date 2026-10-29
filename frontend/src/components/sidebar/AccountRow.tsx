@@ -1,4 +1,4 @@
-import { ChartNoAxesColumn, CircleUserRound, CreditCard, Gauge, RefreshCw, Settings, SquarePen } from 'lucide-react';
+import { ArrowDown, ChartNoAxesColumn, CircleAlert, CircleUserRound, CreditCard, Gauge, LoaderCircle, RefreshCw, RotateCw, Settings, SquarePen } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { cloudPath } from '../../lib/api';
 import type { Limits } from '../../lib/types';
@@ -9,7 +9,7 @@ import { downloadUpdate, loadLimits, newChat, openBilling, openSettings, restart
 import { guarded } from '../../state/overlay';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
-import { hasUpdate, useUpdates } from '../../state/updates';
+import { hasUpdate, updateNotice, useUpdates } from '../../state/updates';
 import { Popover } from '../ui/Popover';
 
 const avatarCache = new Map<string, string>();
@@ -90,17 +90,27 @@ function LimitRows({ limits, loading, error }: { limits: Limits | null; loading:
 
 function UpdateNotice() {
   const state = useUpdates((value) => value);
-  if (!state?.available || !['available', 'downloading', 'preparing', 'ready', 'installing', 'error'].includes(state.status)) return null;
-  const automatic = ['bundle', 'portable', 'setup', 'setup_elevated'].includes(state.method);
-  const working = ['downloading', 'preparing', 'installing'].includes(state.status);
-  const progress = state.progress ? Math.min(100, Math.round(state.progress.done / Math.max(1, state.progress.total) * 100)) : null;
-  const label = state.status === 'ready' ? 'Обновление готово' : state.status === 'downloading' ? `Загрузка${progress === null ? '…' : ` · ${progress}%`}` : state.status === 'preparing' ? 'Подготовка…' : state.status === 'installing' ? 'Перезапуск…' : state.status === 'error' ? 'Не удалось обновить' : `Докки ${state.available.version}`;
+  const notice = updateNotice(state);
+  if (!notice || !state) return null;
+  const run = notice.action === 'restart' ? restartForUpdate : notice.action === 'download' ? downloadUpdate : () => openSettings('updates');
+  const icon = notice.tone === 'danger' ? <CircleAlert aria-hidden="true" />
+    : notice.percent !== null ? <UsageRing percent={notice.percent} />
+    : notice.tone === 'busy' ? <LoaderCircle className="side-update-spin" aria-hidden="true" />
+    : notice.action === 'restart' ? <RotateCw aria-hidden="true" /> : <ArrowDown aria-hidden="true" />;
   return (
-    <div className="side-update" aria-live="polite">
-      <div className="side-update-text"><strong>{label}</strong><span>{state.status === 'error' ? state.error : state.status === 'ready' ? `Версия ${state.available.version}` : 'Обновление Докки'}</span></div>
-      {working ? <RefreshCw className="side-update-spinner" aria-hidden="true" /> : <button type="button" onClick={guarded(state.status === 'ready' ? restartForUpdate : automatic ? downloadUpdate : () => openSettings('updates'))}>{state.status === 'ready' ? 'Перезапустить' : state.status === 'error' ? 'Повторить' : 'Обновить'}</button>}
-      {state.status === 'downloading' && progress !== null && <div className="side-update-progress" role="progressbar" aria-label="Загрузка обновления" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{ width: `${progress}%` }} /></div>}
-    </div>
+    <button
+      type="button"
+      className="side-update"
+      data-tone={notice.tone}
+      aria-live="polite"
+      disabled={notice.action === null}
+      title={notice.tone === 'danger' ? state.error || undefined : undefined}
+      onClick={guarded(run)}
+    >
+      <span className="side-update-icon">{icon}</span>
+      <span className="side-update-title">{notice.title}</span>
+      {notice.hint && <span className="side-update-hint">{notice.hint}</span>}
+    </button>
   );
 }
 
@@ -131,7 +141,7 @@ export function AccountRow() {
         <div className="side-id">
           <button id="connection-badge" type="button" className="side-account" data-state={account?.authenticated ? 'ready' : 'offline'} aria-label="Открыть настройки" onClick={() => openSettings('general')}>
             <span className="avatar">{avatar ? <img src={avatar} alt="" draggable={false} /> : letter}</span>
-            {update && <i className="update-dot" data-state={update.status} role="img" aria-label="Доступно обновление" />}
+            {update && !updateNotice(update) && <i className="update-dot" data-state={update.status} role="img" aria-label="Доступно обновление" />}
             <span className="account-name"><b>{name}</b></span>
           </button>
           <button

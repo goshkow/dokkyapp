@@ -1633,6 +1633,8 @@ class ToolRunner:
             [command[0], *SAFE_CONFIG, *command[1:]],
             cwd=workspace,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=30,
             check=False,

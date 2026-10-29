@@ -223,19 +223,65 @@ def _objc_classes():
     return _classes
 
 
+def _cache_marker() -> Path:
+    from koddi.config import data_dir
+
+    return data_dir() / "webkit-cache-version"
+
+
+def cache_outdated(version: str) -> bool:
+    """HTTP-кэш WebKit остался от другой версии: адрес страницы постоянный, и без очистки после обновления окно
+    открылось бы со старыми app.js и app.css (у файлов интерфейса нет хэшей в именах)."""
+    try:
+        return _cache_marker().read_text(encoding="utf-8").strip() != version
+    except OSError:
+        return True
+
+
+def remember_cache_version(version: str) -> None:
+    try:
+        _cache_marker().write_text(version, encoding="utf-8")
+    except OSError as exc:
+        LOGGER.warning("webkit cache marker not saved: %s", exc)
+
+
 class _Environment:
-    """Общие для всех видов окна: хранилище данных (localStorage, IndexedDB) и сессионная кука."""
+    """Общие для всех видов окна: хранилище данных (localStorage, IndexedDB), сессионная кука и чистый HTTP-кэш."""
 
     def __init__(self, host):
         from Foundation import NSUUID
         from WebKit import WKWebsiteDataStore
 
+        from koddi import __version__
+
         self.host = host
         self.store = WKWebsiteDataStore.dataStoreForIdentifier_(NSUUID.alloc().initWithUUIDString_(str(STORE_ID).upper()))
-        self.ready = host.session_key is None
         self.waiting: list = []
-        if not self.ready:
+        # страница грузится, только когда готово всё: кука сессии и (после обновления) пустой кэш
+        self.pending = int(host.session_key is not None) + int(cache_outdated(__version__))
+        self.ready = self.pending == 0
+        if host.session_key is not None:
             self._set_cookie()
+        if cache_outdated(__version__):
+            self._clear_cache(__version__)
+
+    def _clear_cache(self, version: str) -> None:
+        import WebKit
+        from Foundation import NSDate, NSSet
+
+        # только кэши: localStorage, IndexedDB и куки (чаты, настройки, вход) остаются
+        kinds = NSSet.setWithArray_([
+            getattr(WebKit, name) for name in (
+                "WKWebsiteDataTypeDiskCache", "WKWebsiteDataTypeMemoryCache", "WKWebsiteDataTypeFetchCache",
+                "WKWebsiteDataTypeOfflineWebApplicationCache", "WKWebsiteDataTypeServiceWorkerRegistrations",
+            ) if hasattr(WebKit, name)
+        ])
+
+        def cleared():
+            remember_cache_version(version)
+            self._step_done()
+
+        self.store.removeDataOfTypes_modifiedSince_completionHandler_(kinds, NSDate.distantPast(), cleared)
 
     def _set_cookie(self) -> None:
         from Foundation import NSHTTPCookie
@@ -246,9 +292,12 @@ class _Environment:
             "Name": COOKIE, "Value": self.host.session_key, "Domain": base.host(), "Path": "/",
             "HttpOnly": "TRUE", "SameSite": "strict",
         })
-        self.store.httpCookieStore().setCookie_completionHandler_(cookie, self._cookie_ready)
+        self.store.httpCookieStore().setCookie_completionHandler_(cookie, self._step_done)
 
-    def _cookie_ready(self) -> None:
+    def _step_done(self) -> None:
+        self.pending -= 1
+        if self.pending > 0:
+            return
         self.ready = True
         waiting, self.waiting = self.waiting, []
         for call in waiting:
