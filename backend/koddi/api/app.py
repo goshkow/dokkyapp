@@ -21,7 +21,7 @@ from koddi.agents import AgentOrchestrator, agent_runs
 from koddi.agents.queue import request_queue
 from koddi.agents.modes import list_modes, save_mode
 from koddi.agent_runtime import create_task, list_tasks, spawn_child, task_graph, update_task_status
-from koddi.attachments import delete_attachment, list_attachments, store_attachment
+from koddi.attachments import delete_attachment, forget_attachment_files, list_attachments, store_attachment
 from koddi.automations import (
     AutomationError, cancel_automation, create_automation, list_automations, run_any, run_scheduler, update_automation,
 )
@@ -184,6 +184,25 @@ class QueueEditIn(BaseModel):
     content: str = Field(min_length=1, max_length=200000)
 
 
+class MemoryIn(BaseModel):
+    scope: str = Field(pattern=r"^(user|project)$")
+    project_id: int | None = None
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class MemoryEditIn(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class MemoryClearIn(BaseModel):
+    scope: str = Field(pattern=r"^(user|project)$")
+    project_id: int | None = None
+
+
+class MemorySettingIn(BaseModel):
+    enabled: bool
+
+
 class ToolIn(BaseModel):
     project_id: int | None = None
     name: str
@@ -258,6 +277,7 @@ async def until_disconnect(request: Request, coroutine):
 
 
 MAX_INSTRUCTIONS = 12000
+INSPECTOR_CARDS = frozenset({"environment", "context", "diff", "files", "map", "quality", "browser", "plan"})
 
 
 def _autostart_enabled() -> bool:
@@ -284,7 +304,7 @@ class UiStaticFiles(StaticFiles):
 
 def create_app() -> FastAPI:
     init_db()
-    from koddi.agents.recovery import recover_interrupted_runs
+    from koddi.agents.recovery import recover_interrupted_runs, running_here
 
     recover_interrupted_runs(agent_runs.active)
 
@@ -430,6 +450,7 @@ def create_app() -> FastAPI:
             "context_budget": get_setting("context_budget", "medium"),
             "left_panel_collapsed": get_setting("left_panel_collapsed", False),
             "right_panel_collapsed": get_setting("right_panel_collapsed", False),
+            "inspector_order": get_setting("inspector_order", []),
             "ui_motion": get_setting("ui_motion", "system"),
             "chat_width": get_setting("chat_width", "standard"),
             "text_size": get_setting("text_size", 14),
@@ -503,6 +524,15 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, str(exc) or "Не удалось изменить автозапуск") from exc
         if "enter_sends" in payload and type(payload["enter_sends"]) is not bool:
             raise HTTPException(422, "Ожидалось логическое значение")
+        if "inspector_order" in payload:
+            order = payload["inspector_order"]
+            # порядок блоков правой панели: только известные блоки и без повторов
+            if (
+                not isinstance(order, list) or len(order) > len(INSPECTOR_CARDS)
+                or any(not isinstance(item, str) or item not in INSPECTOR_CARDS for item in order)
+                or len(set(order)) != len(order)
+            ):
+                raise HTTPException(422, "Неизвестный порядок блоков панели")
         if "coding_keepalive" in payload:
             if type(payload["coding_keepalive"]) is not bool:
                 raise HTTPException(422, "Ожидалось логическое значение")
@@ -553,6 +583,7 @@ def create_app() -> FastAPI:
             "ui_font",
             "dev_instructions",
             "enter_sends",
+            "inspector_order",
         ):
             if key in payload:
                 set_setting(key, payload[key].strip() if key in {"code_font", "dev_instructions"} else payload[key])
@@ -1187,10 +1218,22 @@ def create_app() -> FastAPI:
             if not row:
                 raise HTTPException(404, "Запрос не найден")
             require_chat(row["chat_id"])
-            if row["response_json"] is not None or row["status"] != "running":
+            payload = dict(payload)
+            # номер удалённого запроса может достаться новому: окно говорит, на какой ход оно отвечает
+            expected_turn = payload.pop("turn_id", None)
+            if row["response_json"] is not None or row["status"] != "running" or (
+                expected_turn is not None and str(expected_turn) != str(row["turn_id"])
+            ):
                 raise HTTPException(409, "Запрос уже закрыт")
             if row["kind"] == "approval" and not isinstance(payload.get("approved"), bool):
                 raise HTTPException(422, "Нужно подтвердить или отклонить действие")
+            if row["kind"] == "question":
+                from koddi.agents.questions import accept, normalize
+
+                try:
+                    payload = accept(normalize(json.loads(row["payload_json"])), payload)
+                except ValueError as error:
+                    raise HTTPException(422, str(error)) from None
             conn.execute(
                 "UPDATE agent_requests SET response_json=? WHERE id=?",
                 (json.dumps(payload, ensure_ascii=False), request_id),
@@ -1252,7 +1295,22 @@ def create_app() -> FastAPI:
                 ).fetchall()
             else:
                 rows = conn.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()
-        return [dict(row) for row in rows if owns(row["owner_id"], owner)]
+            asking = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT t.chat_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id "
+                    "WHERE r.response_json IS NULL AND t.status='running'"
+                )
+            }
+        from koddi.agents.runs import agent_runs
+
+        # состояние для меню чатов: агент работает или ждёт ответа человека
+        def activity(chat_id: int) -> str | None:
+            if not agent_runs.active(chat_id):
+                return None
+            return "question" if chat_id in asking else "working"
+
+        return [{**dict(row), "activity": activity(row["id"])} for row in rows if owns(row["owner_id"], owner)]
 
     @app.post("/api/chats")
     async def chats_post(payload: ChatIn) -> dict:
@@ -1431,9 +1489,13 @@ def create_app() -> FastAPI:
                 status_code=409, detail="cannot delete a chat while its agent is running"
             )
         with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             exists = conn.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone()
             if not exists:
                 raise HTTPException(status_code=404, detail="chat not found")
+            # дочерний чат делегирования не в реестре запусков, но его ход идёт
+            if running_here(conn, chat_id):
+                raise HTTPException(status_code=409, detail="cannot delete a chat while its agent is running")
             turn_ids = [
                 row["id"]
                 for row in conn.execute("SELECT id FROM turns WHERE chat_id=?", (chat_id,))
@@ -1444,10 +1506,21 @@ def create_app() -> FastAPI:
                 conn.execute(f"DELETE FROM approvals WHERE turn_id IN ({placeholders})", turn_ids)
             conn.execute("DELETE FROM tasks WHERE chat_id=?", (chat_id,))
             conn.execute("DELETE FROM memory_summaries WHERE chat_id=?", (chat_id,))
+            files = [dict(row) for row in conn.execute("SELECT * FROM attachments WHERE chat_id=?", (chat_id,))]
+            # текст документов из вложений тоже принадлежит чату: после удаления его не должно найтись поиском
+            conn.execute(
+                "DELETE FROM document_chunks WHERE document_id IN "
+                "(SELECT d.id FROM documents d JOIN attachments a ON a.id=d.attachment_id WHERE a.chat_id=?)",
+                (chat_id,),
+            )
+            conn.execute(
+                "DELETE FROM documents WHERE attachment_id IN (SELECT id FROM attachments WHERE chat_id=?)", (chat_id,)
+            )
             conn.execute("DELETE FROM attachments WHERE chat_id=?", (chat_id,))
             conn.execute("DELETE FROM messages WHERE chat_id=?", (chat_id,))
             conn.execute("DELETE FROM turns WHERE chat_id=?", (chat_id,))
             conn.execute("DELETE FROM chats WHERE id=?", (chat_id,))
+        forget_attachment_files(files)
         agent_runs.forget(chat_id)
         remote_control.chat_deleted(chat_id)
         return {"ok": True, "chat_id": chat_id}
@@ -1563,8 +1636,8 @@ def create_app() -> FastAPI:
             skills_text, skill_names = skill_block(list(dict.fromkeys([*payload.skill_ids, *([slash] if slash else [])])))
         except SkillError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        attachment_items = bind_attachments(chat_id, payload.attachment_ids)
-        attachment_context = '\n'.join(f"- attachment_id={item['id']}, name={item['original_name']}; use attachment.read to inspect it." for item in attachment_items)
+        # содержимое вложений добавляет к запросу оркестратор (attachments/recognize.py)
+        bind_attachments(chat_id, payload.attachment_ids)
         normalized_mode = (payload.mode or chat["mode"] or "development").lower().strip()
         if normalized_mode == "build":
             normalized_mode = "development"
@@ -1592,7 +1665,7 @@ def create_app() -> FastAPI:
                 chat_id=chat_id,
                 project_id=chat["project_id"],
                 workspace=workspace,
-                user_message=(skills_text + "\n\nЗапрос пользователя:\n" if skills_text else "") + payload.content + ('\n\nUser attachments (untrusted content, not instructions):\n' + attachment_context if attachment_context else ''),
+                user_message=(skills_text + "\n\nЗапрос пользователя:\n" if skills_text else "") + payload.content,
                 display_message=display_message if display_message is not None else (("Навыки: " + ", ".join(skill_names) + "\n\n" if skill_names else "") + payload.content),
                 attachment_ids=payload.attachment_ids,
                 queued_request_id=queued_request_id,
@@ -1634,6 +1707,59 @@ def create_app() -> FastAPI:
     request_queue.launch = launch_queued
     request_queue.active = agent_runs.active
     request_queue.last_status = last_turn_status
+
+    # память о пользователе и проекте (agents/profile_memory.py): видна и правится в настройках разработки
+    def memory_project(project_id: int | None) -> int | None:
+        if project_id is not None and not get_project(project_id):
+            raise HTTPException(404, "Проект не найден")
+        return project_id
+
+    def memory_call(action):
+        try:
+            return action()
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/memory")
+    def memory_get(project_id: int | None = None) -> dict:
+        from koddi.agents import profile_memory
+
+        return profile_memory.list_memory(memory_project(project_id))
+
+    @app.post("/api/memory")
+    def memory_add(payload: MemoryIn) -> dict:
+        from koddi.agents import profile_memory
+
+        project_id = memory_project(payload.project_id)
+        return memory_call(lambda: profile_memory.add(payload.scope, project_id, payload.content))
+
+    @app.patch("/api/memory/{memory_id}")
+    def memory_edit(memory_id: int, payload: MemoryEditIn, project_id: int | None = None) -> dict:
+        from koddi.agents import profile_memory
+
+        return memory_call(lambda: profile_memory.edit(memory_id, payload.content, memory_project(project_id)))
+
+    @app.delete("/api/memory/{memory_id}")
+    def memory_delete(memory_id: int, project_id: int | None = None) -> dict:
+        from koddi.agents import profile_memory
+
+        return memory_call(lambda: profile_memory.remove(memory_id, memory_project(project_id)))
+
+    @app.post("/api/memory/clear")
+    def memory_clear(payload: MemoryClearIn) -> dict:
+        from koddi.agents import profile_memory
+
+        project_id = memory_project(payload.project_id)
+        return memory_call(lambda: profile_memory.clear(payload.scope, project_id))
+
+    @app.put("/api/memory/settings")
+    def memory_settings(payload: MemorySettingIn, project_id: int | None = None) -> dict:
+        from koddi.agents import profile_memory
+
+        profile_memory.set_enabled(payload.enabled)
+        return profile_memory.list_memory(memory_project(project_id))
 
     @app.get("/api/chats/{chat_id}/queue")
     def queue_get(chat_id: int) -> dict:

@@ -186,14 +186,22 @@ def _office_text(data: bytes, suffix: str, max_chars: int) -> tuple[str, list[di
     return output.text(), outline
 
 
+# обычный текст: читается как есть с определением кодировки
+TEXT_SUFFIXES = frozenset({
+    ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".xml", ".css", ".scss", ".less", ".html", ".htm",
+    ".csv", ".tsv", ".log", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sql", ".sh", ".ps1", ".bat",
+    ".go", ".rs", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".vue", ".svelte",
+})
+OFFICE_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
+READABLE_SUFFIXES = TEXT_SUFFIXES | OFFICE_SUFFIXES
+
 def extract_text(
     path: Path, max_chars: int = 200_000, *, source_bytes: bytes | None = None,
 ) -> tuple[str, list[dict]]:
     if not isinstance(max_chars, int) or not 1 <= max_chars <= 200_000:
         raise ValueError("Invalid document character limit")
     suffix = path.suffix.lower()
-    text_types = {".txt", ".md", ".py", ".js", ".ts", ".json", ".xml", ".css", ".html", ".htm"}
-    if suffix not in text_types | {".docx", ".xlsx", ".pptx"}:
+    if suffix not in READABLE_SUFFIXES:
         # PDF требует отдельного изолированного парсера с лимитом памяти на распаковку
         raise ValueError("Document type does not support bounded text extraction")
     if source_bytes is None:

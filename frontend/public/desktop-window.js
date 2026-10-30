@@ -26,14 +26,20 @@
     // окно тянется за всю верхнюю полосу, кроме кнопок, полей, диалогов и меню
     const skip = 'button,a,input,select,textarea,label,summary,dialog,[role="button"],[role="combobox"],[role="tab"],[role="menu"],[role="dialog"],[contenteditable="true"],.popover,.ai-product-switch,.desktop-window-controls';
     const isDrag = event => event.clientY < 46 && !event.target.closest?.(skip);
+    // системное перетаскивание съедает отпускание кнопки, и страница считает мышь зажатой: пока не пришло
+    // отпускание или новое нажатие, выделение текста под курсором запрещено
+    let dragging = false;
+    document.addEventListener('selectstart', event => { if (dragging) event.preventDefault(); }, true);
+    document.addEventListener('mouseup', () => { dragging = false; }, true);
     // без preventDefault страница начинает выделять текст под курсором, пока окно тянется
     document.addEventListener('mousedown', event => {
-      if (event.button !== 0 || !isDrag(event)) return;
+      dragging = event.button === 0 && isDrag(event);
+      if (!dragging) return;
       event.preventDefault();
       getSelection()?.removeAllRanges();
     });
     document.addEventListener('pointerdown', event => {
-      if (event.button === 0 && isDrag(event)) { getSelection()?.removeAllRanges(); bridge.command('move'); }
+      if (event.button === 0 && isDrag(event)) { dragging = true; getSelection()?.removeAllRanges(); bridge.command('move'); }
     });
     document.addEventListener('dblclick', event => {
       if (event.button === 0 && isDrag(event)) bridge.command('maximize');

@@ -28,10 +28,21 @@ html.glass .site-surface { background: transparent; }
 .surface-icon { display: inline-block; flex: none; width: 18px; height: 18px; background: currentColor; mask: var(--icon) center / contain no-repeat; -webkit-mask: var(--icon) center / contain no-repeat; }
 .side-tile .surface-badge { position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .side-tile { position: relative; }
+/* иконки разделов сайта в плитках того же размера, что свои иконки плиток */
+.side-tile .surface-icon { width: 21px; height: 21px; }
 .chat-item .surface-icon { width: 14px; height: 14px; margin-right: 6px; opacity: 0.72; vertical-align: -2px; }
 .chat-row .chat-state { display: inline-grid; place-items: center; width: 14px; height: 14px; flex: none; }
 .chat-row .chat-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .chat-row .chat-working .spinner { width: 11px; height: 11px; }
+/* агент ждёт ответа: оранжевая точка «дышит», как на сайте Докки */
+.chat-row .chat-question-dot { width: 8px; height: 8px; border-radius: 50%; background: #f5a142; box-shadow: 0 0 0 0 color-mix(in srgb, #f5a142 55%, transparent); animation: chat-question-breathe 2.4s ease-in-out infinite; }
+@keyframes chat-question-breathe {
+  0%, 100% { transform: scale(0.86); opacity: 0.72; box-shadow: 0 0 0 0 color-mix(in srgb, #f5a142 45%, transparent); }
+  50% { transform: scale(1.08); opacity: 1; box-shadow: 0 0 0 4px color-mix(in srgb, #f5a142 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .chat-row .chat-question-dot { animation: none; opacity: 1; } }
+html[data-motion="reduced"] .chat-row .chat-question-dot { animation: none; opacity: 1; }
+.chat-row .chat-done .chat-unread-dot { background: #6daeff; }
 .surface-multi-off { display: grid; gap: 8px; margin: 4px 8px 8px; padding: 12px; border-radius: 12px; background: var(--hover); color: var(--muted); font-size: var(--fs-13); }
 .surface-multi-off b { color: var(--text); }
 

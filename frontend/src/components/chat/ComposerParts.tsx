@@ -17,6 +17,7 @@ import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 import { Popover } from '../ui/Popover';
 import { summarizeApproval } from '../../lib/approval';
+import { AgentQuestions } from './AgentQuestions';
 import { ApprovalPreview } from './ApprovalPreview';
 
 /** Подменю «Навыки»: выбранный навык подключается к запросу и уходит агенту как указание пользователя. */
@@ -183,7 +184,6 @@ function ActionCard({ action }: { action: ActionSummary }) {
 }
 
 function Question({ request }: { request: AgentRequest }) {
-  const [answer, setAnswer] = useState('');
   const [expanded, setExpanded] = useState(false);
   const payload = request.payload;
   const action = payload.action;
@@ -191,32 +191,23 @@ function Question({ request }: { request: AgentRequest }) {
   const command = payload.name === 'shell.run' || payload.name === 'shell__run';
   return (
     <section className="approval-panel">
-      <b>{request.kind === 'approval' && <ShieldCheck aria-hidden="true" />}{request.kind === 'approval' ? (command ? 'Докки хочет выполнить команду' : `Докки хочет ${summary.title.toLocaleLowerCase('ru-RU')}`) : 'Уточнение от агента'}</b>
+      <b><ShieldCheck aria-hidden="true" />{command ? 'Докки хочет выполнить команду' : `Докки хочет ${summary.title.toLocaleLowerCase('ru-RU')}`}</b>
       {payload.question && <p className="approval-question">{payload.question}</p>}
-      {request.kind === 'approval' && <>
-        <p className="approval-scope">{action?.target || summary.scope[0]}{!action?.target && summary.scope.length > 1 ? ` · ещё ${summary.scope.length - 1}` : ''}</p>
-        {action?.dangerous && <p className="approval-note warn">Команда может удалить данные или изменить систему.</p>}
-        {Boolean(action?.outside_project?.length) && <p className="approval-note">Файл вне папки проекта; изменение сохранится для отката.</p>}
-        {payload.review?.reason && <p className="approval-note approval-review">{payload.review.available ? 'Докки: ' : ''}{payload.review.reason}</p>}
-        <details className="approval-details" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-          <summary>{expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}<span>Что будет сделано</span></summary>
-          <div className="approval-details-scroll" tabIndex={0} aria-label="Список действий и файлов">
-            {action ? <ActionCard action={action} /> : <><ul>{summary.scope.map((item) => <li key={item}>{item}</li>)}</ul>{summary.details.map((item) => <p key={item}>{item}</p>)}</>}
-            {expanded && action?.kind !== 'command' && <ApprovalPreview name={payload.name} args={payload.arguments} id={String(request.id)} />}
-          </div>
-        </details>
-      </>}
-      {request.kind === 'approval' ? (
-        <div className="actions">
-          <button type="button" className="secondary" onClick={guarded(() => respondRequest(request, { approved: false }))}><X aria-hidden="true" /><span>Отклонить</span></button>
-          <button type="button" className="primary" onClick={guarded(() => respondRequest(request, { approved: true }))}><Check aria-hidden="true" /><span>Разрешить</span></button>
+      <p className="approval-scope">{action?.target || summary.scope[0]}{!action?.target && summary.scope.length > 1 ? ` · ещё ${summary.scope.length - 1}` : ''}</p>
+      {action?.dangerous && <p className="approval-note warn">Команда может удалить данные или изменить систему.</p>}
+      {Boolean(action?.outside_project?.length) && <p className="approval-note">Файл вне папки проекта; изменение сохранится для отката.</p>}
+      {payload.review?.reason && <p className="approval-note approval-review">{payload.review.available ? 'Докки: ' : ''}{payload.review.reason}</p>}
+      <details className="approval-details" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary>{expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}<span>Что будет сделано</span></summary>
+        <div className="approval-details-scroll" tabIndex={0} aria-label="Список действий и файлов">
+          {action ? <ActionCard action={action} /> : <><ul>{summary.scope.map((item) => <li key={item}>{item}</li>)}</ul>{summary.details.map((item) => <p key={item}>{item}</p>)}</>}
+          {expanded && action?.kind !== 'command' && <ApprovalPreview name={payload.name} args={payload.arguments} id={String(request.id)} />}
         </div>
-      ) : (
-        <form onSubmit={(event) => { event.preventDefault(); guarded(() => respondRequest(request, { answer }))(); }}>
-          <input name="answer" required placeholder="Ваш ответ" value={answer} onChange={(event) => setAnswer(event.target.value)} />
-          <button type="submit" className="primary"><span>Ответить</span></button>
-        </form>
-      )}
+      </details>
+      <div className="actions">
+        <button type="button" className="secondary" onClick={guarded(() => respondRequest(request, { approved: false }))}><X aria-hidden="true" /><span>Отклонить</span></button>
+        <button type="button" className="primary" onClick={guarded(() => respondRequest(request, { approved: true }))}><Check aria-hidden="true" /><span>Разрешить</span></button>
+      </div>
     </section>
   );
 }
@@ -225,7 +216,9 @@ export function RequestPanel() {
   const requests = useChat((s) => s.requests);
   return (
     <section id="request-panel" className="request-panel" aria-label="Запрос подтверждения" aria-live="polite" hidden={!requests.length}>
-      {requests.map((request) => <Question key={String(request.id)} request={request} />)}
+      {requests.map((request) => (request.kind === 'approval'
+        ? <Question key={String(request.id)} request={request} />
+        : <AgentQuestions key={String(request.id)} request={request} />))}
     </section>
   );
 }

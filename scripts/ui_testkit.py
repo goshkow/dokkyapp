@@ -58,7 +58,7 @@ class Api:
             "theme": "dark", "ui_motion": "full", "chat_width": "standard", "text_size": 14, "ui_surface": "classic", "code_font": "Consolas",
             "enter_sends": True, "permission_profile": "ask", "private_network": False, "selected_model": "dokky-code",
             "left_panel_collapsed": False, "right_panel_collapsed": False, "coding_reasoning_mode": "light", "coding_keepalive": False,
-            "ui_font": "inter", "dev_instructions": "", "launch_at_login": False,
+            "ui_font": "inter", "dev_instructions": "", "launch_at_login": False, "inspector_order": [],
         }
         self.models = [{
             "tag": "dokky-code", "name": "Докки", "source": "remote", "context_tokens": 200000,

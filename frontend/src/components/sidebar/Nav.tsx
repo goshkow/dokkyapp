@@ -1,5 +1,5 @@
 import {
-  CalendarClock, Ellipsis, FolderOpen, GitPullRequest, Globe, Images, Layers, ListChecks, MessagesSquare, ScrollText, Search, SquareTerminal, X,
+  CalendarClock, Ellipsis, FolderOpen, GitPullRequest, Globe, Images, Layers, ListChecks, MessageCircle, ScrollText, Search, SquareTerminal, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { guarded } from '../../state/overlay';
@@ -108,7 +108,7 @@ export function Nav() {
       key: 'mode',
       id: 'scope-toggle',
       label: development ? 'Вернуться в режим чата' : 'Режим разработки',
-      icon: development ? <MessagesSquare aria-hidden="true" /> : <SquareTerminal aria-hidden="true" />,
+      icon: development ? <MessageCircle aria-hidden="true" /> : <SquareTerminal aria-hidden="true" />,
       pressed: development,
       run: guarded(() => switchScope(development ? 'chat' : 'development')),
     },

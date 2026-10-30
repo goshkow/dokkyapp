@@ -50,3 +50,21 @@ def test_failed_migration_rolls_back_schema_and_version(tmp_path, monkeypatch):
     storage_db.init_db()
     with storage_db.db() as conn:
         assert "probe" in {row["name"] for row in conn.execute("PRAGMA table_info(chats)")}
+
+
+def test_writer_waits_for_busy_database_instead_of_failing(tmp_path, monkeypatch):
+    database = tmp_path / "busy.sqlite3"
+    monkeypatch.setattr(storage_db, "DB_PATH", database)
+    monkeypatch.setattr(storage_db, "BUSY_TIMEOUT_SECONDS", 3)
+    storage_db.init_db()
+    holder = sqlite3.connect(database, check_same_thread=False, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO settings(key, value_json) VALUES ('busy_probe', '1')")
+    import threading
+
+    threading.Timer(0.6, lambda: holder.execute("COMMIT")).start()
+    # без таймаута ожидания вторая запись сразу получала бы database is locked
+    storage_db.set_setting("busy_probe_2", 2)
+    holder.close()
+    assert storage_db.get_setting("busy_probe") == 1
+    assert storage_db.get_setting("busy_probe_2") == 2

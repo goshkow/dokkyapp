@@ -202,3 +202,25 @@ def test_mac_menu_matches_layout(app, monkeypatch):
         assert len(icon.menu.itemArray()) == 5
     finally:
         icon.remove()
+
+
+def test_focus_view_moves_keyboard_only_for_known_roles(monkeypatch):
+    # singleShot выполняем сразу: проверяется, какие роли доходят до хоста
+    monkeypatch.setattr(web_host.QTimer, "singleShot", lambda _ms, fn: fn())
+    bridge, _ = bridge_for("http://127.0.0.1:8877/ui/?role=composer", role="composer")
+    asked = []
+    bridge.host.focus_view = asked.append
+    for role in ("sidebar", "main", "inspector", "composer", "product", "evil"):
+        web_host.WindowBridge.focusView(bridge, role)
+    assert asked == ["sidebar", "main", "inspector", "composer"]
+    foreign, _ = bridge_for("https://evil.example/", role="main")
+    foreign.host.focus_view = asked.append
+    web_host.WindowBridge.focusView(foreign, "sidebar")
+    assert asked == ["sidebar", "main", "inspector", "composer"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="нативный мост есть только на macOS")
+def test_mac_bridge_exposes_focus_view():
+    from koddi.desktop import native_web
+
+    assert "focusView" in native_web.BRIDGE_METHODS

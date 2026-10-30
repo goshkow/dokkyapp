@@ -13,8 +13,11 @@ export async function showRequests(): Promise<void> {
   chat.set({ requests: requests.filter((request) => request.chat_id === undefined || String(request.chat_id) === String(id)) });
 }
 
-export async function respondRequest(request: AgentRequest, payload: { approved?: boolean; answer?: string }): Promise<void> {
-  await post(`/api/agent/requests/${request.id}/respond`, payload);
+export async function respondRequest(
+  request: AgentRequest,
+  payload: { approved?: boolean; answer?: string; answers?: { selected: string[]; text: string }[] },
+): Promise<void> {
+  await post(`/api/agent/requests/${request.id}/respond`, request.turn_id == null ? payload : { ...payload, turn_id: request.turn_id });
   chat.set({ requests: chat.get().requests.filter((item) => item.id !== request.id) });
   setStatus('Продолжаю выполнение…');
 }

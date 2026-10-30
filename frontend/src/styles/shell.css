@@ -82,3 +82,30 @@
 
 .desktop-window .desktop-window-controls { background: transparent; height: var(--controls-h); }
 .desktop-window .desktop-window-controls button { height: var(--controls-h); }
+
+/* ручка ширины правой панели: узкая полоса у её левого края, видна при наведении */
+.panel-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 5;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.panel-resizer:hover::after, .panel-resizer:focus-visible::after, html.panel-resizing .panel-resizer::after { opacity: 0.6; }
+.panel-resizer:focus-visible { outline: none; }
+html.panel-resizing, html.panel-resizing * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }

@@ -92,7 +92,9 @@ export function Composer() {
         className="icon-button jump-bottom"
         title="К последнему сообщению"
         aria-label="К последнему сообщению"
-        hidden={!jump}
+        data-shown={jump || undefined}
+        aria-hidden={!jump || undefined}
+        tabIndex={jump ? undefined : -1}
         onClick={() => { releaseFeed(); document.getElementById('feed')?.scrollTo({ top: document.getElementById('feed')!.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' }); }}
       >
         <ArrowDown aria-hidden="true" />

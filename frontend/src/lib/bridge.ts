@@ -16,6 +16,8 @@ interface WindowBridge {
   panels?(payload: string): void;
   /** Клавиатуру нужно вернуть в поле ввода: у него свой веб-вид над лентой. */
   focusComposer?(payload: string): void;
+  /** Навигация с клавиатуры: клавиатура переходит в вид роли (main, sidebar, inspector, composer). */
+  focusView?(role: string): void;
   /** Тариф и лимиты для меню значка в трее (JSON). */
   tray?(payload: string): void;
   /** Список выбора системным меню поверх плиток стекла; ответ приходит в koddiPopupResult (JSON). */

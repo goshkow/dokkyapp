@@ -4,6 +4,7 @@ import { copyText } from '../../lib/clipboard';
 import { relativeTime, serverTime } from '../../lib/format';
 import { applyOrder, moveChat } from '../../lib/order';
 import type { Chat, Project } from '../../lib/types';
+import { useChatMark } from '../../state/chatActivity';
 import { useData } from '../../state/data';
 import { guarded } from '../../state/overlay';
 import { refreshRemote, setChatShared, sharedOnPhone, useRemote } from '../../state/remoteControl';
@@ -13,6 +14,7 @@ import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 import { Popover } from '../ui/Popover';
 import { Sentinel } from '../ui/Sentinel';
+import { ChatState } from './ChatState';
 
 const stamp = (chat: Chat): number => serverTime(chat.updated_at ?? chat.created_at) || 0;
 const byRecent = (a: Chat, b: Chat) => stamp(b) - stamp(a) || Number(b.id) - Number(a.id);
@@ -54,6 +56,7 @@ const ChatRow = memo(function ChatRow({ chat, selected, now, group, siblings, on
   const more = useRef<HTMLButtonElement>(null);
   const [drop, setDrop] = useState<'before' | 'after' | null>(null);
   const when = relativeTime(chat.updated_at ?? chat.created_at, now);
+  const mark = useChatMark(chat.id);
 
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!dragged || dragged === String(chat.id)) return;
@@ -94,7 +97,8 @@ const ChatRow = memo(function ChatRow({ chat, selected, now, group, siblings, on
         <span>{chat.title}</span>
       </button>
       {chat.pinned && <Pin className="chat-pin" size={12} aria-label="Закреплён" />}
-      {when && <time className="chat-time" dateTime={chat.updated_at}>{when}</time>}
+      <ChatState mark={mark} slot="time" />
+      {when && !mark && <time className="chat-time" dateTime={chat.updated_at}>{when}</time>}
       <button ref={more} type="button" className="icon-btn chat-more" aria-label="Действия с чатом" onClick={() => onMenu({ chat, anchor: more })}>
         <Ellipsis aria-hidden="true" />
       </button>

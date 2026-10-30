@@ -60,3 +60,4 @@ backend/koddi/computer_use/native/dokky-computer-helper*
 # установщик Windows: промежуточная сборка .NET
 installer/*/bin/
 installer/*/obj/
+*.profraw

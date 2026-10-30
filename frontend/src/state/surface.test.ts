@@ -9,7 +9,7 @@ const ORIGIN = 'https://dokky.goshkow.com';
 const svg = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"/>')}`;
 
 const chat = (id: number, extra: Record<string, unknown> = {}) => ({
-  id, group: 'recent', title: `Чат ${id}`, active: false, working: false, unread: false, draft: false,
+  id, group: 'recent', title: `Чат ${id}`, active: false, working: false, asking: false, unread: false, draft: false,
   kinds: [], icon: '', remote: null, workspace: '', actions: [], ...extra,
 });
 

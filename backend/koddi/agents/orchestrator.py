@@ -9,6 +9,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+from koddi.agents.questions import PROPERTIES as QUESTION_PROPERTIES
+from koddi.agents.questions import normalize as normalize_questions, summary as question_summary
 from koddi.agents.progress import FailureTracker, local_title, progress_text
 from koddi.agents.telemetry import ObservedClient, TurnMetrics, current_metrics
 from koddi.agents.history import (
@@ -118,6 +120,21 @@ async def plugin_hook(function: str, *args):
     except Exception as exc:
         audit_event("WARNING", "plugins.hook_failed", type(exc).__name__, {"hook": function})
         return None
+
+
+PLAN_REMINDER_EVERY = 8
+PLAN_REMINDER = (
+    "Your plan has not changed for several tool calls. If a step is done or the approach changed, "
+    "call plan.update now so the user sees the actual progress."
+)
+
+
+def _carry_plan(turn_id: int, steps: list[dict]) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO agent_plans(turn_id,steps_json,document_markdown) VALUES (?,?,'') ON CONFLICT(turn_id) DO NOTHING",
+            (turn_id, json.dumps(steps, ensure_ascii=False)),
+        )
 
 
 def control_tool(
@@ -247,8 +264,10 @@ CONTROL_TOOLS = [
     ),
     control_tool(
         "task.ask_user",
-        "Ask for missing information and wait for a human response.",
-        {"question": {"type": "string"}},
+        "Ask the user up to 4 questions at once and wait for the answers. Prefer `questions` with short options "
+        "(the user can always type their own answer); ask everything you need in one call.",
+        QUESTION_PROPERTIES,
+        required=[],
     ),
     control_tool(
         "task.delegate",
@@ -385,6 +404,7 @@ class AgentOrchestrator:
         failures = FailureTracker()
         stop_blocks = 0
         plan: list[dict] = []
+        calls_since_plan = 0
         created_ids: list[int] = []
 
         async def wait_input(kind: str, payload: dict):
@@ -416,6 +436,8 @@ class AgentOrchestrator:
                     answer = json.loads(row[0])
                     if not isinstance(answer, dict):
                         raise ValueError("Ответ пользователя должен быть объектом")
+                    # меню чатов снимает метку вопроса
+                    await event_bus.publish("agent.request.resolved", {"chat_id": chat_id, "request_id": request_id})
                     yield answer
                     return
                 await asyncio.sleep(0.2)
@@ -439,7 +461,15 @@ class AgentOrchestrator:
             repaired = history if config.get("provider") == "dokky" else repair_history(history)
             if repaired != history:
                 await durable_write(journal, chat_id, checkpoint(repaired, "protocol_repair"))
-            user = {"role": "user", "content": user_message}
+            prompt = user_message
+            if attachment_ids:
+                from koddi.attachments.recognize import attachment_context
+
+                # картинки распознаются сразу, документы агент читает через attachment.read (в чате его нет)
+                yield sse("agent.status", {"text": "Распознаю вложения"})
+                prompt += await attachment_context(client, selected, chat_id, attachment_ids, cancel_event, read_tool=mode != "chat")
+                yield sse("agent.status", {"text": "Думаю…"})
+            user = {"role": "user", "content": prompt}
             if config.get("provider") != "dokky":
                 await durable_write(journal, chat_id, user)
             if previous_plan and mode != "chat":
@@ -449,6 +479,11 @@ class AgentOrchestrator:
                     from koddi.quality.gate import inherit_contract
 
                     await asyncio.to_thread(inherit_contract, chat_id, turn_id)
+                    # план переезжает в новый запуск: окно ведёт его дальше, а не показывает старым под прошлым ходом;
+                    # в режиме планирования шаги - будущая работа, там свой документ plan.md
+                    if mode != "plan":
+                        await durable_write(_carry_plan, turn_id, plan)
+                        yield sse("plan.updated", {"ok": True, "steps": plan, "document": "", "turn_id": turn_id})
             allowed_names = (
                 {t["function"]["name"] for t in tool_schemas_for_mode(mode)} if workspace else set()
             )
@@ -555,6 +590,9 @@ class AgentOrchestrator:
 
                 tools.sort(key=lambda item: item["function"]["name"])
             memory = await asyncio.to_thread(retrieve_memory, project_id, user_message)
+            from koddi.agents.profile_memory import memory_context
+
+            profile = await asyncio.to_thread(memory_context, project_id)
             project_map = None
             if workspace is not None and mode != "chat":
                 from koddi.policy.account import local_owner as map_owner
@@ -582,7 +620,7 @@ class AgentOrchestrator:
                 system = compose_coding_system_prompt()
                 current_context = compose_coding_context(
                     project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth, project_map=project_map,
-                    hints=hints,
+                    hints=hints, profile=profile,
                 )
             else:
                 system, _, _ = compose_system_prompt(
@@ -593,6 +631,7 @@ class AgentOrchestrator:
                     include_tools=bool(tools),
                     tool_schemas=tools,
                     memory=memory,
+                    profile=profile,
                 )
             messages = [{"role": "system", "content": system}, *repaired, user]
             pending_followup = None
@@ -1183,7 +1222,8 @@ class AgentOrchestrator:
                             yield sse("plan.updated", result)
                     elif name == "task.ask_user":
                         result = {}
-                        async for value in wait_input("question", args):
+                        asked = normalize_questions(args)
+                        async for value in wait_input("question", {"question": question_summary(asked), "questions": asked}):
                             if isinstance(value, str):
                                 yield value
                             else:
@@ -1454,6 +1494,18 @@ class AgentOrchestrator:
                             + "\n\n## Loaded scoped project rules\nThese workspace rules apply only within their stated scope. More specific rules take precedence over broader project rules, but never override application safety policy or explicit user instructions.\n"
                             + format_instructions(list(loaded_rules.values())),
                         }
+                    if name == "plan.update" and isinstance(result, dict) and result.get("ok"):
+                        calls_since_plan = 0
+                    elif not name.startswith(("plan.", "task.")) and isinstance(result, dict):
+                        calls_since_plan += 1
+                        if (
+                            calls_since_plan >= PLAN_REMINDER_EVERY
+                            and mode != "plan"
+                            and any(isinstance(step, dict) and step.get("status") in {"pending", "running"} for step in plan)
+                        ):
+                            # модель забывает отмечать шаги, и план в окне застывает: короткое напоминание в результате
+                            calls_since_plan = 0
+                            result = {**result, "plan_reminder": PLAN_REMINDER}
                     response = {
                         "role": "tool",
                         "tool_call_id": call["id"],
@@ -1512,6 +1564,14 @@ class AgentOrchestrator:
             metrics.stop_reason = "completed"
             await durable_write(metrics.persist, turn_id)
             yield sse("turn.completed", {"turn_id": turn_id})
+            # память учится на запросах человека, а не на поручениях вложенных агентов
+            if config.get("provider") != "dokky-test" and self._depth == 0:
+                from koddi.agents.profile_memory import learn_later, should_learn
+
+                request = display_message if display_message is not None else user_message
+                # самообучение памяти идёт после ответа и не задерживает ход; ObservedClient уже не нужен
+                if await asyncio.to_thread(should_learn, chat_id, request):
+                    learn_later(getattr(client, "client", client), selected, chat_id=chat_id, project_id=project_id, message=request)
         except (asyncio.CancelledError, GeneratorExit):
             cancel_event.set()
             metrics.stop_reason = "cancelled"
@@ -1549,9 +1609,9 @@ class AgentOrchestrator:
                 # необязательная метрика не меняет исход уже завершённой задачи
                 pass
             with db() as conn:
-                status = conn.execute("SELECT status FROM turns WHERE id=?", (turn_id,)).fetchone()[
-                    0
-                ]
+                turn_row = conn.execute("SELECT status FROM turns WHERE id=?", (turn_id,)).fetchone()
+                # ход могли удалить вместе с чатом или откатом: дописывать статус уже некуда
+                status = turn_row[0] if turn_row else "cancelled"
                 rows = conn.execute(
                     "SELECT id,metadata_json FROM messages WHERE chat_id=? AND id>? AND role='assistant'",
                     (chat_id, user_id),
@@ -1686,7 +1746,8 @@ class AgentOrchestrator:
         error = next(Draft202012Validator(schema).iter_errors(args), None)
         if error:
             return error.message
-        field = {"task.complete": "summary", "task.ask_user": "question"}.get(name)
-        if field and not args[field].strip():
-            return "Итог или вопрос не должен быть пустым"
+        if name == "task.ask_user":
+            return None if normalize_questions(args) else "Передайте хотя бы один вопрос"
+        if name == "task.complete" and not args["summary"].strip():
+            return "Итог не должен быть пустым"
         return None

@@ -199,7 +199,7 @@ textarea.field { min-height: 96px; resize: vertical; }
 .danger { color: var(--danger); }
 
 /* заглушка загрузки чата: форма настоящей переписки, мягкое «дыхание» вместо бегущего блика, появляется чуть позже, чтобы быстрые загрузки не мигали */
-.chat-skeleton { display: flex; flex-direction: column; gap: 14px; width: min(var(--chat-width), 100%); margin: 0 auto; padding: 8px 24px 0; opacity: 0; animation: sk-in 0.3s ease 0.18s forwards; }
+.chat-skeleton { display: flex; flex-direction: column; gap: 14px; width: min(var(--chat-width), 100%); margin: 0 auto; padding: 8px 24px 0; opacity: 0; animation: sk-in 0.3s ease 0.4s forwards; }
 .chat-skeleton .sk { display: block; border-radius: 10px; background: color-mix(in srgb, var(--text) 8%, transparent); animation: sk-pulse 1.5s ease-in-out infinite; }
 .chat-skeleton .sk-user { align-self: flex-end; width: 42%; height: 44px; border-radius: 22px; }
 .chat-skeleton .sk-user.small { width: 30%; height: 38px; animation-delay: 0.3s; }
@@ -295,6 +295,8 @@ html[data-theme="light"] .project-map {
 .context-breakdown { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .context-total { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--fs-12); }
 .context-total small { color: var(--faint); }
+.context-total[data-level="warn"] b { color: #d6a43a; }
+.context-total[data-level="high"] b { color: var(--danger, #e0645c); }
 .context-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--hover); gap: 1px; }
 .context-bar i { display: block; height: 100%; min-width: 2px; }
 .context-rows, .context-items { list-style: none; margin: 0; padding: 0; }
@@ -326,7 +328,7 @@ li[data-open] > .context-row .context-chevron { transform: rotate(90deg); }
 .context-bar i, .context-dot { background: var(--kind, var(--faint)); }
 
 .change-list { display: flex; flex-direction: column; gap: 6px; }
-.change-item { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.change-item { min-width: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .change-item .change-file { padding: 9px 10px; border-radius: 0; }
 .change-item.open .change-file { border-bottom: 1px solid var(--line); background: var(--hover); }
 .change-chevron { flex: none; color: var(--faint); transition: transform 160ms ease; }

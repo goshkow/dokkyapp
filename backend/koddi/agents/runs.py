@@ -181,6 +181,16 @@ class ActiveRun:
         self.subscribers.clear()
 
 
+async def _announce(chat_id: int, active: bool) -> None:
+    """Меню чатов показывает, кто работает: окно узнаёт о старте и конце хода из общей шины."""
+    from koddi.events import event_bus
+
+    try:
+        await event_bus.publish("agent.run.state", {"chat_id": chat_id, "active": active})
+    except Exception as exc:  # noqa: BLE001 - уведомление не должно мешать ходу
+        log_event("WARNING", "agent.run.announce", type(exc).__name__, {"chat_id": chat_id})
+
+
 class AgentRunRegistry:
     """Держит ход агента живым, даже если браузер или WebView отключились."""
 
@@ -236,8 +246,10 @@ class AgentRunRegistry:
                         await stream.aclose()
                     finally:
                         await run.finish()
+                        await _announce(chat_id, False)
 
             run.task = asyncio.create_task(worker(), name=f"koddi-agent-{chat_id}")
+            await _announce(chat_id, True)
             for listener in tuple(self.listeners):
                 try:
                     listener(run)

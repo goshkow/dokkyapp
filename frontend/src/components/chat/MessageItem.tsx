@@ -10,6 +10,7 @@ import { editMessage } from '../../state/chat';
 import { useSourcesMode } from '../../state/cloudPrefs';
 import { guarded } from '../../state/overlay';
 import { useUi } from '../../state/ui';
+import { hasReplay } from '../../state/stream';
 import { openSources } from '../../state/viewers';
 import type { Attachment } from '../../state/chatTypes';
 import { CloudSources, MessageAttachments, MessageProgress } from './CloudExtras';
@@ -73,7 +74,8 @@ export const MessageItem = memo(function MessageItem({ message, isNew }: { messa
   const metadata = message.metadata ?? {};
   const user = message.role === 'user';
   const running = !user && metadata.status === 'running';
-  const [settled, setSettled] = useState(!running);
+  // ответ, который сейчас допечатается (`hasReplay`), не показывает кнопки до конца печати
+  const [settled, setSettled] = useState(!running && !hasReplay(String(message.id)));
   const id = String(message.id);
   const pending = id.startsWith('pending');
   const citations = (message.citations ?? []) as unknown[];

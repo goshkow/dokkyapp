@@ -229,3 +229,62 @@ def test_plan_start_failure_does_not_consume_contract(project_chat, monkeypatch)
     assert client.post(f"/api/chats/{chat}/plan/execute", json={"turn_id": turn}).status_code == 500
     snapshot = client.get(f"/api/chats/{chat}/plan").json()
     assert snapshot["ready"] and not snapshot["executed"]
+
+
+class Scripted:
+    """Модель по сценарию: шаги - вызовы инструментов, затем обычный ответ."""
+
+    config = {"provider": "dokky-test", "model": "mock"}
+
+    def __init__(self, calls):
+        self.calls = list(calls)
+        self.seen = []
+
+    async def stream(self, *, tools, messages, **kwargs):
+        if messages and messages[-1].get("role") == "tool":
+            self.seen.append(json.loads(messages[-1]["content"]))
+        if not tools or not self.calls:
+            yield {"content": "Готово", "finish_reason": "stop"}
+            return
+        name, args = self.calls.pop(0)
+        yield {
+            "tool_call": {"id": f"call_{len(self.calls)}", "name": name, "arguments": json.dumps(args)},
+            "finish_reason": "tool_calls",
+        }
+
+
+async def _run(model, chat, workspace, text="Сделай модуль"):
+    return [
+        event
+        async for event in AgentOrchestrator(model).run(
+            chat_id=chat, project_id=None, workspace=workspace, user_message=text, mode="development",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unfinished_plan_moves_to_next_run(project_chat):
+    chat, workspace = project_chat
+    steps = [{"title": "Создать модуль", "status": "completed"}, {"title": "Проверить", "status": "pending"}]
+    await _run(Scripted([("plan.update", {"steps": steps})]), chat, workspace)
+    events = await _run(Scripted([]), chat, workspace, "Продолжай")
+    with storage.db() as conn:
+        latest = conn.execute("SELECT max(id) FROM turns WHERE chat_id=?", (chat,)).fetchone()[0]
+        carried = conn.execute("SELECT steps_json FROM agent_plans WHERE turn_id=?", (latest,)).fetchone()
+    # окно ведёт план в новом запуске, а не застывшим под прошлым ходом
+    assert carried is not None and json.loads(carried[0]) == steps
+    assert any("event: plan.updated" in event and f'"turn_id": {latest}' in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stale_plan_gets_reminder_in_tool_result(project_chat):
+    chat, workspace = project_chat
+    (workspace / "a.txt").write_text("a", encoding="utf-8")
+    from koddi.agents.orchestrator import PLAN_REMINDER_EVERY
+
+    reads = [("directory.list", {"path": "."})] * PLAN_REMINDER_EVERY
+    model = Scripted([("plan.update", {"steps": [{"title": "Шаг", "status": "running"}]}), *reads])
+    await _run(model, chat, workspace)
+    reminders = [index for index, result in enumerate(model.seen) if "plan_reminder" in result]
+    # первый результат - сам plan.update, напоминание приходит ровно на восьмом вызове после него
+    assert reminders == [PLAN_REMINDER_EVERY]

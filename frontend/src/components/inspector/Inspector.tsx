@@ -3,7 +3,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { changeDiffModel, diffStats, pruneDiffCache, type DiffFile } from '../../lib/diff';
-import { compactPath, numberText } from '../../lib/format';
+import { compactPath } from '../../lib/format';
 import { permissionLabel } from '../../lib/permissions';
 import { restoreTurn, rollbackChange, selectChange } from '../../state/remote';
 import { useChat } from '../../state/chatCore';
@@ -21,15 +21,16 @@ import { PlanList } from '../chat/Plan';
 import { currentReasoningMode } from '../../state/codingSession';
 import { useBrowser } from '../../state/browser';
 import { BrowserView } from './BrowserCard';
-import { ContextBreakdown } from './ContextCard';
+import { ContextBreakdown, contextUsage, useContextBreakdown } from './ContextCard';
 import { ProjectMapView } from './ProjectMap';
 import { useProjectMap } from '../../state/projectMap';
 import { RemoteAccess } from './RemoteAccess';
 import { QualityView } from './QualityCard';
 import { latestByGate, useQuality } from '../../state/quality';
+import { useCardOrder, type CardName } from './cardOrder';
 
-function Card({ id, name, icon: Icon, title, meta, focus, open, children }: {
-  id: string; name: string; icon: LucideIcon; title: string; meta?: ReactNode; focus: boolean; open: boolean; children: ReactNode;
+function Card({ id, name, icon: Icon, title, meta, focus, open, dragging = false, children }: {
+  id: string; name: string; icon: LucideIcon; title: string; meta?: ReactNode; focus: boolean; open: boolean; dragging?: boolean; children: ReactNode;
 }) {
   const current = useWorkspace((s) => s.focus);
   const onHead = () => {
@@ -39,8 +40,8 @@ function Card({ id, name, icon: Icon, title, meta, focus, open, children }: {
     } else toggleOverview(name as 'environment' | 'context');
   };
   return (
-    <section className={`inspector-card ${focus ? 'focus-card' : 'overview-card'}${open ? ' open' : ''}`} id={id} data-card={name} data-glass={`card-${name}`} inert={!focus && Boolean(current)}>
-      <button className="card-head" type="button" aria-expanded={open} aria-controls={`${id}-body`} onClick={onHead}>
+    <section className={`inspector-card ${focus ? 'focus-card' : 'overview-card'}${open ? ' open' : ''}${dragging ? ' dragging' : ''}`} id={id} data-card={name} data-glass={`card-${name}`} inert={!focus && Boolean(current)}>
+      <button className="card-head" type="button" aria-expanded={open} aria-controls={`${id}-body`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Перетащите, чтобы переставить блок" onClick={onHead}>
         <Icon aria-hidden="true" />
         <span>{title}</span>
         {meta !== undefined && <small className="card-meta">{meta}</small>}
@@ -51,35 +52,6 @@ function Card({ id, name, icon: Icon, title, meta, focus, open, children }: {
       </div>
     </section>
   );
-}
-
-const finite = (...values: unknown[]): number | undefined => values.map(Number).find((value) => Number.isFinite(value) && value > 0);
-
-/** Окно контекста: у каждого режима разработки своё, поэтому предел берётся по выбранному (в том числе ещё не применённому). */
-function useContext() {
-  const usageState = useChat((s) => s.usage ?? s.coding?.last_usage ?? null);
-  const coding = useChat((s) => s.coding);
-  const models = useData((s) => s.models);
-  const settings = useData((s) => s.settings);
-  const chatModel = useView((s) => s.chat?.model);
-  return useMemo(() => {
-    const usage = (usageState?.usage ?? {}) as Record<string, number>;
-    const model = models.find((item) => item.tag === (chatModel || settings.selected_model)) ?? models[0];
-    const exact = finite(usage.context_tokens, usage.prompt_tokens, usage.input_tokens);
-    const used = exact ?? finite(coding?.estimated_context_tokens);
-    const approx = exact === undefined && used !== undefined;
-    const mode = coding?.pending_reasoning_mode || coding?.reasoning_mode || settings.coding_reasoning_mode;
-    const limit = finite(model?.reasoning_modes?.find((item) => item.id === mode)?.compact_at_tokens, usage.context_limit, model?.context_tokens);
-    if (!used) return { percent: null as number | null, text: 'Данных об окне контекста пока нет.', level: '' };
-    const prefix = approx ? '≈ ' : '';
-    if (!limit) return { percent: null, text: `Использовано ${prefix}${numberText(used)} токенов.`, level: '' };
-    const percent = Math.min(100, Math.round((used / limit) * 100));
-    return {
-      percent,
-      text: `Использовано ${prefix}${numberText(used)} из ${numberText(limit)} токенов. При заполнении Докки сожмёт историю сам.`,
-      level: percent >= 90 ? 'high' : percent >= 75 ? 'warn' : '',
-    };
-  }, [usageState, coding, models, settings, chatModel]);
 }
 
 function Environment() {
@@ -240,7 +212,8 @@ export function Inspector() {
   const project = useView((s) => s.project);
   const plan = useChat((s) => s.plan);
   const changes = useChat((s) => s.changes);
-  const context = useContext();
+  const context = useContextBreakdown(rightOpen, overview.context);
+  const contextPercent = contextUsage(context.value)?.percent;
   const browserCount = useBrowser((state) => state.sessions.length);
   const mapFiles = useProjectMap((state) => state.tree?.totals.files);
   const gateRuns = useQuality((state) => state.runs);
@@ -249,6 +222,8 @@ export function Inspector() {
   const done = steps.filter((step) => step.status === 'completed').length;
   const stats = useMemo(() => diffStats(changes.flatMap((change) => changeDiffModel(change))), [changes]);
   const count = useMemo(() => changes.flatMap((change) => changeDiffModel(change)).length || changes.length, [changes]);
+  // при открытом блоке обзорные карточки свёрнуты в ноль и в перестановке не участвуют
+  const reorder = useCardOrder((name) => (name === 'environment' || name === 'context') && Boolean(focus));
 
   // у другого проекта свой набор файлов
   useEffect(() => {
@@ -257,53 +232,77 @@ export function Inspector() {
   void currentReasoningMode;
   void data;
 
+  const cards: Record<CardName, ReactNode> = {
+    environment: (
+      <Card key="environment" dragging={reorder.dragging === 'environment'} id="card-environment" name="environment" icon={FolderGit2} title="Среда" focus={false} open={overview.environment}>
+        <Environment />
+        <RemoteAccess />
+      </Card>
+    ),
+    context: (
+      <Card key="context" dragging={reorder.dragging === 'context'} id="card-context" name="context" icon={Gauge} title="Контекст" meta={contextPercent == null ? '—' : `${contextPercent}%`} focus={false} open={overview.context}>
+        <ContextBreakdown state={context} />
+      </Card>
+    ),
+    diff: (
+      <Card
+        key="diff"
+        dragging={reorder.dragging === 'diff'}
+        id="inspector-diff"
+        name="diff"
+        icon={GitCompare}
+        title="Изменения"
+        meta={changes.length ? (<>{count} · <span className="positive">+{stats.add}</span> <span className="danger">−{stats.remove}</span></>) : ''}
+        focus
+        open={focus === 'diff'}
+      >
+        <Changes />
+      </Card>
+    ),
+    files: (
+      <Card key="files" dragging={reorder.dragging === 'files'} id="inspector-files" name="files" icon={Files} title="Файлы" focus open={focus === 'files'}>
+        <FilesCard />
+      </Card>
+    ),
+    map: (
+      <Card key="map" dragging={reorder.dragging === 'map'} id="inspector-map" name="map" icon={Network} title="Карта проекта" meta={mapFiles ? String(mapFiles) : ''} focus open={focus === 'map'}>
+        <ProjectMapView active={focus === 'map' && rightOpen} />
+      </Card>
+    ),
+    quality: (
+      <Card key="quality" dragging={reorder.dragging === 'quality'} id="inspector-quality" name="quality" icon={ShieldCheck} title="Качество" meta={failedGates ? <span className="danger">{failedGates}</span> : ''} focus open={focus === 'quality'}>
+        <QualityView active={focus === 'quality' && rightOpen} />
+      </Card>
+    ),
+    browser: (
+      <Card key="browser" dragging={reorder.dragging === 'browser'} id="inspector-browser" name="browser" icon={Globe} title="Браузер" meta={browserCount ? String(browserCount) : ''} focus open={focus === 'browser'}>
+        <BrowserView active={focus === 'browser' && rightOpen} />
+      </Card>
+    ),
+    plan: (
+      <Card key="plan" dragging={reorder.dragging === 'plan'} id="card-plan" name="plan" icon={ListChecks} title="План" meta={steps.length ? `${done}/${steps.length}` : ''} focus open={focus === 'plan'}>
+        <section id="task-plan" className="task-plan">
+          {plan?.document ? <div className="plan-document-body message-body"><Markdown text={plan.document} className="" highlight={false} /></div> : null}
+          {steps.length ? <PlanList steps={steps} status={plan?.tracking_status} /> : null}
+        </section>
+      </Card>
+    ),
+  };
+
   return (
     <>
       <div className="inspector-heading">
         <h2>Рабочая область</h2>
         <button id="close-inspector" className="icon-button" type="button" title="Закрыть инспектор" aria-label="Закрыть инспектор" onClick={() => setPanel('right', false)}><X aria-hidden="true" /></button>
       </div>
-      <div id="inspector-content" className="inspector-cards" data-focus={focus}>
-        <Card id="card-environment" name="environment" icon={FolderGit2} title="Среда" focus={false} open={overview.environment}>
-          <Environment />
-          <RemoteAccess />
-        </Card>
-        <Card id="card-context" name="context" icon={Gauge} title="Контекст" meta={context.percent == null ? '—' : `${context.percent}%`} focus={false} open={overview.context}>
-          <div className="context-meter" role="progressbar" aria-label="Заполнено окно контекста" aria-valuemin={0} aria-valuemax={100} aria-valuenow={context.percent ?? 0} data-level={context.level || undefined}>
-            <i style={{ width: `${context.percent ?? 0}%` }} />
-          </div>
-          <p id="context-detail" className="muted">{context.text}</p>
-          <ContextBreakdown active={overview.context} />
-        </Card>
-        <Card
-          id="inspector-diff"
-          name="diff"
-          icon={GitCompare}
-          title="Изменения"
-          meta={changes.length ? (<>{count} · <span className="positive">+{stats.add}</span> <span className="danger">−{stats.remove}</span></>) : ''}
-          focus
-          open={focus === 'diff'}
-        >
-          <Changes />
-        </Card>
-        <Card id="inspector-files" name="files" icon={Files} title="Файлы" focus open={focus === 'files'}>
-          <FilesCard />
-        </Card>
-        <Card id="inspector-map" name="map" icon={Network} title="Карта проекта" meta={mapFiles ? String(mapFiles) : ''} focus open={focus === 'map'}>
-          <ProjectMapView active={focus === 'map' && rightOpen} />
-        </Card>
-        <Card id="inspector-quality" name="quality" icon={ShieldCheck} title="Качество" meta={failedGates ? <span className="danger">{failedGates}</span> : ''} focus open={focus === 'quality'}>
-          <QualityView active={focus === 'quality' && rightOpen} />
-        </Card>
-        <Card id="inspector-browser" name="browser" icon={Globe} title="Браузер" meta={browserCount ? String(browserCount) : ''} focus open={focus === 'browser'}>
-          <BrowserView active={focus === 'browser' && rightOpen} />
-        </Card>
-        <Card id="card-plan" name="plan" icon={ListChecks} title="План" meta={steps.length ? `${done}/${steps.length}` : ''} focus open={focus === 'plan'}>
-          <section id="task-plan" className="task-plan">
-            {plan?.document ? <div className="plan-document-body message-body"><Markdown text={plan.document} className="" highlight={false} /></div> : null}
-            {steps.length ? <PlanList steps={steps} status={plan?.tracking_status} /> : null}
-          </section>
-        </Card>
+      <div
+        id="inspector-content"
+        ref={reorder.box}
+        className={`inspector-cards${reorder.dragging ? ' reordering' : ''}`}
+        data-focus={focus}
+        {...reorder.handlers}
+      >
+        {reorder.order.map((name) => cards[name])}
       </div>
     </>
   );

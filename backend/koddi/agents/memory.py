@@ -15,7 +15,8 @@ def retrieve_memory(project_id: int | None, query: str = "", limit: int = 12) ->
     owner = local_owner()
     legacy = "" if os.getenv("KODDI_INTERNAL_TEST") == "1" else owner
     with db() as conn:
-        scope = "(m.project_id=? OR m.project_id IS NULL) AND m.owner_id IN (?,?)"
+        # сведения о пользователе и проекте идут в контекст целиком (memory_context), поиск - только по заметкам
+        scope = "(m.project_id=? OR m.project_id IS NULL) AND m.owner_id IN (?,?) AND m.kind NOT IN ('user','project')"
         rows = []
         if terms:
             match = " OR ".join('"' + term + '"' for term in terms)

@@ -5,7 +5,7 @@ import { isMirror } from '../../lib/mirror';
 import { mod } from '../../lib/platform';
 import { useChat } from '../../state/chatCore';
 import { useData } from '../../state/data';
-import { fieldActions, fieldHost, uploadFromField, useField, useFieldHost, voiceMeter } from '../../state/field';
+import { fieldActions, uploadFromField, useField, useFieldHost, voiceMeter } from '../../state/field';
 import { useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { VoiceWave } from './VoiceWave';
@@ -121,17 +121,6 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
     return () => { document.removeEventListener('dragover', over); document.removeEventListener('drop', drop); };
   }, [development]);
 
-  // щелчок внутри поля закрывает меню «Добавить»: оно открыто в главном виде и мимо-щелчка из этого вида не видит
-  useEffect(() => {
-    if (!isMirror) return undefined;
-    const close = (event: PointerEvent) => {
-      if (!fieldHost.get().menu || (event.target as Element).closest('#attach')) return;
-      void fieldActions.menu(false);
-    };
-    document.addEventListener('pointerdown', close, true);
-    return () => document.removeEventListener('pointerdown', close, true);
-  }, []);
-
   const ready = !(site && siteClosed) && Boolean(text.trim() || hasFiles || (site && siteReady));
   const queueable = development && running && ready;
   const showStop = (development && running) || (site && siteBusy);
@@ -160,7 +149,7 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         aria-expanded={voiceBusy || site ? undefined : open}
         hidden={search && !voiceBusy}
         // у страницы сайта своё меню вложений нет смысла повторять: «+» сразу открывает выбор файлов этого вида
-        onClick={() => void (voiceBusy ? fieldActions.cancelVoice() : site ? picker.current?.click() : fieldActions.menu())}
+        onClick={() => void (voiceBusy ? fieldActions.cancelVoice() : site ? picker.current?.click() : fieldActions.menu(!menu))}
       >
         {voiceBusy ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
       </button>

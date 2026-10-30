@@ -4,7 +4,7 @@ import { renderMarkdown } from '../../lib/markdown';
 import {
   cancelSettle, reconcileStreamNodes, renderStream, setShownLength, settleStream, waitStreamAnimations,
 } from '../../lib/streamMarkdown';
-import { acquireBody, bufferContent, dropBody, onStream } from '../../state/stream';
+import { acquireBody, bufferContent, dropBody, onStream, takeReplay } from '../../state/stream';
 
 interface BodyNode extends HTMLDivElement {
   _mode?: 'stream' | 'static';
@@ -55,20 +55,22 @@ export function AssistantBody({ id, content, running, message, highlight = true,
     const node = acquireBody(id) as BodyNode;
     node.classList.toggle('journal-commentary', variant === 'commentary');
     const mine = ++token.current;
-    if (running) {
+    // готовый ответ, пришедший в это окно вживую, печатается так же, как поток, и сразу завершается
+    const replay = !running && !node._mode && takeReplay(id);
+    if (running || replay) {
       cancelSettle(node);
       report.current?.(false);
       const buffered = bufferContent(id);
       if (node._mode !== 'stream') {
         node._mode = 'stream';
         // уже полученный сервером текст показывается сразу, дальше идёт плавная печать
-        if (content && node.childNodes.length === 0) {
+        if (!replay && !takeReplay(id) && content && node.childNodes.length === 0) {
           renderMarkdown(node, content, false, { message: source.current, streaming: true });
           setShownLength(node, content.length);
         }
       }
       renderStream(node, buffered !== undefined && buffered.length >= content.length ? buffered : content);
-      return onStream(id, (text) => renderStream(node, text));
+      if (!replay) return onStream(id, (text) => renderStream(node, text));
     }
     if (node._mode === 'stream') {
       // ответ завершён: дописать то, что печатается, и заменить итоговой разметкой в том же узле

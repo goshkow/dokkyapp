@@ -74,6 +74,11 @@ def rewind(chat_id: int, message_id: int, *, files: bool = False) -> dict:
             )
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        # пока возвращались файлы, в чате мог начаться новый ход: его записи не удаляем
+        from koddi.agents.recovery import running_here
+
+        if running_here(conn, chat_id) or agent_runs.active(chat_id):
+            raise HTTPException(409, "Сначала остановите выполнение")
         boundary = None
         if turn_id is not None:
             turn = conn.execute("SELECT history_from FROM turns WHERE id=? AND chat_id=?", (turn_id, chat_id)).fetchone()
@@ -88,7 +93,7 @@ def rewind(chat_id: int, message_id: int, *, files: bool = False) -> dict:
             conn.execute("DELETE FROM agent_history WHERE chat_id=? AND id>?", (chat_id, boundary))
         if turn_id is not None:
             later = [item[0] for item in conn.execute("SELECT id FROM turns WHERE chat_id=? AND id>=?", (chat_id, turn_id))]
-            for table in ("agent_plans", "agent_requests", "tool_calls"):
+            for table in ("agent_plans", "agent_requests", "tool_calls", "approvals"):
                 conn.executemany(f"DELETE FROM {table} WHERE turn_id=?", [(item,) for item in later])
             conn.execute("DELETE FROM turns WHERE chat_id=? AND id>=?", (chat_id, turn_id))
         conn.execute("DELETE FROM messages WHERE chat_id=? AND id>=?", (chat_id, message_id))

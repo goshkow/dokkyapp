@@ -14,6 +14,8 @@ import type { Project } from '../lib/types';
 import { newChat, view } from './view';
 
 const PROTOCOL = 1;
+/** Событие окна: Esc со страницы сайта, которому там нечего закрывать. */
+export const SITE_ESCAPE = 'koddi:site-escape';
 // сайт сам перезапрашивает токен при 401, а приложение меняет его заранее
 const RENEW_BEFORE_MS = 120_000;
 const HELLO_TIMEOUT_MS = 25_000;
@@ -27,6 +29,8 @@ export interface SurfaceChat {
   title: string;
   active: boolean;
   working: boolean;
+  /** Агент ждёт ответа человека (вопрос или подтверждение), сайт помечает это классом `.chat-asking`. */
+  asking: boolean;
   unread: boolean;
   draft: boolean;
   kinds: string[];
@@ -121,7 +125,7 @@ export function parseState(value: unknown): Pick<SurfaceState, 'sections' | 'cha
       id: Number(item.id),
       group: item.group === 'pinned' ? 'pinned' as const : 'recent' as const,
       title: text(item.title, 300) || 'Новый чат',
-      active: flag(item.active), working: flag(item.working), unread: flag(item.unread), draft: flag(item.draft),
+      active: flag(item.active), working: flag(item.working), asking: flag(item.asking), unread: flag(item.unread), draft: flag(item.draft),
       kinds: list(item.kinds, 8).map((kind) => text(kind, 30)).filter((kind) => /^[a-z][a-z0-9-]*$/.test(kind)),
       icon: icon(item.icon),
       remote: parseRemote(item.remote),
@@ -303,6 +307,10 @@ function onMessage(event: MessageEvent): void {
       return;
     case 'field-focus':
       if (surface.get().field) fieldFocus();
+      return;
+    case 'key':
+      // Esc, которому на странице сайта нечего закрывать: навигация с клавиатуры уводит в левое меню (state/keyNav.ts)
+      if (message.key === 'Escape') window.dispatchEvent(new Event(SITE_ESCAPE));
       return;
     case 'window': {
       // окно тянется за верхнюю полосу страницы сайта так же, как за свою

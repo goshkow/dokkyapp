@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import plistlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from koddi.config import launcher_path
@@ -65,6 +66,22 @@ def enabled() -> bool:
         return False
     target = _executable()
     return bool(target) and str(target).lower() in str(value).lower()
+
+
+def repoint(bundle: Path, stale: Callable[[Path], bool]) -> bool:
+    """Автозапуск, который ведёт на удалённую или старую копию Докки, переводится на эту копию."""
+    path = _launch_agent()
+    try:
+        agent = plistlib.loads(path.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return False
+    arguments = agent.get("ProgramArguments") or []
+    target = Path(str(arguments[-1])) if arguments else None
+    if target is None or target == bundle or (target.exists() and not stale(target)):
+        return False
+    agent["ProgramArguments"] = ["/usr/bin/open", "-a", str(bundle)]
+    path.write_bytes(plistlib.dumps(agent))
+    return True
 
 
 def set_enabled(value: bool) -> bool:

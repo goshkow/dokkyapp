@@ -38,3 +38,33 @@ describe('готовность нативной плитки', () => {
     cleanup?.();
   });
 });
+
+describe('щелчок мимо меню в другом виде', () => {
+  it('нажатие в плитке рассылается остальным видам, а пришедшее закрывает меню этого вида', async () => {
+    vi.resetModules();
+    window.history.replaceState({}, '', '/?role=sidebar');
+    const relay = vi.fn();
+    window.koddiWindowBridge = { relay } as unknown as Window['koddiWindowBridge'];
+    const { OUTSIDE_POINTER } = await import('./mirror');
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(relay.mock.calls.map(([payload]) => JSON.parse(payload as string))).toContainEqual({ k: 'touch', from: 'sidebar' });
+    const outside = vi.fn();
+    window.addEventListener(OUTSIDE_POINTER, outside);
+    // своё же нажатие не возвращается, чужое - закрывает меню
+    window.koddiRelayIn!(JSON.stringify({ k: 'touch', from: 'sidebar' }));
+    expect(outside).not.toHaveBeenCalled();
+    window.koddiRelayIn!(JSON.stringify({ k: 'touch', from: 'main' }));
+    expect(outside).toHaveBeenCalledOnce();
+    window.removeEventListener(OUTSIDE_POINTER, outside);
+  });
+
+  it('в обычном окне без плиток нажатия никуда не уходят', async () => {
+    vi.resetModules();
+    const relay = vi.fn();
+    window.koddiWindowBridge = { relay } as unknown as Window['koddiWindowBridge'];
+    await import('./mirror');
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    // слушатели модулей прошлых тестов (роли плиток) тоже слышат нажатие: главный вид сам не шлёт ничего
+    expect(relay.mock.calls.map(([payload]) => JSON.parse(payload as string))).not.toContainEqual({ k: 'touch', from: 'main' });
+  });
+});

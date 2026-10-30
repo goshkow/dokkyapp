@@ -124,6 +124,8 @@ def _signal_group(proc: subprocess.Popen, sig: int) -> None:
 
 HIDDEN_SUBPROCESS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 MAX_SEARCH_CANDIDATE_PATHS = 100000
+# заметка памяти: поиск по памяти отдаёт до 3000 символов на запись
+MEMORY_NOTE_CHARS = 3000
 _POSIX_SHELLS = {"zsh", "bash", "sh", "fish"}
 
 
@@ -1888,12 +1890,21 @@ class ToolRunner:
         }
 
     def memory_set(self, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.agents import profile_memory
+        from koddi.logs.service import redact
         from koddi.policy.account import local_owner
 
+        kind = str(args.get("kind") or "note").strip()[:40] or "note"
+        # сведения о пользователе и проекте попадают в каждый будущий чат: только через общую память с её правилами
+        if kind in profile_memory.SCOPES:
+            return profile_memory.remember(kind, self.project_id, args.get("content", ""))
+        content = redact(str(args.get("content") or "").strip())[:MEMORY_NOTE_CHARS]
+        if not content:
+            return {"ok": False, "error": "Пустая заметка"}
         with db() as conn:
             conn.execute(
                 "INSERT INTO memory_summaries(project_id, kind, content, owner_id) VALUES (?, ?, ?, ?)",
-                (self.project_id, args.get("kind", "note"), args.get("content", ""), local_owner()),
+                (self.project_id, kind, content, local_owner()),
             )
         return {"ok": True}
 

@@ -33,8 +33,20 @@ export function markSynced(id: string): void {
   if (buffer) buffer.synced = true;
 }
 
+/* Ответ, который это окно получило вживую, печатается плавно, даже если сервер успел отдать его готовым:
+   итог задачи режима кода приходит одним куском и сразу со статусом «готово». Ответ, открытый из истории,
+   показывается сразу. */
+const replays = new Set<string>();
+export const hasReplay = (id: string): boolean => replays.has(id);
+export const takeReplay = (id: string): boolean => replays.delete(id);
+export const clearReplays = (): void => replays.clear();
+export function moveReplay(from: string, to: string): void {
+  if (replays.delete(from)) replays.add(to);
+}
+
 /** Добавляет порцию к накопленному тексту; возвращает true, если текст изменился. */
 export function pushDelta(id: string, delta: Delta, base: string): boolean {
+  if (!buffers.has(id) && !base && delta.content) replays.add(id);
   const buffer = buffers.get(id) ?? { content: base, dirty: false };
   const before = buffer.content;
   if (delta.replace) buffer.content = delta.content;

@@ -9,6 +9,7 @@ import { loadRemote, saveRemote, useRemote } from '../../state/remoteControl';
 import { useView } from '../../state/view';
 import { saveKey } from './GeneralPage';
 import { ComputerControl } from './ComputerControl';
+import { MemorySettings } from './MemorySettings';
 import { QualitySettings } from './QualitySettings';
 import { Block, Pick, Row, Section, Toggle, type Say } from './parts';
 
@@ -45,6 +46,7 @@ export function DevelopmentPage({ say }: { say: Say }) {
           say={say}
         />
       </Section>
+      <MemorySettings project={project} say={say} />
       <Section title="Агент">
         <Toggle
           title="Обзор проекта и архив задач"

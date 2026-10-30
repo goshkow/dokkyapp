@@ -62,6 +62,15 @@ def current_owner() -> tuple[int, str | None]:
     return os.getpid(), process_token(os.getpid())
 
 
+def running_here(conn, chat_id: int) -> bool:
+    """В чате идёт ход этого процесса - даже если реестр запусков о нём ещё не знает (старт, делегирование)."""
+    pid, token = current_owner()
+    return conn.execute(
+        "SELECT 1 FROM turns WHERE chat_id=? AND status='running' AND owner_pid=? AND owner_token IS ? LIMIT 1",
+        (chat_id, pid, token),
+    ).fetchone() is not None
+
+
 def owner_alive(pid: int | None, token: str | None) -> bool:
     if not pid:
         return False

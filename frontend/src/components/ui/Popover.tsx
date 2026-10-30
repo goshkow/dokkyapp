@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { OUTSIDE_POINTER } from '../../lib/mirror';
 
 export interface PopoverProps {
   open: boolean;
@@ -96,7 +97,10 @@ export function Popover({ open, anchor, onClose, className = '', role = 'menu', 
     document.addEventListener('pointerdown', pointer, true);
     document.addEventListener('keydown', key, true);
     window.addEventListener('resize', onClose);
+    // нажатие в другом веб-виде (плитки стекла, поле ввода на стекле) или во фрейме сайта: см. lib/mirror.ts
+    window.addEventListener(OUTSIDE_POINTER, onClose);
     return () => {
+      window.removeEventListener(OUTSIDE_POINTER, onClose);
       document.removeEventListener('pointerdown', pointer, true);
       document.removeEventListener('keydown', key, true);
       window.removeEventListener('resize', onClose);

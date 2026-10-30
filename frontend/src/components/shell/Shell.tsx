@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { guarded } from '../../state/overlay';
 import { togglePanel } from '../../state/panels';
 import { useNativeTiles } from '../../lib/glass';
+import { PanelResizer } from './PanelResizer';
 import { useShellMotion, useShown } from '../../state/shellMotion';
 import { useUi } from '../../state/ui';
 import { canGoBack, canGoForward, goBack, goForward, useNav, useView } from '../../state/view';
@@ -47,7 +48,7 @@ export function Shell({ sidebar, main, inspector }: ShellProps) {
       </div>
       <aside id="left" aria-label="Главное меню"><div className="panel-inner sidebar-panel">{tiles ? null : sidebar}</div></aside>
       <main id="main" className={mainClass || undefined}>{main}</main>
-      <aside id="right" aria-label="Инспектор проекта"><div className="panel-inner inspector-panel">{tiles ? null : inspector}</div></aside>
+      <aside id="right" aria-label="Инспектор проекта"><PanelResizer /><div className="panel-inner inspector-panel">{tiles ? null : inspector}</div></aside>
     </div>
   );
 }

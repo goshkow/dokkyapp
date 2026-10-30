@@ -95,4 +95,7 @@ mkdir -p "$APP/Contents/MacOS/koddi/computer_use/native"
 cp backend/koddi/computer_use/native/dokky-computer-helper "$APP/Contents/MacOS/koddi/computer_use/native/"
 
 "$PYTHON" scripts/finalize_macos_app.py "$APP" --identity "${SIGN_IDENTITY:--}" ${ASSETS_CAR:+--assets-car "$ASSETS_CAR"}
+# сборка в папке проекта не должна перехватывать запуск Докки и ссылки koddi:// у установленной копии
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+[ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$APP" >/dev/null 2>&1 || true
 echo "Собрано: $APP"

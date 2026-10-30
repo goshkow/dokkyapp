@@ -22,6 +22,7 @@ import { chat } from './state/chatCore';
 import { startFieldMirror } from './state/field';
 import { startSiteField } from './state/siteField';
 import { applyAppearance, ui } from './state/ui';
+import { initKeyNav } from './state/keyNav';
 
 // плитки Liquid Glass (виды sidebar) показывают зеркало этого состояния
 for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav], ['updates', updates]] as const) exposeStore(name, store as never);
@@ -48,11 +49,8 @@ ui.subscribe(() => {
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => applySettings(data.get().settings));
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (data.get().settings.theme === 'system') applySettings(data.get().settings); });
 
-// кольцо фокуса только при работе с клавиатуры
-document.addEventListener('keydown', (event) => {
-  if (['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) document.documentElement.dataset.input = 'keyboard';
-}, true);
-document.addEventListener('pointerdown', () => { delete document.documentElement.dataset.input; }, true);
+// навигация с клавиатуры и кольцо фокуса только при работе с клавиатуры
+initKeyNav();
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
 document.body.classList.remove('booting');

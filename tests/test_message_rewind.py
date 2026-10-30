@@ -82,3 +82,23 @@ def test_rewind_keeps_chat_when_files_fail_to_roll_back(tmp_path, monkeypatch):
         assert response.status_code == 409 and "1 из 2" in response.json()["detail"]
         with storage.db() as conn:
             assert conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat,)).fetchone()[0] == 4
+
+
+def test_rewind_stops_when_a_turn_started_meanwhile(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "rewind-race.sqlite3")
+    from koddi.agents.recovery import current_owner
+    from koddi.api import create_app
+
+    with TestClient(create_app()) as client:
+        chat = client.post("/api/chats", json={"title": "Гонка"}).json()["id"]
+        with storage.db() as conn:
+            seeded = _seed(conn, chat)
+            # ход этого процесса уже в базе, а в реестре запусков ещё нет
+            conn.execute(
+                "INSERT INTO turns(chat_id,status,owner_pid,owner_token,history_from) VALUES (?,'running',?,?,0)",
+                (chat, *current_owner()),
+            )
+        response = client.post(f"/api/chats/{chat}/messages/{seeded['target']}/rewind", json={})
+        assert response.status_code == 409
+        with storage.db() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat,)).fetchone()[0] == 4

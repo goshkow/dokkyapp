@@ -158,6 +158,9 @@ function Waiting() {
   );
 }
 
+/** Через сколько миллисекунд проявляется заглушка загрузки (.chat-skeleton в ui.css): быстрые загрузки её не показывают. */
+const SKELETON_DELAY = 400;
+
 function ChatItems(): ReactNode {
   const load = useChat((s) => s.load);
   const loadError = useChat((s) => s.loadError);
@@ -185,17 +188,26 @@ function ChatItems(): ReactNode {
     height.current = { first, height: feed.scrollHeight };
   });
 
+  // с какого момента виден экран загрузки: показанная заглушка уже была появлением чата
+  const loadingSince = useRef(0);
+  useLayoutEffect(() => {
+    if (load === 'loading') loadingSince.current ||= performance.now();
+  }, [load]);
+
   // открытый чат сразу показывает конец переписки, а не начало, и весь появляется одинаково плавно
   const pinned = useRef(-1);
   useLayoutEffect(() => {
     if (load !== 'ready' || pinned.current === epoch) return;
     pinned.current = epoch;
     pinFeed();
+    const skeleton = loadingSince.current > 0 && performance.now() - loadingSince.current > SKELETON_DELAY;
+    loadingSince.current = 0;
     const feed = document.getElementById('feed');
     // пустой новый чат проявляет приветствие сам, ленту с сообщениями проявляем целиком и один раз
     if (!feed || reducedMotion() || items.length === 0) return;
     feed.dataset.opening = '';
-    feed.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
+    // после заглушки лента встаёт на её место сразу: второе проявление выглядело как повторная анимация текста
+    if (!skeleton) feed.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
     window.setTimeout(() => { delete feed.dataset.opening; }, 320);
   }, [load, epoch]);
 

@@ -28,7 +28,7 @@ STORE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "https://dokky.goshkow.com/webkit-stor
 # методы моста, которые страница может вызвать; всё остальное отбрасывается
 BRIDGE_METHODS = (
     "relay", "regions", "appearance", "overlay", "panels", "copyText", "copyImage",
-    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer", "tray", "popupMenu",
+    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer", "focusView", "tray", "popupMenu",
 )
 
 SHIM = """

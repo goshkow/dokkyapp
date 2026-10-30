@@ -56,6 +56,19 @@
 .pref-textarea { box-sizing: border-box; width: 100%; min-height: 150px; padding: 14px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--field); color: var(--text); font: inherit; font-size: var(--fs-14); line-height: 1.55; resize: vertical; }
 .pref-textarea:focus { outline: none; border-color: var(--muted); }
 .pref-textarea::placeholder { color: var(--faint); }
+/* память о пользователе и проекте */
+.memory-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line-soft); border-radius: 12px; }
+.memory-list li { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 8px 6px 14px; border-bottom: 1px solid var(--line-soft); }
+.memory-list li:last-child { border-bottom: 0; }
+.memory-list .pref-input { flex: 1; width: auto; height: 32px; }
+.memory-text { flex: 1; min-width: 0; color: var(--text); font-size: var(--fs-14); line-height: 1.45; overflow-wrap: anywhere; }
+.memory-tag { margin-left: 8px; color: var(--faint); font-size: var(--fs-12); font-style: normal; }
+.memory-actions { display: flex; gap: 2px; flex: none; opacity: 0.55; transition: opacity 150ms ease; }
+.memory-list li:hover .memory-actions, .memory-list li:focus-within .memory-actions { opacity: 1; }
+.memory-actions .icon-button svg { width: 15px; height: 15px; }
+.memory-empty { margin: 0; color: var(--faint); font-size: var(--fs-13); }
+.memory-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.memory-add .pref-input { flex: 1 1 240px; width: auto; }
 .pref-block-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pref-count { color: var(--faint); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
 .pref-count[data-over] { color: var(--danger); }

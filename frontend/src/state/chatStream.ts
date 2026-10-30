@@ -19,7 +19,7 @@ import {
   beginProgress, bindProgress, finishProgress, progress, progressAnswer, progressCommentary, progressStatus,
 } from './cloudProgress';
 import {
-  clearBuffers, emitStream, markSynced, pushDelta, resetBuffer, streamBuffers, bufferContent, type Delta,
+  clearBuffers, clearReplays, emitStream, markSynced, moveReplay, pushDelta, resetBuffer, streamBuffers, bufferContent, type Delta,
 } from './stream';
 
 /** Курсор облачного потока: после обрыва чтение продолжается с него. */
@@ -78,6 +78,7 @@ export const resolveStreamId = (id: string): string => redirects.get(id) ?? id;
 
 function rekeyStream(from: string, to: string): void {
   redirects.set(from, to);
+  moveReplay(from, to);
   const buffer = streamBuffers.get(from);
   if (buffer) {
     streamBuffers.delete(from);
@@ -87,6 +88,7 @@ function rekeyStream(from: string, to: string): void {
 
 export function clearStreamState(): void {
   clearBuffers();
+  clearReplays();
   redirects.clear();
   if (frame) cancelAnimationFrame(frame);
   frame = 0;
@@ -201,14 +203,19 @@ function cloudProgressEvent(kind: string, data: Record<string, any>): void {
 
 /** Читает поток событий до конца. Возвращает управление, когда поток закрыт или остановлен. */
 export async function consume(response: Response, chatId: Id, controller: AbortController): Promise<void> {
+  // пока шёл await, пользователь мог открыть другой чат или режим: итоги старого потока туда не применяются
+  const development = isDevelopment();
+  const away = () => currentChatId() !== chatId || isDevelopment() !== development;
+  const gone = () => controller.signal.aborted || away();
   for await (const event of readSse(response, controller.signal)) {
     const { event: kind, data: payload } = event;
     if (!isDevelopment()) cloudCursor.value = event.id || cloudCursor.value;
-    if (currentChatId() !== chatId) continue;
+    if (away()) continue;
     localJournal(kind, payload);
     cloudProgressEvent(kind, payload);
     if (kind === 'stream.reset') {
       await hooks.sync();
+      if (gone()) return;
       clearStreamState();
       if (payload.live_message) streamBuffers.set(String(payload.live_message.id), { content: payload.live_message.content, dirty: false });
       controller.abort();
@@ -270,6 +277,7 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
       setPlanTurnState({ active: false, turn: { id: payload.turn_id ?? chat.get().turnId ?? undefined, status: kind.slice(5) } });
       clearBuffers();
       await hooks.sync();
+      if (gone()) return;
       setRunning(false);
       if (kind === 'turn.completed') setStatus('Готово');
       if (kind === 'turn.cancelled') setStatus('Выполнение остановлено');

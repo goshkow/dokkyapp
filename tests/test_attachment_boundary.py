@@ -125,7 +125,7 @@ def test_read_result_contains_only_bounded_text_not_storage_details(profile):
 
 
 @pytest.mark.parametrize("name,content", [
-    ("image.png", b"\x89PNG"), ("archive.zip", b"PK"), ("file.pdf", b"%PDF-1.7"),
+    ("archive.zip", b"PK"), ("file.pdf", b"%PDF-1.7"),
     ("fake.txt", b"\x00\x01binary"), ("invalid.md", b"\xff\xfe"),
 ])
 def test_binary_or_unsupported_content_is_not_returned(profile, name, content):

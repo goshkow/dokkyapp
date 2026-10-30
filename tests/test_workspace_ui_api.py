@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
+from koddi import desktop
 from koddi.api import create_app
 
 
@@ -77,7 +80,9 @@ def test_missing_react_does_not_fall_back_to_legacy(tmp_path, monkeypatch):
 
 def test_ui_assets_are_not_cached():
     client = TestClient(create_app())
-    for path in ("/ui/", "/ui/app.js", "/ui/app.css", "/ui/chunk-overlayScroll.js"):
+    # имя общего чанка сборщик берёт от первого модуля в нём и меняет при правках фронта
+    chunk = sorted((Path(desktop.__file__).parent / "web-next").glob("chunk-*.js"))[0].name
+    for path in ("/ui/", "/ui/app.js", "/ui/app.css", f"/ui/{chunk}"):
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"

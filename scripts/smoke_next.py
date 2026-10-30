@@ -133,6 +133,49 @@ def scenario_send_stream():
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
+def scenario_repeated_sends_do_not_leak():
+    """Одинаковые сообщения подряд (с картинкой и без) не остаются в ленте нового чата и на других страницах."""
+    api = development_api()
+    state = {"messages": [], "turn": 30}
+    api.extra["/api/chats"] = lambda m, p, b, q: ({"id": 50, "title": "Новый чат", "mode": "chat", "model": "dokky-code", "project_id": None, "updated_at": "2026-10-17T11:00:00+00:00"} if m == "POST" else api.local_chats)
+    api.extra["/api/chats/50/messages"] = lambda m, p, b, q: state["messages"]
+    api.extra["/api/chats/50/turn"] = lambda m, p, b, q: {"active": False}
+    api.extra["/api/chats/50/plan"] = lambda m, p, b, q: {"steps": [], "document": "", "turn_id": None}
+    api.extra["/api/chats/50/changes"] = lambda m, p, b, q: []
+
+    def send_route(route):
+        if route.request.method != "POST":
+            return route.fallback()
+        state["turn"] += 1
+        turn = state["turn"]
+        user = {"id": turn * 10, "role": "user", "content": "Странно", "metadata": {"turn_id": turn}}
+        reply = {"id": turn * 10 + 1, "role": "assistant", "content": f"Ответ {turn}", "metadata": {"channel": "final", "status": "completed", "turn_id": turn}}
+        state["messages"] = [*state["messages"], user, reply]
+        body = sse([("turn.started", {"turn_id": turn}), ("message.delta", {"message_id": reply["id"], "content": reply["content"], "offset": 0}), ("turn.completed", {"turn_id": turn})])
+        return route.fulfill(status=200, content_type="text/event-stream", body=body)
+
+    with browser_page(api) as page:
+        page.wait_for_timeout(1200)
+        page.route("**/api/chats/50/messages", send_route)
+        for _ in range(3):
+            page.fill("#prompt", "Странно")
+            page.click("#send")
+            page.wait_for_timeout(1600)
+        check(page.locator("#feed article.message.user").count() == 3, f"сообщений пользователя: {page.locator('#feed article.message.user').count()}")
+        check(page.locator("#feed article.message.assistant").count() == 3, "ответов")
+        keys = page.evaluate("[...document.querySelectorAll('#feed [data-message-id]')].map((n) => n.dataset.messageId)")
+        check(len(keys) == len(set(keys)), f"повтор узлов в ленте: {keys}")
+        page.click("#new-chat")
+        page.wait_for_timeout(900)
+        check(page.locator("#feed article.message").count() == 0, "в новом чате остались старые сообщения")
+        page.click("#side-more")
+        page.wait_for_timeout(400)
+        page.click("[aria-label='Навыки']")
+        page.wait_for_timeout(900)
+        check(page.locator("#feed article.message").count() == 0, "на странице навыков остались сообщения чата")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
 def scenario_requests_queue_plan():
     api = development_api()
     api.extra["/api/agent/requests"] = lambda m, p, b, q: [{"id": 3, "kind": "approval", "chat_id": 1, "payload": {"name": "shell.run", "arguments": {"command": "ls"}}}]
@@ -158,6 +201,60 @@ def scenario_requests_queue_plan():
         page.wait_for_timeout(500)
         check(page.locator(".approval-panel").count() == 0, "подтверждение закрыто")
         check(any(call[1] == "/api/agent/requests/3/respond" and call[2] == {"approved": True} for call in api.calls), "ответ отправлен")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
+def scenario_agent_questions_and_diff_layout():
+    """Несколько вопросов агента с вариантами и свой ответ; длинные строки diff не раздвигают карточку «Изменения»."""
+    api = development_api()
+    questions = [
+        {"question": "Что именно происходит?", "header": "Симптом", "options": [{"label": "Лента не очищается", "description": "в новом чате видны старые сообщения"}, {"label": "Агент помнит старое"}]},
+        {"question": "Где это видно?", "options": [{"label": "Разработка"}, {"label": "Чат"}], "multi_select": True},
+        {"question": "Опишите подробнее, если хотите", "options": []},
+    ]
+    api.extra["/api/agent/requests"] = lambda m, p, b, q: [{"id": 4, "kind": "question", "chat_id": 1, "payload": {"question": "...", "questions": questions}}]
+    api.extra["/api/agent/requests/4/respond"] = lambda m, p, b, q: {"ok": True}
+    long_line = "f\"& ([scriptblock]::Create(" + "x" * 240 + "))\""
+    diff = f"--- a/runner.py\n+++ b/runner.py\n@@ -1,2 +1,2 @@\n import os\n-{long_line}\n+{long_line}2\n"
+    change = {"id": 5, "description": "Правка runner.py", "status": "applied", "diff": diff, "turn_id": 7, "files": [{"path": "backend/koddi/tools/runner.py", "before_hash": "a", "after_hash": "b"}]}
+    api.extra["/api/chats/1/changes"] = lambda m, p, b, q: [change]
+    with browser_page(api, viewport=(1300, 900)) as page:
+        page.wait_for_timeout(1200)
+        open_chat(page)
+        check(page.locator(".question-panel .question-item").count() == 3, "три вопроса в одной карточке")
+        submit = page.locator(".question-panel button[type=submit]")
+        check(submit.is_disabled(), "ответ без всех ответов")
+        page.get_by_role("radio", name="Лента не очищается").click()
+        page.get_by_role("checkbox", name="Разработка", exact=True).click()
+        page.get_by_role("checkbox", name="Чат", exact=True).click()
+        field = page.locator(".question-panel textarea").nth(2)
+        field.fill("Строка один\nСтрока два\nСтрока три\nСтрока четыре")
+        check(field.evaluate("(n) => n.clientHeight > 70 && n.scrollWidth <= n.clientWidth + 1"), "поле не растёт или текст уходит вправо")
+        page.screenshot(path=str(Path(__file__).resolve().parents[1] / "_screens" / "agent-questions.png"))
+        submit.click()
+        page.wait_for_timeout(500)
+        sent = [c[2] for c in api.calls if c[1] == "/api/agent/requests/4/respond"]
+        check(sent and sent[-1] == {"answers": [
+            {"selected": ["Лента не очищается"], "text": ""},
+            {"selected": ["Разработка", "Чат"], "text": ""},
+            {"selected": [], "text": "Строка один\nСтрока два\nСтрока три\nСтрока четыре"},
+        ]}, f"ответ: {sent}")
+        page.click("#inspector-diff .card-head")
+        page.wait_for_timeout(700)
+        page.click(".change-file")
+        page.wait_for_timeout(500)
+        box = page.evaluate("""(() => {
+          const card = document.querySelector('#inspector-diff').getBoundingClientRect();
+          const buttons = [...document.querySelectorAll('#turn .actions button')].map((b) => b.getBoundingClientRect());
+          const diff = document.querySelector('#turn .code-diff');
+          return {cardRight: card.right, cardBottom: card.bottom, buttonsRight: Math.max(...buttons.map((b) => b.right)),
+            scrolls: diff.scrollWidth > diff.clientWidth, contentBottom: document.querySelector('#turn').getBoundingClientRect().bottom,
+            panelBottom: document.querySelector('#inspector-content').getBoundingClientRect().bottom};
+        })()""")
+        check(box["buttonsRight"] <= box["cardRight"] and box["scrolls"], f"кнопки или diff выходят за карточку: {box}")
+        # карточка по высоте содержимого: под кнопками нет пустого места до низа панели
+        check(box["cardBottom"] - box["contentBottom"] < 40 and box["cardBottom"] < box["panelBottom"] - 100, f"пустое место в карточке: {box}")
+        page.screenshot(path=str(Path(__file__).resolve().parents[1] / "_screens" / "inspector-diff.png"))
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
@@ -241,6 +338,36 @@ def scenario_inspector():
         page.click("#card-plan .card-head")
         page.wait_for_timeout(700)
         check(page.locator("#task-plan .plan-list li").count() == 2, "план в панели")
+        # блоки переставляются перетаскиванием за заголовок: «План» наверх, порядок уходит в настройки
+        page.click("#card-plan .card-head")
+        page.wait_for_timeout(600)
+        order = lambda: page.evaluate("[...document.querySelectorAll('#inspector-content > .inspector-card')].map((n) => n.dataset.card)")
+        plan = page.locator("#card-plan .card-head").bounding_box()
+        diff = page.locator("#inspector-diff .card-head").bounding_box()
+        page.mouse.move(plan["x"] + 40, plan["y"] + plan["height"] / 2)
+        page.mouse.down()
+        for step in range(1, 13):
+            page.mouse.move(plan["x"] + 40, plan["y"] + plan["height"] / 2 - (plan["y"] - diff["y"] + 10) * step / 12)
+            page.wait_for_timeout(16)
+        check(page.locator("#card-plan.dragging").count() == 1, "перетаскиваемый блок не отмечен")
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        check(order()[:3] == ["environment", "context", "plan"], f"порядок после перетаскивания: {order()}")
+        check(page.locator("#card-plan.open").count() == 0, "отпускание после перетаскивания раскрыло блок")
+        saved = [call[2] for call in api.calls if call[0] == "PUT" and call[1] == "/api/settings" and isinstance(call[2], dict) and "inspector_order" in call[2]]
+        check(saved and saved[-1]["inspector_order"][:3] == ["environment", "context", "plan"], f"порядок не сохранён: {saved}")
+        check(page.evaluate("document.querySelector('#card-plan').style.transform") == "", "у блока остался сдвиг")
+        # Alt+стрелка возвращает блок на место
+        page.focus("#card-plan .card-head")
+        page.keyboard.press("Alt+ArrowDown")
+        page.wait_for_timeout(400)
+        check(order()[2:4] == ["diff", "plan"], f"Alt+стрелка вниз: {order()}")
+        check(page.evaluate("document.activeElement?.closest('.inspector-card')?.id") == "card-plan", "фокус ушёл с заголовка")
+        page.reload()
+        page.wait_for_timeout(1200)
+        open_chat(page)
+        page.wait_for_timeout(700)
+        check(order()[2:4] == ["diff", "plan"], f"порядок после перезагрузки: {order()}")
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
@@ -617,7 +744,7 @@ def scenario_live_stream():
         check(abs(page.evaluate("document.querySelector('#feed').scrollTop") - top) < 40, "лента не уезжает от читателя")
         # как на сайте: кнопка показывается, когда до конца больше трёх экранов
         far = page.evaluate("(() => { const f = document.querySelector('#feed'); return f.scrollHeight - f.scrollTop - f.clientHeight >= f.clientHeight * 3; })()")
-        check((page.locator("#jump-bottom:not([hidden])").count() == 1) == far, "кнопка «К последнему сообщению» показывается не по правилу сайта")
+        check((page.locator("#jump-bottom[data-shown]").count() == 1) == far, "кнопка «К последнему сообщению» показывается не по правилу сайта")
         page.wait_for_function("window.__streamDone === true", timeout=20000)
         page.wait_for_timeout(4500)
         check(page.locator("article.message.assistant").count() == 1, "ровно один ответ")
@@ -1167,6 +1294,14 @@ def scenario_settings_overhaul():
         return prefs
 
     api.extra["/api/dokky/cloud/preferences"] = preferences
+    memory = {"enabled": True, "user": [{"id": 1, "content": "Пишет на TypeScript", "source": "auto", "created_at": ""}], "project": []}
+
+    def remember(m, p, b, q):
+        if m == "POST":
+            memory["user"].append({"id": 2, "content": b["content"], "source": "manual", "created_at": ""})
+        return memory
+
+    api.extra["/api/memory"] = remember
     mock = Billing("super", remaining=80).install(api)
     with browser_page(api, viewport=(1300, 860)) as page:
         page.wait_for_timeout(1400)
@@ -1226,6 +1361,14 @@ def scenario_settings_overhaul():
         page.click(".pref-block-actions .primary")
         page.wait_for_timeout(500)
         check(any(c[0] == "PUT" and (c[2] or {}).get("dev_instructions") == "Комментарии по-русски." for c in api.calls), "личные инструкции не сохранились")
+        # разработка: память о пользователе и проекте
+        page.wait_for_selector(".memory-list")
+        check("Пишет на TypeScript" in page.locator(".memory-list").first.inner_text(), "память о пользователе не показана")
+        page.fill(".memory-add .pref-input", "Комментарии по-русски")
+        page.press(".memory-add .pref-input", "Enter")
+        page.wait_for_timeout(400)
+        check(any(c[0] == "POST" and c[1] == "/api/memory" and (c[2] or {}).get("scope") == "user" for c in api.calls), "пункт памяти не добавился")
+        check("Комментарии по-русски" in page.locator(".memory-list").first.inner_text(), "добавленный пункт не показан")
         # система: автозапуск
         page.click("[data-settings-section=system]")
         page.click(".pref-row[data-setting='Запускать вместе с Windows'] .pref-switch")
@@ -1769,13 +1912,63 @@ def scenario_update_busy_agent():
         check(not page.errors, f"ошибки перезапуска: {page.errors}")
 
 
+def scenario_keyboard_and_menus():
+    """Esc уводит в меню и обратно, стрелки ходят по меню, Enter открывает чат; меню закрывается щелчком во фрейме сайта."""
+    api = development_api()
+    with browser_page(api) as page:
+        page.wait_for_timeout(1500)
+        open_chat(page)
+        active = lambda: page.evaluate("(() => { const n = document.activeElement; return n ? (n.id || n.className) + '|' + (n.textContent || '').trim().slice(0, 40) : ''; })()")  # noqa: E731
+        page.focus("#prompt")
+        page.keyboard.press("Escape")
+        check(active() == "chat-item|Фризы при возврате из фона", f"Esc из поля - в меню на открытый чат: {active()}")
+        check(page.evaluate("document.documentElement.dataset.input") == "keyboard", "кольцо фокуса включено")
+        page.keyboard.press("ArrowDown")
+        moved = active()
+        check(moved.startswith("chat-item|Фризы приложения"), f"стрелка вниз - следующий чат: {moved}")
+        page.keyboard.press("ArrowUp")
+        check(active() == "chat-item|Фризы при возврате из фона", f"стрелка вверх - обратно: {active()}")
+        page.keyboard.press("Home")
+        check(active() != "chat-item|Фризы при возврате из фона", "Home - первый пункт меню")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+        check(active().startswith("prompt|"), f"Esc из меню - обратно в поле: {active()}")
+        page.keyboard.press("Escape")
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(900)
+        check(page.locator("#title").inner_text().startswith("Фризы приложения"), "Enter открыл чат")
+        check(active().startswith("prompt|"), f"после Enter клавиатура в поле: {active()}")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+    api = Api(scope="chat")
+    api.extra["/api/dokky/surface"] = lambda m, p, b, q: {"available": True, "url": SITE + "/app-surface", "origin": SITE, "release": "r1", "host_id": "me"}
+    api.extra["/api/dokky/surface/session"] = lambda m, p, b, q: {"token": "dks1.test", "expires_in": 900} if m == "POST" else None
+
+    def setup(page):
+        page.route(SITE + "/app-surface**", lambda route: route.fulfill(content_type="text/html", body=SURFACE_PAGE))
+
+    with browser_page(api, setup=setup) as page:
+        page.wait_for_selector(".site-surface[data-status=ready]", timeout=8000)
+        frame = page.frame(url=lambda url: url.startswith(SITE + "/app-surface"))
+        page.click("#account-menu-toggle")
+        page.wait_for_selector(".account-menu[data-state=open]")
+        page.mouse.click(700, 400)
+        page.wait_for_timeout(300)
+        check(page.locator(".account-menu").count() == 0, "щелчок во фрейме сайта закрывает меню лимитов")
+        frame.evaluate("parentPost({type: 'key', key: 'Escape'})")
+        page.wait_for_timeout(200)
+        check(page.evaluate("document.activeElement?.closest('.sidebar-panel') !== null"), "Esc со страницы сайта уводит в меню")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
 SCENARIOS = [
     scenario_update_notice, scenario_update_busy_agent,
-    scenario_boot_and_open, scenario_send_stream, scenario_requests_queue_plan, scenario_permission_modes, scenario_inspector, scenario_project_map, scenario_quality_card,
+    scenario_boot_and_open, scenario_send_stream, scenario_repeated_sends_do_not_leak, scenario_requests_queue_plan, scenario_agent_questions_and_diff_layout, scenario_permission_modes, scenario_inspector, scenario_project_map, scenario_quality_card,
     scenario_settings_pages_library, scenario_cloud, scenario_cloud_send, scenario_search, scenario_attachments_and_mode,
     scenario_live_stream, scenario_shell_stability, scenario_audit_items,
     scenario_sidebar_search_reorder, scenario_pin_and_expand, scenario_shell_rules, scenario_motion_rules, scenario_long_chat_list, scenario_tiles_library_media_auth, scenario_par_login, scenario_context_menu_rail_title, scenario_media_files_viewer, scenario_voice_segments, scenario_settings_overhaul, scenario_math_and_map, scenario_developer_access, scenario_usage_hints, scenario_payment_states, scenario_subscription_sync, scenario_skills_menu_and_project_menu, scenario_tasks_automations_skills_pages,
-    scenario_site_surface, scenario_chat_without_project,
+    scenario_site_surface, scenario_chat_without_project, scenario_keyboard_and_menus,
 ]
 
 

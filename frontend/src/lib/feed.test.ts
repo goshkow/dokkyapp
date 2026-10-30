@@ -22,6 +22,24 @@ describe('feed', () => {
     expect(items.map((item) => item.key)).toEqual(['m:2', 'm:pending-user']);
   });
 
+  it('ключи в ленте не повторяются, даже если два сообщения заняли один временный ключ', () => {
+    // старые сборки давали всем отправкам один номер pending-user: узлы оставались в ленте навсегда
+    const items = buildFeed({
+      ...base, development: true,
+      messages: [user('5', 'Странно'), answer('6'), user('7', 'Странно'), answer('8')],
+      alias: { 5: 'm:pending-user', 7: 'm:pending-user' },
+      optimistic: user('pending-user', 'Странно'),
+    });
+    const keys = items.map((item) => item.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual(['m:pending-user', 'm:6', 'm:7', 'm:8']);
+  });
+
+  it('повтор id с сервера тоже получает свой ключ', () => {
+    const keys = buildFeed({ ...base, development: true, messages: [user('5', 'а'), answer('6'), user('5', 'а'), answer('9')] }).map((item) => item.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it('варианты ответа Докки сворачиваются в выбранный', () => {
     const messages = [user('u'), answer('a1', 'один'), answer('a2', 'два', { branch_of: 'a1' })];
     const chosen = projectVariants(messages, 'c', new Map());

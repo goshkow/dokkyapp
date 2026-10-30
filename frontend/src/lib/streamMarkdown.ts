@@ -218,7 +218,8 @@ export function settleStream(target: HTMLElement, settle: () => void): void {
     settle();
   };
   job.drained = run;
-  job.deadline = window.setTimeout(run, 1800);
+  // длинный итог, пришедший одним куском, успевает допечататься, но завершение не ждёт дольше 8 секунд
+  job.deadline = window.setTimeout(run, Math.min(8000, 1800 + (job.full.length - job.shown) * 0.6));
 }
 
 export function cancelSettle(target: HTMLElement): void {

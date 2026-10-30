@@ -25,7 +25,16 @@ export interface AgentRequest {
   id: string | number;
   kind: 'approval' | 'question' | string;
   chat_id?: number | string;
-  payload: { question?: string; name?: string; arguments?: unknown; action?: ActionSummary; review?: ActionReview | null };
+  turn_id?: number | string;
+  payload: { question?: string; questions?: AgentQuestion[]; name?: string; arguments?: unknown; action?: ActionSummary; review?: ActionReview | null };
+}
+
+/** Вопрос агента (task.ask_user): варианты необязательны, свой ответ текстом есть всегда. */
+export interface AgentQuestion {
+  question: string;
+  header?: string;
+  options?: { label: string; description?: string }[];
+  multi_select?: boolean;
 }
 
 /** Понятное описание действия агента с сервера (policy/describe.py). */

@@ -77,6 +77,52 @@ def test_attachment_upload_indexes_document() -> None:
     assert item["document"]["id"]
 
 
+def test_chat_delete_removes_its_attachment_files_and_document_text() -> None:
+    from pathlib import Path
+
+    client = TestClient(create_app())
+    first = client.post("/api/chats", json={"title": "С файлами", "mode": "chat", "model": "test"}).json()
+    second = client.post("/api/chats", json={"title": "Другой", "mode": "chat", "model": "test"}).json()
+
+    def upload(chat_id: int, name: str, body: bytes) -> dict:
+        response = client.post(f"/api/attachments?chat_id={chat_id}", files={"file": (name, body, "text/plain")})
+        assert response.status_code == 200
+        return response.json()
+
+    own = upload(first["id"], "own.txt", b"private text only in the first chat")
+    shared = upload(first["id"], "shared.txt", b"same file in both chats")
+    kept = upload(second["id"], "shared.txt", b"same file in both chats")
+    assert shared["stored_path"] == kept["stored_path"]
+
+    assert client.delete(f"/api/chats/{first['id']}").status_code == 200
+    assert not Path(own["stored_path"]).exists()
+    # тот же файл нужен второму чату
+    assert Path(kept["stored_path"]).exists()
+    with api_module.db() as conn:
+        ids = (own["id"], shared["id"])
+        assert conn.execute("SELECT COUNT(*) FROM documents WHERE attachment_id IN (?, ?)", ids).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM document_chunks WHERE document_id IN (?, ?)",
+            (own["document"]["id"], shared["document"]["id"]),
+        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM documents WHERE attachment_id=?", (kept["id"],)).fetchone()[0] == 1
+
+
+def test_chat_with_a_running_turn_of_this_process_is_not_deleted() -> None:
+    from koddi.agents.recovery import current_owner
+
+    client = TestClient(create_app())
+    chat = client.post("/api/chats", json={"title": "Делегирование", "mode": "chat", "model": "test"}).json()
+    with api_module.db() as conn:
+        conn.execute(
+            "INSERT INTO turns(chat_id,status,owner_pid,owner_token) VALUES (?,'running',?,?)", (chat["id"], *current_owner())
+        )
+    assert client.delete(f"/api/chats/{chat['id']}").status_code == 409
+    with api_module.db() as conn:
+        conn.execute("UPDATE turns SET status='completed' WHERE chat_id=?", (chat["id"],))
+    assert client.delete(f"/api/chats/{chat['id']}").status_code == 200
+
+
 def test_message_edit_and_delete() -> None:
     client = TestClient(create_app())
     chat = client.post(
@@ -149,3 +195,34 @@ def test_browser_open_from_chat_link_is_validated(monkeypatch) -> None:
 
 
 api_module_network = import_module("koddi.policy.network")
+
+
+def test_chat_list_shows_agent_activity(monkeypatch) -> None:
+    from koddi.agents.runs import agent_runs
+    from koddi.storage.db import db
+
+    client = TestClient(create_app())
+    asking = client.post("/api/chats", json={"title": "Вопрос", "mode": "chat", "model": "test"}).json()
+    working = client.post("/api/chats", json={"title": "Работа", "mode": "chat", "model": "test"}).json()
+    idle = client.post("/api/chats", json={"title": "Тишина", "mode": "chat", "model": "test"}).json()
+    with db() as conn:
+        for chat in (asking, working):
+            conn.execute("INSERT INTO turns(chat_id,status) VALUES (?, 'running')", (chat["id"],))
+        turn = conn.execute("SELECT id FROM turns WHERE chat_id=?", (asking["id"],)).fetchone()[0]
+        conn.execute("INSERT INTO agent_requests(turn_id,kind,payload_json) VALUES (?, 'question', '{}')", (turn,))
+    monkeypatch.setattr(agent_runs, "active", lambda chat_id: chat_id in {asking["id"], working["id"]})
+    states = {item["id"]: item["activity"] for item in client.get("/api/chats").json()}
+    assert states[asking["id"]] == "question"
+    assert states[working["id"]] == "working"
+    assert states[idle["id"]] is None
+
+
+def test_inspector_order_is_saved_and_validated() -> None:
+    client = TestClient(create_app())
+    order = ["plan", "diff", "environment"]
+    assert client.put("/api/settings", json={"inspector_order": order}).json()["inspector_order"] == order
+    assert client.get("/api/settings").json()["inspector_order"] == order
+    for bad in (["plan", "plan"], ["unknown"], "plan", [1], ["plan"] * 9):
+        assert client.put("/api/settings", json={"inspector_order": bad}).status_code == 422
+    assert client.get("/api/settings").json()["inspector_order"] == order
+    assert client.put("/api/settings", json={"inspector_order": []}).json()["inspector_order"] == []

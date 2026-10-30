@@ -164,3 +164,49 @@
 #composer.recording #attach, #composer.transcribing #attach { color: var(--text); }
 #composer.transcribing #send { opacity: 0.5; }
 .voice-timer { flex: none; min-width: 38px; color: var(--muted); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
+
+/* кнопка «к последнему сообщению» всегда в разметке: появляется и уходит плавно, а не через display */
+#composer .jump-bottom {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.92);
+  transition: opacity 0.2s ease, transform 0.24s var(--ease, ease), visibility 0s linear 0.24s;
+}
+#composer .jump-bottom[data-shown] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.2s ease, transform 0.24s var(--ease, ease), visibility 0s;
+}
+
+/* вопросы агента: варианты строками, свой ответ - многострочное поле, которое растёт с текстом */
+.approval-panel.question-panel form { display: grid; gap: 12px; margin-top: 10px; }
+.question-item { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.question-item + .question-item { padding-top: 12px; border-top: 1px solid var(--line-soft, var(--line)); }
+.question-head { display: grid; gap: 6px; }
+.question-head .approval-question { margin: 0; max-height: none; font-size: var(--fs-13); line-height: 1.45; white-space: pre-wrap; }
+.question-chip { justify-self: start; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-size: var(--fs-11, 11px); font-weight: 600; }
+.question-options { display: grid; gap: 6px; }
+.question-option {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 36px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 12px; background: transparent; color: var(--text); text-align: left; font-size: var(--fs-13);
+}
+.question-option:hover { background: var(--hover); }
+.question-option.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.question-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.question-mark { display: grid; place-items: center; flex: none; width: 16px; height: 16px; margin-top: 1px; border: 1.5px solid var(--faint); border-radius: 50%; }
+.question-mark.square { border-radius: 4px; }
+.question-option.selected .question-mark { border-color: var(--accent); background: var(--accent); color: var(--bg); }
+.question-mark svg { width: 11px; height: 11px; stroke-width: 3; }
+.question-option-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.question-option-copy small { color: var(--muted); font-size: var(--fs-12); line-height: 1.35; }
+.question-text {
+  width: 100%; min-height: 56px; max-height: 200px; padding: 8px 10px; resize: none; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--field, transparent); color: var(--text);
+  font: inherit; font-size: var(--fs-13); line-height: 1.45; overflow-wrap: anywhere;
+}
+.question-text:focus { outline: none; border-color: var(--accent); }
+.approval-panel.question-panel .actions { display: flex; align-items: center; }
+.question-hint { margin-right: auto; color: var(--muted); font-size: var(--fs-12); }

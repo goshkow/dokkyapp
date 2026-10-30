@@ -33,7 +33,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QColor, QDesktopServices, QImage, QMouseEvent
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QImage, QMouseEvent
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
@@ -62,6 +62,8 @@ LOGGER = logging.getLogger("koddi.desktop")
 IS_MAC = sys.platform == "darwin"
 # плитки, у которых вид страницы лежит внутри стекла над лентой: поле ввода и «Чат / Поиск» режима чата
 CONTENT_TILES = ("composer", "product")
+# виды, в которые страница может перевести клавиатуру (навигация с клавиатуры)
+FOCUS_ROLES = frozenset({"main", "sidebar", "inspector", "composer"})
 
 
 class UrlHandler(QObject):
@@ -396,6 +398,12 @@ class WindowBridge(QObject):
         if self.role == "main" and self._own_page():
             self.host.focus_composer()
 
+    @Slot(str)
+    def focusView(self, role: str):  # noqa: N802
+        """Навигация с клавиатуры: клавиатура переходит в вид меню, поля или правой панели (на macOS это свои виды)."""
+        if self._own_page() and role in FOCUS_ROLES:
+            QTimer.singleShot(0, lambda: self.host.focus_view(role))
+
     @Slot(str, result=bool)
     def copyText(self, text: str):  # noqa: N802
         base, current = QUrl(self.host.api_base), self.view.url()
@@ -510,8 +518,45 @@ class WindowBridge(QObject):
             self.view.start_window_drag()
         elif action == "move" and QApplication.mouseButtons() & Qt.MouseButton.LeftButton:
             handle = self.host.windowHandle()
-            if handle:
-                handle.startSystemMove()
+            if handle and handle.startSystemMove():
+                self._release_after_move()
+
+    def _release_after_move(self) -> None:
+        """Системное перетаскивание забирает отпускание кнопки: страница остаётся с «зажатой» мышью
+        и выделяет текст под курсором, пока его ведут после перетаскивания. Отпускание досылаем сами."""
+        target = self.view.focusProxy() or self.view
+        timer = QTimer(self)
+        timer.setInterval(40)
+        started = time.monotonic()
+
+        def check() -> None:
+            if _left_button_down() and time.monotonic() - started < 120:
+                return
+            timer.stop()
+            timer.deleteLater()
+            local = QPointF(target.mapFromGlobal(QCursor.pos()))
+            release = QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                local,
+                QPointF(QCursor.pos()),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            QApplication.sendEvent(target, release)
+
+        timer.timeout.connect(check)
+        timer.start()
+
+
+def _left_button_down() -> bool:
+    """Кнопку спрашиваем у системы: во время перетаскивания окна Qt не видит её отпускание."""
+    if sys.platform == "win32":
+        user32 = ctypes.windll.user32
+        # GetAsyncKeyState смотрит на физические кнопки: у левши основная - правая
+        key = 0x02 if user32.GetSystemMetrics(23) else 0x01
+        return bool(user32.GetAsyncKeyState(key) & 0x8000)
+    return bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
 
 
 def _origin(url: QUrl) -> tuple[str, str, int]:
@@ -1000,6 +1045,17 @@ class WebHost(QMainWindow):
         tile = self.tiles.get("composer")
         shown = tile is not None and any(not view.isHidden() for view in tile.regions.views.values())
         (tile.view if shown else self.view).web.window().makeFirstResponder_((tile.view if shown else self.view).web)
+
+    def focus_view(self, role: str) -> None:
+        """Вид роли становится первым ответчиком; без плиток (Windows, окно без стекла) всё в главном виде и фокус ставит страница."""
+        if not self.tiles:
+            return
+        if role == "composer":
+            self.focus_composer()
+            return
+        tile = self.tiles.get(role)
+        view = tile.view if tile is not None and getattr(tile, "open", False) else self.view
+        view.web.window().makeFirstResponder_(view.web)
 
     def show_popup_menu(self, request: dict) -> None:
         """Системное меню у точки страницы; текущий пункт с галочкой встаёт на место кнопки, как у списков macOS."""
@@ -1536,10 +1592,30 @@ def main() -> None:
     broker = activation_server()
     if broker is None:
         return
+    from koddi.updates.service import newer_version_seen
+
+    # старая копия (папка сборки, забытый образ) не открывает данные, которые уже обновила новая версия
+    newer = newer_version_seen()
+    if newer:
+        from PySide6.QtWidgets import QMessageBox
+
+        from koddi import __version__
+
+        QMessageBox.warning(
+            None, "Старая копия Докки",
+            f"Эта копия Докки устарела: версия {__version__}, а на этом компьютере уже работала {newer}.\n\n"
+            f"Откройте актуальную Докки (обычно она в папке «Программы»). Эта копия закрывается, чтобы не повредить "
+            f"ваши чаты и настройки.\n\nПуть этой копии: {Path(sys.executable).resolve()}",
+        )
+        return
     try:
         register_protocol()
     except OSError:
         pass
+    if IS_MAC:
+        from koddi.desktop.stale_copies import clean_up_later
+
+        clean_up_later()
     api_port = _api_port()
     from koddi.desktop.transport import desktop_access
 

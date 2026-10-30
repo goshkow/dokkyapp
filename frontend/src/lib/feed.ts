@@ -104,13 +104,19 @@ export function buildFeed(input: FeedInput): FeedItem[] {
   }
 
   const items: FeedItem[] = [];
+  // повтор ключа React не прощает: узлы с одинаковым ключом остаются в ленте навсегда, даже на других страницах
+  const used = new Set<string>();
   for (const message of grouped) {
     const id = String(message.id);
-    const key = input.alias[id] ?? `m:${id}`;
+    const aliased = input.alias[id];
+    let key = aliased && !used.has(aliased) ? aliased : `m:${id}`;
+    // повтор id с сервера или журнал двух сбросов после одного вопроса: свой ключ у каждой записи
+    for (let n = 2; used.has(key); n += 1) key = `m:${id}#${n}`;
+    used.add(key);
     if (message.metadata?.kind === 'journal') items.push({ kind: 'journal', key, message, turnId: String(message.metadata.turn?.id ?? '') });
     else items.push({ kind: 'message', key, message });
   }
-  if (input.optimistic) items.push({ kind: 'message', key: `m:${input.optimistic.id}`, message: input.optimistic });
+  if (input.optimistic && !used.has(`m:${input.optimistic.id}`)) items.push({ kind: 'message', key: `m:${input.optimistic.id}`, message: input.optimistic });
 
   // план стоит сразу после журнала хода и не прыгает за новыми ответами
   const snapshot = input.plan;

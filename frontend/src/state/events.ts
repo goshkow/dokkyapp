@@ -3,6 +3,7 @@
 import { onBrowserSession } from './browser';
 import { attachLocal, syncLocal } from './chat';
 import { showRequests } from './chatAgent';
+import { onQuestion, onRunState } from './chatActivity';
 import { chat, ctl, currentChatId, isDevelopment } from './chatCore';
 import { data, loadCloud, loadLocal, revoke } from './data';
 import { loadLimits } from './limits';
@@ -36,6 +37,8 @@ function sweep(force = false): void {
   lastSweep = Date.now();
   void loadLimits();
   refreshChats();
+  // события хода могли потеряться (сон, обрыв шины): состояние чатов в меню сверяется со списком
+  if (ui.get().scope === 'development') void loadLocal(false).catch(() => undefined);
 }
 
 const chatOf = (event: Event): number | null => {
@@ -76,6 +79,7 @@ function listen(): void {
   // агент ждёт ответа: карточка появляется, даже если окно не читает поток этого хода (очередь, переподключение)
   source.addEventListener('agent.request.created', (event) => {
     const chatId = chatOf(event);
+    if (chatId !== null) onQuestion(chatId, true);
     if (chatId === null || !isDevelopment() || String(currentChatId()) !== String(chatId)) return;
     void showRequests().catch(() => undefined);
     if (!ctl.stream) void remoteTurn(event).catch(() => undefined);
@@ -83,7 +87,15 @@ function listen(): void {
   // на запрос агента ответили с телефона: карточка в открытом чате закрывается
   source.addEventListener('agent.request.resolved', (event) => {
     const chatId = chatOf(event);
+    if (chatId !== null) onQuestion(chatId, false);
     if (chatId !== null && isDevelopment() && String(currentChatId()) === String(chatId)) void showRequests().catch(() => undefined);
+  });
+  // ход начался или закончился в любом чате: меню показывает крутилку или синюю точку
+  source.addEventListener('agent.run.state', (event) => {
+    try {
+      const value = JSON.parse((event as MessageEvent<string>).data) as { chat_id?: unknown; active?: unknown };
+      if (typeof value.chat_id === 'number') onRunState(value.chat_id, value.active === true);
+    } catch { /* повреждённое событие */ }
   });
   // обновление приложения: состояние для настроек и точки у аккаунта
   source.addEventListener('update.state', (event) => {

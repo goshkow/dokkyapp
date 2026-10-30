@@ -22,6 +22,8 @@ export interface Chat {
   /** Закреплённые чаты Докки стоят в начале списка. */
   pinned?: boolean;
   active_run?: { id: string } | null;
+  /** Чаты режима кода: агент работает или ждёт ответа человека. */
+  activity?: 'working' | 'question' | null;
 }
 
 export interface ReasoningModeInfo {
@@ -84,6 +86,8 @@ export interface AppSettings {
   selected_model: string;
   left_panel_collapsed: boolean;
   right_panel_collapsed: boolean;
+  /** Порядок блоков правой панели; пустой - порядок по умолчанию. */
+  inspector_order: string[];
   coding_reasoning_mode: 'light' | 'pro' | 'max';
   coding_keepalive: boolean;
   coding_runtime_extensions: boolean;
@@ -106,6 +110,7 @@ export const defaultSettings: AppSettings = {
   selected_model: '',
   left_panel_collapsed: false,
   right_panel_collapsed: false,
+  inspector_order: [],
   coding_reasoning_mode: 'pro',
   coding_keepalive: true,
   coding_runtime_extensions: false,

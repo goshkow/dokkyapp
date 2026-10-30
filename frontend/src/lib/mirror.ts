@@ -18,7 +18,11 @@ type Wire =
   | { k: 'hello'; r: Role }
   | { k: 'state'; n: string; s: Record<string, unknown> }
   | { k: 'call'; id: number; to: Role; from: Role; f: string; a: unknown[] }
-  | { k: 'ret'; id: number; to: Role; ok: boolean; v?: unknown; e?: string };
+  | { k: 'ret'; id: number; to: Role; ok: boolean; v?: unknown; e?: string }
+  | { k: 'touch'; from: Role };
+
+/** Событие окна: нажатие пришлось на другой вид или фрейм сайта - меню и списки этого вида закрываются (ui/Popover). */
+export const OUTSIDE_POINTER = 'koddi:outside-pointer';
 
 const stores = new Map<string, Store<object>>();
 const handlers = new Map<string, (...args: never[]) => unknown>();
@@ -131,6 +135,8 @@ function receive(raw: string): void {
     try {
       Promise.resolve((fn as (...args: unknown[]) => unknown)(...message.a)).then((value) => done(true, value ?? null), (error) => done(false, undefined, error));
     } catch (error) { done(false, undefined, error); }
+  } else if (message.k === 'touch' && message.from !== role) {
+    window.dispatchEvent(new Event(OUTSIDE_POINTER));
   } else if (message.k === 'ret' && message.to === role) {
     const wait = pending.get(message.id);
     if (!wait) return;
@@ -143,6 +149,23 @@ function receive(raw: string): void {
 
 window.koddiRelayIn = receive;
 window.addEventListener('koddi-bridge', flush);
+
+/* нажатие в одном виде - щелчок мимо меню всех остальных: у каждого вида свой документ, и мимо-щелчков чужих видов он не видит */
+const multiView = (): boolean => isMirror || window.koddiTiles === true;
+function announceTouch(): void {
+  const out = transport();
+  // не в очередь: старое нажатие, дошедшее после подключения моста, закрыло бы только что открытое меню
+  if (out && multiView()) out(JSON.stringify({ k: 'touch', from: role } satisfies Wire));
+}
+document.addEventListener('pointerdown', announceTouch, true);
+// фрейм страницы сайта (режим чата) забирает нажатия себе: окно узнаёт о них только по уходу фокуса во фрейм
+window.addEventListener('blur', () => {
+  queueMicrotask(() => {
+    if (document.activeElement?.tagName !== 'IFRAME') return;
+    window.dispatchEvent(new Event(OUTSIDE_POINTER));
+    announceTouch();
+  });
+});
 
 /** Вид плитки просит у главного вида всё состояние и повторяет просьбу, пока тот не готов. */
 export function startMirror(onSynced: () => void): (() => void) | undefined {

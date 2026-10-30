@@ -10,6 +10,7 @@ from typing import BinaryIO
 
 from fastapi import HTTPException
 
+from koddi.documents.service import READABLE_SUFFIXES
 from koddi.policy.account import local_owner, owns, require_chat
 from koddi.storage.db import db, runtime_path
 
@@ -28,7 +29,7 @@ ALLOWED_EXTENSIONS = {
     ".txt",
     ".md",
     ".zip",
-}
+} | READABLE_SUFFIXES
 
 
 def _sha256(path: Path) -> str:
@@ -161,6 +162,27 @@ def delete_attachment(attachment_id: int) -> dict:
     return {"ok": True, "id": attachment_id}
 
 
+def forget_attachment_files(items: list[dict]) -> None:
+    """Файлы вложений удалённого чата: одинаковые файлы хранятся один раз, поэтому чужие ссылки сохраняют файл."""
+    paths = set()
+    for item in items:
+        try:
+            paths.add(_blob_path(item))
+        except (ValueError, KeyError, TypeError):
+            continue
+    if not paths:
+        return
+    with db() as conn:
+        # под той же блокировкой, что и сохранение: файл не пропадёт у вложения, которое добавляют прямо сейчас
+        conn.execute("BEGIN IMMEDIATE")
+        for path in paths:
+            still_used = conn.execute(
+                "SELECT 1 FROM attachments WHERE stored_path=? AND status<>'deleted' LIMIT 1", (str(path),)
+            ).fetchone()
+            if not still_used:
+                path.unlink(missing_ok=True)
+
+
 def require_attachment(attachment_id: int) -> dict:
     owner = local_owner()
     with db() as conn:
@@ -216,14 +238,25 @@ def _read_attachment_bytes(item: dict, max_bytes: int) -> bytes:
 
 
 def read_attachment(attachment_id: int, chat_id: int) -> dict:
-    from koddi.documents.service import MAX_DOCUMENT_BYTES, extract_text
+    from koddi.documents.service import MAX_DOCUMENT_BYTES, READABLE_SUFFIXES, extract_text
 
     owner = local_owner()
     require_chat(chat_id)
     item = require_attachment(attachment_id)
     if item["chat_id"] != chat_id or not owns(item["owner_id"], owner):
         raise HTTPException(404, "Вложение не найдено")
-    if Path(item["original_name"]).suffix.lower() not in {".txt", ".md", ".docx", ".xlsx", ".pptx"}:
+    from koddi.attachments.recognize import IMAGE_SUFFIXES, recognized_text
+
+    if Path(item["original_name"]).suffix.lower() in IMAGE_SUFFIXES:
+        # картинку распознаёт оркестратор при отправке сообщения (attachments/recognize.py), здесь - сохранённый текст
+        text = recognized_text(item)
+        return {
+            "ok": True, "attachment_id": attachment_id, "chat_id": chat_id,
+            "name": item["original_name"], "media_type": item["media_type"], "text": text or "",
+            "note": "Image content was recognized when the message was sent and is included in the user message."
+            if text is not None else "This image was not recognized; ask the user to describe it or resend it.",
+        }
+    if Path(item["original_name"]).suffix.lower() not in READABLE_SUFFIXES:
         raise ValueError("Attachment type does not support bounded text extraction")
     data = _read_attachment_bytes(item, MAX_DOCUMENT_BYTES)
     text, outline = extract_text(Path(item["original_name"]), 120_001, source_bytes=data)

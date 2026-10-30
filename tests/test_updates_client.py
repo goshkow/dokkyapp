@@ -327,3 +327,26 @@ def test_explicit_auto_download_is_preserved(updater, monkeypatch):
     serve(updater, lambda request: httpx.Response(200, json=latest()))
     state = asyncio.run(updater.check())
     assert state["auto_download"] is True and started == [True]
+
+
+def test_old_copy_is_detected_by_newest_version_that_used_the_data(updater, monkeypatch):
+    monkeypatch.setattr(service, "is_packaged_build", lambda: True)
+    assert service.newer_version_seen() is None
+    monkeypatch.setattr(service, "__version__", "0.2.3")
+    updater.mark_ready()
+    assert (service.data_dir() / "newest-version").read_text() == "0.2.3"
+    # старая копия запускается и не понижает отметку, а сама видит, что данные уже открывала новая версия
+    monkeypatch.setattr(service, "__version__", "0.2.0")
+    assert service.newer_version_seen() == "0.2.3"
+    updater.mark_ready()
+    assert (service.data_dir() / "newest-version").read_text() == "0.2.3"
+    monkeypatch.setattr(service, "__version__", "0.2.4")
+    assert service.newer_version_seen() is None
+    updater.mark_ready()
+    assert (service.data_dir() / "newest-version").read_text() == "0.2.4"
+
+
+def test_source_runs_never_block_or_mark_versions(updater, monkeypatch):
+    monkeypatch.setattr(service, "is_packaged_build", lambda: False)
+    (service.data_dir() / "newest-version").write_text("99.0.0")
+    assert service.newer_version_seen() is None

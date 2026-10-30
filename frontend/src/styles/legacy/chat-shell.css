@@ -77,6 +77,7 @@ textarea,
   }
 }
 .inspector-cards {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -96,8 +97,32 @@ textarea,
   overflow: hidden;
   transition: flex-grow 380ms var(--shell-ease), max-height 380ms var(--shell-ease), opacity 240ms ease, margin 380ms var(--shell-ease), border-color 240ms ease;
 }
+/* открытый блок по высоте содержимого и не выше свободного места; карта, браузер и редактор файла занимают всё */
 .inspector-card.open.focus-card {
+  flex: 0 1 auto;
+}
+#inspector-map.open.focus-card,
+#inspector-browser.open.focus-card,
+#inspector-files.open.focus-card:has(#editor-view) {
   flex: 1 1 0;
+}
+/* блок переставляют за заголовок: на время перетаскивания он над соседями и не выделяет текст */
+.inspector-cards.reordering {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.inspector-cards.reordering .card-head {
+  cursor: grabbing;
+}
+.inspector-cards.reordering .card-head:hover {
+  background: transparent;
+}
+.inspector-card.dragging {
+  position: relative;
+  z-index: 2;
+  border-color: var(--line-strong, var(--line));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
 }
 .card-head {
   display: flex;
@@ -244,34 +269,10 @@ textarea,
   min-height: 70px;
   border-radius: 8px;
 }
-.context-meter {
-  height: 6px;
-  margin: 2px 0 8px;
-  border-radius: 3px;
-  background: var(--hover);
-  overflow: hidden;
-}
-.context-meter i {
-  display: block;
-  height: 100%;
-  width: 0;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: width 500ms var(--shell-ease), background 240ms ease;
-}
-.context-meter[data-level="warn"] i {
-  background: #d6a43a;
-}
-.context-meter[data-level="high"] i {
-  background: var(--danger, #e0645c);
-}
-#context-detail {
-  margin: 0;
-  font-size: var(--fs-12);
-  line-height: 1.45;
-}
+/* колонка не шире карточки: длинные строки diff прокручиваются внутри, а не раздвигают кнопки */
 #turn {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 #turn #change-summary {

@@ -8,6 +8,7 @@ import { initOverlayScroll } from './lib/overlayScroll';
 import { chat } from './state/chatCore';
 import { data } from './state/data';
 import { fieldHost, fieldMirror, voiceMeter } from './state/field';
+import { initKeyNav } from './state/keyNav';
 import { limitsStore } from './state/limits';
 import { plansStore } from './state/plans';
 import { applyAppearance, ui } from './state/ui';
@@ -28,6 +29,7 @@ if (role === 'inspector') {
 }
 document.documentElement.classList.add('tile', 'glass', 'native-tiles');
 ui.subscribe(() => applyAppearance());
+initKeyNav();
 applyAppearance();
 
 createRoot(document.getElementById('root')!).render(<StrictMode><TileApp role={role} /></StrictMode>);

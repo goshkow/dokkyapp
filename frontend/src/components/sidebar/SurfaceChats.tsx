@@ -8,6 +8,7 @@ import {
 import { useSidebarQuery } from '../../state/sidebarQuery';
 import { Popover } from '../ui/Popover';
 import { Sentinel } from '../ui/Sentinel';
+import { ChatState } from './ChatState';
 import { SurfaceIcon } from './Nav';
 
 interface MenuState {
@@ -42,11 +43,7 @@ const SurfaceRow = memo(function SurfaceRow({ chat, selected, host, onMenu }: { 
           {chat.remote.host_name}
         </span>
       )}
-      {chat.working ? (
-        <span className="chat-state chat-working" title="Докки отвечает"><span className="spinner" aria-label="Докки отвечает" /></span>
-      ) : chat.unread ? (
-        <span className="chat-state" title="Новый ответ"><span className="chat-unread-dot" aria-label="Новый ответ" /></span>
-      ) : null}
+      <ChatState mark={chat.asking ? 'question' : chat.working ? 'working' : chat.unread ? 'done' : null} />
       {chat.actions.length > 0 && (
         <button ref={more} type="button" className="icon-btn chat-more" aria-label="Действия с чатом" onClick={() => onMenu({ chat, anchor: more })}>
           <Ellipsis aria-hidden="true" />

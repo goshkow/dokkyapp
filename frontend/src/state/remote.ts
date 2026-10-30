@@ -6,7 +6,7 @@ import { del } from '../lib/api';
 import { exposeActions, remote } from '../lib/mirror';
 import type { Chat, Project } from '../lib/types';
 import { deleteChat as realDeleteChat, renameChat as realRenameChat, switchScope as realSwitchScope, togglePin as realTogglePin } from './actions';
-import { loadCloud as realLoadCloud, loadLocal as realLoadLocal, setProjectOpen as realSetProjectOpen } from './data';
+import { loadCloud as realLoadCloud, loadLocal as realLoadLocal, saveSettings, setProjectOpen as realSetProjectOpen } from './data';
 import { openLibrary as realOpenLibrary } from './library';
 import { loadLimits as realLoadLimits } from './limits';
 import { confirmDialog } from './overlay';
@@ -30,6 +30,8 @@ async function realRemoveProject(project: Project): Promise<void> {
 /** Откат изменения агента: подтверждение показывает главный вид. */
 const realRollback = (id: Change['id'], fileCount: number): Promise<void> => realRollbackChange(id, fileCount, syncChat);
 const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncChat);
+/** Порядок блоков правой панели сохраняет главный вид: его данные зеркалят плитки. */
+const realSaveInspectorOrder = async (order: string[]): Promise<void> => { await saveSettings({ inspector_order: order }); };
 
 const table = {
   downloadUpdate: realDownloadUpdate,
@@ -56,6 +58,7 @@ const table = {
   selectChange: realSelectChange,
   rollbackChange: realRollback,
   restoreTurn: realRestore,
+  saveInspectorOrder: realSaveInspectorOrder,
   ...surfaceActions,
 };
 exposeActions(table as unknown as Record<string, (...args: never[]) => unknown>);
@@ -81,6 +84,7 @@ export const togglePanel = remote('togglePanel', realTogglePanel);
 export const selectChange = remote('selectChange', realSelectChange);
 export const rollbackChange = remote('rollbackChange', realRollback);
 export const restoreTurn = remote('restoreTurn', realRestore);
+export const saveInspectorOrder = remote('saveInspectorOrder', realSaveInspectorOrder);
 
 export const downloadUpdate = remote('downloadUpdate', realDownloadUpdate);
 export const restartForUpdate = remote('restartForUpdate', realRestartForUpdate);

@@ -197,7 +197,7 @@ export function MessageRail() {
       aria-label="Навигация по сообщениям"
       onPointerLeave={scheduleHide}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') return hide();
+        if (event.key === 'Escape') { event.preventDefault(); return hide(); }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
         const items = [...(track.current?.querySelectorAll<HTMLElement>('.message-rail-tick') ?? [])];
         const at = items.indexOf(document.activeElement as HTMLElement);

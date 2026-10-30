@@ -442,6 +442,8 @@ export function actionText(event: ActionEvent): string {
   const displayName = data.display_name || data.name;
   const command = brief(args.command ?? args.cmd);
   const query = brief(args.query ?? args.pattern);
+  // ответ на вопросы агента: что выбрал или написал человек, одной строкой
+  const reply = brief(String((result.response as { answer?: unknown } | undefined)?.answer ?? '').split('\n').filter((line) => line.startsWith('→ ')).map((line) => line.slice(2)).join('; '));
   let site = '';
   try {
     site = new URL(String(args.url ?? '')).hostname.replace(/^www\./, '');
@@ -471,7 +473,7 @@ export function actionText(event: ActionEvent): string {
     'quality.run': args.report_id ? ['Читаю отчёт качества', 'Отчёт качества прочитан'] : ['Проверяю качество кода', 'Качество кода проверено'],
     'task.delegate': ['Передаю подзадачу агенту', 'Подзадача выполнена'],
     'task.complete': ['Подвожу итог', 'Задача завершена'],
-    'task.ask_user': ['Ожидаю уточнения', 'Уточнение получено'],
+    'task.ask_user': ['Ожидаю уточнения', reply ? `Ответ пользователя: ${reply}` : 'Уточнение получено'],
   };
   const known = titles[data.name ?? ''];
   if (!pending && result.ok === false) return `Не выполнено: ${known?.[1] ?? displayName}`;

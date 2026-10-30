@@ -153,6 +153,7 @@ async function openLocal(current: Chat, version: number): Promise<void> {
   if (turn.turn?.status === 'failed') setStatus(`Ошибка: ${turn.turn.summary || 'ответ прерван'}`);
   else setStatus(turn.active ? 'Агент работает…' : 'Готово');
   await showRequests();
+  if (stale(version, current.id)) return;
   void refreshQueue().catch(() => undefined);
   if (turn.active) void attachLocal(current.id);
 }
@@ -278,7 +279,7 @@ async function openCloud(current: Chat, version: number): Promise<void> {
 
 export async function syncCloud(): Promise<void> {
   const current = view.get().chat;
-  if (!current) return;
+  if (!current || isDevelopment()) return;
   const version = view.get().version;
   const id = encodeURIComponent(String(current.id));
   const [page, fresh] = await Promise.all([
@@ -382,6 +383,7 @@ interface Submission {
 }
 let submission: Submission | null = null;
 let pendingSend: { fingerprint: string; key: string; body: Record<string, unknown> } | null = null;
+let localSends = 0;
 let createKey: string | null = null;
 let localPreparation: object | null = null;
 
@@ -432,7 +434,8 @@ async function sendLocalDraft(prepared: () => void): Promise<void> {
   const sent = releaseAttachments();
   pinFeed();
   chat.set({
-    optimistic: { id: 'pending-user', role: 'user', content, metadata: {}, attachments: sent },
+    // номер временного узла у каждой отправки свой: сообщение сервера наследует его ключ в ленте
+    optimistic: { id: `pending-user-${++localSends}`, role: 'user', content, metadata: {}, attachments: sent },
     running: true, turnEnded: false, deltaSeen: false, liveStatus: 'Думаю…', plan: null,
   });
   prepared();
@@ -542,19 +545,20 @@ export async function sendCloud(): Promise<void> {
     const result = await api<{ run_id: string }>(cloudPath(`chats/${encodeURIComponent(String(id))}/messages`), {
       method: 'POST', headers: { ...json, 'Idempotency-Key': key }, body: JSON.stringify({ ...pending.body, client_message_id: key }), signal,
     });
+    // сервер принял сообщение: ключи повтора израсходованы, даже если отправку уже остановили
+    if (pendingSend === pending) pendingSend = null;
+    createKey = null;
     if (context.cancelled) {
       await post(cloudPath(`runs/${encodeURIComponent(result.run_id)}/cancel`));
       return;
     }
     if (!current()) return;
-    pendingSend = null;
-    createKey = null;
     cloudCursor.value = '0';
     chat.set({ runId: result.run_id });
     bindProgress({ runId: result.run_id });
     await syncCloud();
     await refreshLists();
-    await attachCloud(id);
+    if (current() && currentChatId() === id) await attachCloud(id);
   } catch (error) {
     if (current()) {
       setRunning(false);
@@ -699,7 +703,10 @@ export async function chooseWorkspace(): Promise<void> {
   const project = data.get().projects.find((item) => item.id === Number(value.project_id)) ?? null;
   const open = view.get().chat;
   if (open) {
+    const version = view.get().version;
     const updated = await patch<Chat>(`/api/chats/${open.id}`, { project_id: project?.id ?? null });
+    // пока сохранялось, открыли другой чат: его папку не трогаем
+    if (stale(version, open.id)) return;
     view.set({ chat: updated });
   }
   view.set({ project });
@@ -709,20 +716,25 @@ export async function chooseWorkspace(): Promise<void> {
 export async function changeChatModel(model: string): Promise<void> {
   const open = view.get().chat;
   if (isCloud()) {
-    if (open) adoptChat(await patch<Chat>(cloudPath(`chats/${encodeURIComponent(String(open.id))}`), { model, expected_version: open.version }));
+    if (open) adoptOpen(await patch<Chat>(cloudPath(`chats/${encodeURIComponent(String(open.id))}`), { model, expected_version: open.version }));
     composer.set({ cloudModel: { ...composer.get().cloudModel, [ui.get().scope]: model } });
     return;
   }
   await post('/api/models/select', { model });
   data.set({ settings: { ...data.get().settings, selected_model: model } });
-  if (open && view.get().page === 'chat') view.set({ chat: await patch<Chat>(`/api/chats/${open.id}`, { model }) });
+  if (open && view.get().page === 'chat') adoptOpen(await patch<Chat>(`/api/chats/${open.id}`, { model }));
   notify('Модель выбрана');
 }
 
 export async function changeAgentMode(mode: AgentMode): Promise<void> {
   composer.set({ agentMode: mode });
   const open = view.get().chat;
-  if (open && isDevelopment()) view.set({ chat: await patch<Chat>(`/api/chats/${open.id}`, { mode }) });
+  if (open && isDevelopment()) adoptOpen(await patch<Chat>(`/api/chats/${open.id}`, { mode }));
+}
+
+/** Ответ сохранения настроек чата: применяется, только если этот чат всё ещё открыт. */
+function adoptOpen(updated: Chat): void {
+  if (view.get().chat?.id === updated.id) adoptChat(updated);
 }
 
 export async function savePermission(value: 'ask' | 'trusted' | 'full'): Promise<void> {
@@ -743,11 +755,8 @@ export async function savePermission(value: 'ask' | 'trusted' | 'full'): Promise
     );
     if (choice === null) return;
     target = choice === 'alternative' ? 'trusted' : 'full';
-  } else if (value === 'trusted' && !(await confirmDialog(
-    'Включить автоматический режим?',
-    'Докки будет сам проверять каждое действие на нужность для задачи и безопасность и выполнять его без вопросов, если всё в порядке. Сомнительные действия по-прежнему придут вам на подтверждение. Режим действует только для выбранного проекта и текущего аккаунта.',
-    'Включить',
-  ))) return;
+  }
+  // автоматический режим - умолчание: сомнительные действия он и так присылает на подтверждение, лишний вопрос не нужен
   if (target === previous) return;
   if (owner !== data.get().account?.user?.id || version !== view.get().version || project?.id !== view.get().project?.id) return;
   await saveSettings({

@@ -155,6 +155,22 @@ def _failed_file() -> Path:
     return updates_dir() / "failed.json"
 
 
+def _newest_file() -> Path:
+    # новейшая версия, которая уже работала с этой папкой данных; в отличие от ready.json старые копии её не понижают
+    return data_dir() / "newest-version"
+
+
+def newer_version_seen() -> str | None:
+    """Версия новее запущенной, уже работавшая с этими данными: значит, открыта старая копия приложения."""
+    if not is_packaged_build():
+        return None
+    try:
+        seen = _newest_file().read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return seen if is_newer(seen, __version__) else None
+
+
 def _hidden_flags() -> int:
     # помощник переживает выход приложения и не показывает окна: CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     return 0x08000000 | 0x00000200
@@ -256,6 +272,11 @@ class Updater:
             return
         try:
             _ready_file().write_text(json.dumps({"version": __version__, "pid": os.getpid(), "at": time.time()}), encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            if newer_version_seen() is None:
+                _newest_file().write_text(__version__, encoding="ascii")
         except OSError:
             pass
 

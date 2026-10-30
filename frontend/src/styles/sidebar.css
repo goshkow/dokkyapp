@@ -81,6 +81,8 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 .chat-row:hover, .chat-row[data-selected] { background: var(--hover); }
 .chat-item { flex: 1 1 auto; min-width: 0; min-height: 38px; padding: 4px 11px; border-radius: 10px; font-size: var(--fs-15); text-align: left; color: var(--text); }
 .chat-item > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* состояние чата стоит на месте времени: строка не прыгает, когда агент начинает или заканчивает */
+.chat-row > .chat-state[data-slot="time"] { font-size: var(--fs-12); width: 2.4em; justify-items: end; }
 .chat-time { flex: none; min-width: 2.4em; text-align: right; font-size: var(--fs-12); color: var(--faint); font-variant-numeric: tabular-nums; }
 .chat-more { flex: 0 0 26px; width: 26px; height: 26px; margin: 0 4px 0 2px; border-radius: 6px; opacity: 0; transition: opacity 120ms ease, background-color 150ms ease; }
 .chat-row:hover .chat-more, .chat-row[data-selected] .chat-more, .chat-row:focus-within .chat-more { opacity: 1; }

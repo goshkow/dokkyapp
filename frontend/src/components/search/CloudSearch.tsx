@@ -115,11 +115,12 @@ export function CloudSearch() {
       if (editRef.current && !start.current?.contains(event.target as Node)) { input.current?.blur(); endEdit(); }
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && editRef.current) { input.current?.blur(); endEdit(); }
+      if (event.key === 'Escape' && !event.defaultPrevented && editRef.current) { event.preventDefault(); input.current?.blur(); endEdit(); }
     };
+    // перехват: Esc закрывает правку раньше, чем навигация с клавиатуры (state/keyNav.ts) уведёт фокус в меню
     document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', key); };
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', key, true); };
   }, []);
 
   useEffect(() => { setText(state.query); }, [state.query]);
@@ -223,7 +224,7 @@ export function CloudSearch() {
                   event.preventDefault();
                   submit();
                 }
-                if (event.key === 'Escape' && open) setShow(false);
+                if (event.key === 'Escape' && open) { event.preventDefault(); setShow(false); }
               }}
             />
             <button

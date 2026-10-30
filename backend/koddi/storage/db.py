@@ -14,8 +14,13 @@ DB_PATH = data_dir() / "koddi.sqlite3"
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 
 
+# на Windows при тяжёлой работе с диском (антивирус, массовое удаление) запись
+# в WAL может ждать дольше стандартных 5 секунд, и задача падала с database is locked
+BUSY_TIMEOUT_SECONDS = 30
+
+
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
