@@ -2,8 +2,9 @@
    плюс подтяжка списка и лимитов, когда окно снова становится видимым, и раз в минуту. */
 import { onBrowserSession } from './browser';
 import { attachLocal, syncLocal } from './chat';
+import { reloadPermissions } from './queue';
 import { showRequests } from './chatAgent';
-import { onQuestion, onRunState } from './chatActivity';
+import { markSeen, onQuestion, onRunState } from './chatActivity';
 import { chat, ctl, currentChatId, isDevelopment } from './chatCore';
 import { data, loadCloud, loadLocal, revoke } from './data';
 import { loadLimits } from './limits';
@@ -59,9 +60,27 @@ async function remoteTurn(event: Event): Promise<void> {
 }
 
 let started = false;
+// карточка вопроса не должна потеряться: без неё ход ждёт ответа вечно
+function loadRequests(attempt = 0): void {
+  showRequests().catch(() => {
+    if (attempt < 3) window.setTimeout(() => loadRequests(attempt + 1), 1000 * (attempt + 1));
+  });
+}
+
+let lost = false;
 function listen(): void {
   if (source) return;
   source = new EventSource('/api/events');
+  source.addEventListener('error', () => { lost = true; });
+  // связь вернулась: за время обрыва ход мог начаться, закончиться или задать вопрос
+  source.addEventListener('open', () => {
+    if (!lost) return;
+    lost = false;
+    sweep(true);
+    if (!isDevelopment() || ctl.stream || currentChatId() == null) return;
+    void syncLocal().catch(() => undefined);
+    loadRequests();
+  });
   source.addEventListener('dokky.auth_revoked', () => revoke());
   for (const kind of ['dokky.chat.updated', 'dokky.chat.deleted']) source.addEventListener(kind, refreshChats);
   // агент открыл или закрыл страницу во встроенном браузере
@@ -76,19 +95,24 @@ function listen(): void {
   // новый чат с телефона появляется в списке сразу
   source.addEventListener('remote.chats', () => { void loadLocal(false).catch(() => undefined); refreshRemote(); });
   source.addEventListener('remote.status', refreshRemote);
+  // режим сменили с телефона: поле ввода показывает то же
+  source.addEventListener('remote.settings', () => {
+    void reloadPermissions().catch(() => undefined);
+    void syncLocal().catch(() => undefined);
+  });
   // агент ждёт ответа: карточка появляется, даже если окно не читает поток этого хода (очередь, переподключение)
   source.addEventListener('agent.request.created', (event) => {
     const chatId = chatOf(event);
     if (chatId !== null) onQuestion(chatId, true);
     if (chatId === null || !isDevelopment() || String(currentChatId()) !== String(chatId)) return;
-    void showRequests().catch(() => undefined);
+    loadRequests();
     if (!ctl.stream) void remoteTurn(event).catch(() => undefined);
   });
   // на запрос агента ответили с телефона: карточка в открытом чате закрывается
   source.addEventListener('agent.request.resolved', (event) => {
     const chatId = chatOf(event);
     if (chatId !== null) onQuestion(chatId, false);
-    if (chatId !== null && isDevelopment() && String(currentChatId()) === String(chatId)) void showRequests().catch(() => undefined);
+    if (chatId !== null && isDevelopment() && String(currentChatId()) === String(chatId)) loadRequests();
   });
   // ход начался или закончился в любом чате: меню показывает крутилку или синюю точку
   source.addEventListener('agent.run.state', (event) => {
@@ -96,6 +120,11 @@ function listen(): void {
       const value = JSON.parse((event as MessageEvent<string>).data) as { chat_id?: unknown; active?: unknown };
       if (typeof value.chat_id === 'number') onRunState(value.chat_id, value.active === true);
     } catch { /* повреждённое событие */ }
+  });
+  // чат компьютера прочитали на сайте или телефоне: синяя точка «готово» в меню снимается и здесь
+  source.addEventListener('chat.read', (event) => {
+    const chatId = chatOf(event);
+    if (chatId !== null) markSeen(chatId);
   });
   // обновление приложения: состояние для настроек и точки у аккаунта
   source.addEventListener('update.state', (event) => {

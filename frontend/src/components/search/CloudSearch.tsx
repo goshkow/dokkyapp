@@ -236,7 +236,7 @@ export function CloudSearch() {
               onClick={canClear ? submit : undefined}
             >
               {canStop ? <Square aria-hidden="true" /> : canClear ? <X aria-hidden="true" /> : <Search aria-hidden="true" />}
-              <span className="ai-search-submit-label">{canStop ? 'Стоп' : 'Найти'}</span>
+              {!canStop && !canClear && <span className="ai-search-submit-label">Найти</span>}
             </button>
           </div>
           <div className="ai-suggestions-wrap" inert={!open}>

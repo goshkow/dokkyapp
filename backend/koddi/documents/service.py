@@ -188,12 +188,22 @@ def _office_text(data: bytes, suffix: str, max_chars: int) -> tuple[str, list[di
 
 # обычный текст: читается как есть с определением кодировки
 TEXT_SUFFIXES = frozenset({
-    ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".xml", ".css", ".scss", ".less", ".html", ".htm",
+    ".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".xml", ".svg", ".css", ".scss", ".less", ".html", ".htm",
     ".csv", ".tsv", ".log", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sql", ".sh", ".ps1", ".bat",
     ".go", ".rs", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".vue", ".svelte",
 })
 OFFICE_SUFFIXES = frozenset({".docx", ".xlsx", ".pptx"})
-READABLE_SUFFIXES = TEXT_SUFFIXES | OFFICE_SUFFIXES
+READABLE_SUFFIXES = TEXT_SUFFIXES | OFFICE_SUFFIXES | {".pdf"}
+
+
+def document_limit(name: str | Path) -> int:
+    """PDF с картинками намного тяжелее текста, а разбирает его отдельный процесс."""
+    if Path(name).suffix.lower() == ".pdf":
+        from koddi.documents.pdf_worker import MAX_PDF_BYTES
+
+        return MAX_PDF_BYTES
+    return MAX_DOCUMENT_BYTES
+
 
 def extract_text(
     path: Path, max_chars: int = 200_000, *, source_bytes: bytes | None = None,
@@ -202,14 +212,18 @@ def extract_text(
         raise ValueError("Invalid document character limit")
     suffix = path.suffix.lower()
     if suffix not in READABLE_SUFFIXES:
-        # PDF требует отдельного изолированного парсера с лимитом памяти на распаковку
         raise ValueError("Document type does not support bounded text extraction")
+    limit = document_limit(path)
     if source_bytes is None:
         with path.open("rb") as handle:
-            source_bytes = handle.read(MAX_DOCUMENT_BYTES + 1)
-    if len(source_bytes) > MAX_DOCUMENT_BYTES:
+            source_bytes = handle.read(limit + 1)
+    if len(source_bytes) > limit:
         raise ValueError("Document exceeds input byte limit")
     default_outline = [{"level": 1, "title": path.name[:255]}]
+    if suffix == ".pdf":
+        from koddi.documents.pdf_worker import pdf_text
+
+        return pdf_text(source_bytes, max_chars), default_outline
     if suffix in {".docx", ".xlsx", ".pptx"}:
         text, outline = _office_text(source_bytes, suffix, max_chars)
         return text, outline or default_outline
@@ -241,7 +255,7 @@ def index_document(source_path: str, attachment_id: int | None = None) -> dict:
     path = Path(item["stored_path"])
     if Path(source_path) != path or not owns(item["owner_id"], owner):
         raise HTTPException(404, "Вложение не найдено")
-    data = _read_attachment_bytes(item, MAX_DOCUMENT_BYTES)
+    data = _read_attachment_bytes(item, document_limit(item["original_name"]))
     text, outline = extract_text(Path(item["original_name"]), source_bytes=data)
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")

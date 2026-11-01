@@ -177,6 +177,15 @@ html.tile #composer .composer-field { box-sizing: border-box; height: 100%; min-
 html.tile #composer .composer-field::after { inset: auto 24px 0; }
 
 /* вид плитки «Чат / Поиск» в режиме чата: переключатель целиком - содержимое нативного стекла, своей подложки нет */
+html.tile .tile-pill { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 100%; padding: 0 16px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-14, 14px); cursor: pointer; }
+@media (hover: hover) and (pointer: fine) {
+  html.tile .tile-pill:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+}
+html.tile .tile-pill svg { flex: none; width: 18px; height: 18px; }
+html.tile .tile-pill-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html.tile .tile-pill-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #48b87b; }
+html.tile .tile-pill[data-offline] .tile-pill-dot { background: var(--faint); }
+html.tile .tile-pill[data-offline] .tile-pill-name { color: var(--muted); }
 html.tile .tile-product { position: fixed; inset: 0; width: 100%; height: 100%; transform: none; background: transparent; border-color: transparent; }
 html.tile .tile-product .ai-product-indicator {
   background: color-mix(in srgb, var(--text) 15%, transparent);

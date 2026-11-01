@@ -6,7 +6,7 @@ import { goBack, goForward, togglePanel } from '../../state/remote';
 import { canGoBack, canGoForward, useNav } from '../../state/view';
 import { DialogHost, ToastHost } from '../ui/DialogHost';
 import { TileComposer } from '../chat/ComposerField';
-import { TileProduct } from '../chat/SiteSurface';
+import { TilePill, TileProduct } from '../chat/SiteSurface';
 import { Inspector } from '../inspector/Inspector';
 import { Sidebar } from '../sidebar/Sidebar';
 
@@ -18,6 +18,7 @@ export function TileApp({ role }: { role: Role }) {
   const forward = useNav(canGoForward);
   if (role === 'composer') return <>{ready && <TileComposer />}<ToastHost /></>;
   if (role === 'product') return <>{ready && <TileProduct />}</>;
+  if (role === 'pill') return <>{ready && <TilePill />}</>;
   if (role === 'inspector') {
     return (
       <div id="tile-inspector" className="tile-inspector">

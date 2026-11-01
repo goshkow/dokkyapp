@@ -43,6 +43,8 @@ def development_api():
     change = {"id": 5, "description": "Правка app.py", "status": "applied", "diff": DIFF, "files": [{"path": "app.py", "before_hash": "a", "after_hash": "b"}]}
     api.extra["/api/chats/1/messages"] = lambda m, p, b, q: messages
     api.extra["/api/chats/1/turn"] = lambda m, p, b, q: {"active": False}
+    # открытый чат окно отмечает прочитанным, чтобы он стал прочитанным и на сайте
+    api.extra["/api/chats/1/seen"] = lambda m, p, b, q: {"ok": True}
     api.extra["/api/chats/1/changes"] = lambda m, p, b, q: [change]
     api.extra["/api/chats/1/plan"] = lambda m, p, b, q: {"turn_id": 7, "steps": [{"title": "Прочитать код", "status": "completed"}, {"title": "Исправить таймер", "status": "running"}], "document": "# План\n\n1. Прочитать\n2. Исправить", "ready": True}
     api.extra["/api/projects/1/files"] = lambda m, p, b, q: {"items": [{"path": "app.py"}, {"path": "README.md"}]}
@@ -57,7 +59,7 @@ def development_api():
 
 
 def open_chat(page, title="Фризы при возврате из фона"):
-    page.click("text=zaprethub.new")
+    page.click("text=demo-app")
     page.wait_for_timeout(400)
     page.click(f"text={title}")
     page.wait_for_timeout(900)
@@ -341,7 +343,9 @@ def scenario_inspector():
         # блоки переставляются перетаскиванием за заголовок: «План» наверх, порядок уходит в настройки
         page.click("#card-plan .card-head")
         page.wait_for_timeout(600)
-        order = lambda: page.evaluate("[...document.querySelectorAll('#inspector-content > .inspector-card')].map((n) => n.dataset.card)")
+        def order():
+            return page.evaluate("[...document.querySelectorAll('#inspector-content > .inspector-card')].map((n) => n.dataset.card)")
+
         plan = page.locator("#card-plan .card-head").bounding_box()
         diff = page.locator("#inspector-diff .card-head").bounding_box()
         page.mouse.move(plan["x"] + 40, plan["y"] + plan["height"] / 2)
@@ -802,7 +806,7 @@ def scenario_audit_items():
         check(brand[0] == 17 and "Unbounded" in brand[1], f"бренд: 17 px и шрифт Unbounded: {brand}")
         check(page.evaluate("document.querySelector('#scope-toggle').getAttribute('aria-pressed')") == "true", "«Code» должен быть включён в разработке")
         # проекты и порядок запоминаются между запусками
-        page.click("text=zaprethub.new")
+        page.click("text=demo-app")
         page.wait_for_timeout(500)
         page.click("text=Фризы при возврате из фона")
         page.wait_for_timeout(900)
@@ -825,7 +829,7 @@ def scenario_sidebar_search_reorder():
     api = development_api()
     with browser_page(api) as page:
         page.wait_for_timeout(1200)
-        page.click("text=zaprethub.new")
+        page.click("text=demo-app")
         page.wait_for_timeout(500)
         page.click("#chat-search")
         page.fill("#chat-search-input", "приложения")
@@ -1095,7 +1099,7 @@ def scenario_par_login():
         page.click("#auth-login")
         page.wait_for_timeout(500)
         check(page.evaluate("window.__opened.length") == 0, "при ошибке PAR браузер не должен открываться")
-        check("Слишком много попыток" in page.locator(".toast").inner_text() and page.locator("#auth-login").is_enabled(), "ошибка PAR не показана уведомлением")
+        check("Слишком много попыток" in page.locator("#auth-screen [role=alert]").inner_text() and page.locator("#auth-login").is_enabled(), "ошибка PAR не показана уведомлением")
 
 
 def scenario_context_menu_rail_title():
@@ -1826,7 +1830,7 @@ def scenario_site_surface():
         page.wait_for_timeout(200)
         check(page.locator(".site-surface").is_visible() and page.locator("#composer").count() == 0, "чат другого компьютера открывается страницей сайта")
         check([item["args"] for item in commands("open-chat")][-1] == {"id": 13}, "открыт чат другого компьютера")
-        page.click("text=zaprethub.new")
+        page.click("text=demo-app")
         page.wait_for_timeout(400)
         check(page.locator(".site-surface").is_hidden(), "переход к своему чату закрывает чужой")
         check(not page.errors, f"ошибки страницы: {page.errors}")
@@ -1962,13 +1966,156 @@ def scenario_keyboard_and_menus():
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
+def scenario_first_run_questions_and_missing_folder():
+    """При входе только вопрос про чужие данные, про телефон - у первой сессии; у проекта без папки есть пометка и кнопки."""
+    api = development_api()
+    answers = []
+    api.projects[0]["exists"] = False
+
+    def local_data(method, path, body, query):
+        if method == "POST":
+            answers.append(("data", body))
+        return {"ask": not answers, "chats": 3}
+
+    def remote(method, path, body, query):
+        if method == "PUT":
+            answers.append(("remote", body))
+        return {"enabled": False, "asked": False, "state": "off", "shared": {}}
+
+    created = []
+
+    def new_chat(method, path, body, query):
+        if method == "POST":
+            created.append(body)
+        return {"id": 50, "title": "Новый чат", "mode": "code", "model": "dokky-code", "project_id": None, "updated_at": "2026-10-17T11:00:00+00:00"} if method == "POST" else []
+
+    api.extra["/api/local-data"] = local_data
+    api.extra["/api/remote-control"] = remote
+    api.extra["/api/chats"] = new_chat
+    api.extra["/api/chats/50/messages"] = lambda m, p, b, q: []
+    api.extra["/api/chats/50/turn"] = lambda m, p, b, q: {"active": False}
+    api.extra["/api/chats/50/plan"] = lambda m, p, b, q: {"steps": [], "document": "", "turn_id": None}
+    api.extra["/api/chats/50/changes"] = lambda m, p, b, q: []
+    with browser_page(api) as page:
+        page.route("**/api/chats/50/messages", lambda route: route.fulfill(status=200, content_type="text/event-stream", body=sse([("turn.completed", {"turn_id": 9})])) if route.request.method == "POST" else route.fallback())
+        page.wait_for_selector("dialog[open]:has-text('Чьи это данные?')")
+        check("3 чата" in page.locator("dialog[open]").inner_text(), "сколько чатов нашлось")
+        page.click("dialog[open] button:has-text('Начать с чистого листа')")
+        page.wait_for_function("!document.querySelector('dialog[open]')")
+        check(answers == [("data", {"take": False})], f"при входе нет вопроса про телефон: {answers}")
+        check(page.locator(".project-missing").first.inner_text() == "Папка не найдена", "папка проекта не найдена")
+        page.wait_for_selector(".project-missing-actions button:has-text('Указать заново')", state="attached")
+        # про доступ с телефона спрашивает первая сессия в режиме кода, сессия создаётся после ответа
+        page.fill("#prompt", "Первая сессия")
+        page.click("#send")
+        page.wait_for_selector("dialog[open]:has-text('Доступ с телефона')")
+        check(not created, "сессия создана раньше ответа")
+        page.click("dialog[open] button:has-text('Отмена')")
+        page.wait_for_function("!document.querySelector('dialog[open]')")
+        page.wait_for_timeout(300)
+        check(not created and page.input_value("#prompt") == "Первая сессия", "отмена оставляет текст в поле и ничего не отправляет")
+        check(answers == [("data", {"take": False})], f"отмена не считается ответом: {answers}")
+        page.click("#send")
+        page.wait_for_selector("dialog[open]:has-text('Доступ с телефона')")
+        page.click("dialog[open] button:has-text('Включить')")
+        page.wait_for_function("!document.querySelector('dialog[open]')")
+        check(answers[-1] == ("remote", {"enabled": True}), f"ответ ушёл на сервер: {answers}")
+        page.wait_for_timeout(600)
+        check(len(created) == 1, f"после ответа сессия создана один раз: {created}")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+
+
+def scenario_git_search_palette():
+    """Ветка, откат куска, коммит, отправка, поиск по чату и быстрый переход."""
+    api = development_api()
+    calls = []
+
+    def record(name, value):
+        def handler(m, p, b, q):
+            calls.append((name, b))
+            return value
+        return handler
+
+    api.extra["/api/projects/1/git"] = lambda m, p, b, q: {
+        "repo": True, "branch": "dev", "head": "956779c", "branches": ["dev", "main", "release/1.0"],
+        "files": [{"path": "backend/app.py", "status": "modified", "suggested": True}, {"path": ".env", "status": "new", "suggested": False}],
+        "truncated": False, "remote": "origin", "remote_url": "git@github.com:me/app.git", "upstream": "dev", "ahead": 2, "behind": 0,
+        "suggestion": "Чинит таймер",
+    }
+    api.extra["/api/projects/1/git/commit"] = record("commit", {"ok": True, "commit": "abc1234", "files": []})
+    api.extra["/api/projects/1/git/push"] = record("push", {"ok": True, "branch": "dev", "remote": "origin", "target": "dev"})
+    api.extra["/api/projects/1/git/switch"] = record("switch", {"ok": False, "error": "Переключение затёрло бы незакоммиченные правки: a.txt"})
+    api.extra["/api/changes/5/rollback-hunk"] = record("hunk", {"rolled_back": False, "reason": "conflict", "error": "кусок не откатить, файл не тронут"})
+    api.extra["/api/chats/1/messages/search"] = lambda m, p, b, q: {"messages": [1, 3], "total": 2}
+    with browser_page(api) as page:
+        page.wait_for_timeout(1200)
+        open_chat(page)
+        page.wait_for_timeout(400)
+        # фокус в поиске веток: буквы не уходят в поле ввода
+        page.click("#branch-button")
+        page.wait_for_timeout(250)
+        page.keyboard.type("rel")
+        page.wait_for_timeout(150)
+        check(page.locator(".branch-list .menu-item").all_inner_texts() == ["release/1.0", "Создать ветку rel"], "поиск ветки")
+        check(page.locator("#prompt").input_value() == "", "буквы ушли в поле ввода")
+        page.locator(".branch-search").fill("main")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        check(page.locator(".toast", has_text="затёрло").count() == 1, "ошибка переключения видна")
+        # откат куска и понятный отказ
+        page.locator("#inspector-diff button").first.click()
+        page.wait_for_timeout(400)
+        page.locator(".change-file").first.click()
+        page.wait_for_timeout(250)
+        page.locator(".diff-line.hunk").first.hover()
+        page.locator(".diff-hunk-revert").first.click()
+        page.wait_for_timeout(300)
+        check(page.locator(".toast", has_text="файл не тронут").count() == 1, "отказ отката виден")
+        # за уведомлениями нет тёмной подложки: тень обрезалась бы по стопке
+        check(page.evaluate("getComputedStyle(document.querySelector('.toast')).boxShadow") == "none", "тень уведомления")
+        # коммит только отмеченных, сообщение предложено агентом
+        check(page.locator(".git-commit-message").input_value() == "Чинит таймер", "сообщение от агента")
+        page.get_by_role("button", name="Закоммитить").click()
+        page.wait_for_timeout(300)
+        check(("commit", {"message": "Чинит таймер", "paths": ["backend/app.py"]}) in calls, ".env не должен попасть в коммит")
+        # отправка только после подтверждения
+        page.get_by_role("button", name="Отправить ↑2").click()
+        page.wait_for_timeout(300)
+        check(not [call for call in calls if call[0] == "push"], "отправка без подтверждения")
+        check("origin" in page.locator("dialog[open]").last.inner_text(), "куда отправится - видно")
+        page.locator("dialog[open] button", has_text="Отправить").click()
+        page.wait_for_timeout(400)
+        check(("push", {"branch": "dev", "remote": "origin", "confirm": True}) in calls, "отправка после подтверждения")
+        # поиск по чату
+        page.evaluate("window.koddiMenu('chat-search')")
+        page.wait_for_timeout(200)
+        page.keyboard.type("таймер")
+        page.wait_for_timeout(600)
+        check(page.locator(".chat-search-count").inner_text() == "2 из 2", "счётчик поиска")
+        check(page.evaluate("CSS.highlights.get('chat-search')?.size ?? 0") >= 1, "подсветка совпадений")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+        check(page.locator(".chat-search").count() == 0 and page.evaluate("CSS.highlights.get('chat-search')?.size ?? 0") == 0, "поиск закрыт")
+        # быстрый переход: фокус возвращается в поиск по чату после закрытия окна
+        page.evaluate("window.koddiMenu('palette')")
+        page.wait_for_timeout(300)
+        page.keyboard.type("найти")
+        page.wait_for_timeout(150)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+        check(page.evaluate("document.activeElement.getAttribute('aria-label')") == "Найти в чате", "фокус после палитры")
+        check(not page.errors, f"ошибки страницы: {page.errors}")
+    check(not api.unexpected, f"лишние запросы: {api.unexpected}")
+
+
 SCENARIOS = [
+    scenario_git_search_palette,
     scenario_update_notice, scenario_update_busy_agent,
     scenario_boot_and_open, scenario_send_stream, scenario_repeated_sends_do_not_leak, scenario_requests_queue_plan, scenario_agent_questions_and_diff_layout, scenario_permission_modes, scenario_inspector, scenario_project_map, scenario_quality_card,
     scenario_settings_pages_library, scenario_cloud, scenario_cloud_send, scenario_search, scenario_attachments_and_mode,
     scenario_live_stream, scenario_shell_stability, scenario_audit_items,
     scenario_sidebar_search_reorder, scenario_pin_and_expand, scenario_shell_rules, scenario_motion_rules, scenario_long_chat_list, scenario_tiles_library_media_auth, scenario_par_login, scenario_context_menu_rail_title, scenario_media_files_viewer, scenario_voice_segments, scenario_settings_overhaul, scenario_math_and_map, scenario_developer_access, scenario_usage_hints, scenario_payment_states, scenario_subscription_sync, scenario_skills_menu_and_project_menu, scenario_tasks_automations_skills_pages,
-    scenario_site_surface, scenario_chat_without_project, scenario_keyboard_and_menus,
+    scenario_site_surface, scenario_first_run_questions_and_missing_folder, scenario_chat_without_project, scenario_keyboard_and_menus,
 ]
 
 

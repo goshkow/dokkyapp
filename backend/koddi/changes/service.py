@@ -443,6 +443,102 @@ def rollback_change_set(change_set_id: int, force: bool = False) -> dict:
     return {"rolled_back": True, "id": change_set_id, "paths": restored, "forced": force}
 
 
+def _hunk_range(start: int, stop: int) -> str:
+    # формат диапазона из заголовка unified diff
+    length = stop - start
+    return str(start + 1) if length == 1 else f"{start + 1 if length else start},{length}"
+
+
+def _hunk_lines(before: str, after: str, header: str) -> tuple[int, list[str], list[str]] | None:
+    """(строка начала в файле после правки, строки до, строки после) куска с этим заголовком. Куски те же, что в
+    unified_diff: заголовок приходит из показанного человеку diff."""
+    old_lines, new_lines = before.splitlines(keepends=True), after.splitlines(keepends=True)
+    for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(3):
+        first, last = group[0], group[-1]
+        if f"@@ -{_hunk_range(first[1], last[2])} +{_hunk_range(first[3], last[4])} @@" == header.strip():
+            return first[3], old_lines[first[1]:last[2]], new_lines[first[3]:last[4]]
+    return None
+
+
+def _find_block(lines: list[str], block: list[str], expected: int) -> list[int]:
+    """Все места, где блок стоит в файле; ближайшее к ожидаемому - первым."""
+    if not block:
+        return []
+    found = [index for index in range(len(lines) - len(block) + 1) if lines[index:index + len(block)] == block]
+    return sorted(found, key=lambda index: abs(index - expected))
+
+
+def rollback_hunk(change_set_id: int, relative: str, header: str) -> dict:
+    """Откатывает один кусок diff, сверяясь с текущим файлом. Откат - новый набор изменений того же хода, его можно отменить.
+
+    Файл мог измениться после правки (другой откатанный кусок, правки человека), поэтому кусок ищется по своему
+    содержимому с контекстом. Нет его или он стоит в нескольких местах - файл не трогаем и говорим почему."""
+    def refused(reason: str, message: str) -> dict:
+        return {"rolled_back": False, "reason": reason, "error": message, "id": change_set_id, "path": relative}
+
+    try:
+        with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            status = conn.execute("SELECT * FROM change_sets WHERE id=? AND owner_id IN (?,?)",
+                                  (change_set_id, *_change_scope())).fetchone()
+            if status is None:
+                return refused("not_found", "Набор изменений не найден")
+            if status["status"] == "rolled_back":
+                return refused("already_rolled_back", "Этот набор изменений уже откатан")
+            change = conn.execute("SELECT * FROM file_changes WHERE change_set_id=? AND path=? ORDER BY id LIMIT 1",
+                                  (change_set_id, relative)).fetchone()
+            project = conn.execute("SELECT path FROM projects WHERE id=?", (status["project_id"],)).fetchone()
+            if change is None or project is None:
+                return refused("not_found", "Файла нет в этом наборе изменений или проект недоступен")
+            before, after = change["before_text"], change["after_text"]
+            if before is None or after is None:
+                return refused("whole_file", "Файл создан или удалён целиком: откатите изменение всего файла")
+            hunk = _hunk_lines(before, after, header)
+            if hunk is None:
+                return refused("not_found", "Такого куска нет в этом изменении")
+            start, old_block, new_block = hunk
+            root = _workspace(project["path"])
+            path = _target(root, relative)
+            current, signature = _state(path)
+            if current is None:
+                return refused("conflict", "Файл уже удалён: кусок не откатить")
+            try:
+                text = current.decode("utf-8")
+            except UnicodeDecodeError:
+                return refused("conflict", "Файл больше не текст в UTF-8: кусок не откатить")
+            lines = text.splitlines(keepends=True)
+            # файл, из которого агент убрал всё: кроме пустоты искать нечего
+            places = [0] if not new_block and not lines else _find_block(lines, new_block, start)
+            if not places:
+                # весь кусок мог быть удалением: тогда без строк контекста искать нечего
+                done = bool(_find_block(lines, old_block, start))
+                return refused("already_rolled_back" if done else "conflict",
+                                "Этот кусок уже откатан" if done else
+                                "Это место в файле изменилось после агента: кусок не откатить, файл не тронут")
+            if len(places) > 1 and places[0] != start:
+                return refused("conflict", "Такой же текст есть в файле в нескольких местах: непонятно, какой откатывать. Файл не тронут")
+            place = places[0]
+            # сдвиг не больше, чем файл вырос или уменьшился: иначе нашёлся случайный такой же текст, а не этот кусок
+            if abs(place - start) > abs(len(lines) - len(after.splitlines(keepends=True))):
+                return refused("conflict", "Это место в файле изменилось после агента: кусок не откатить, файл не тронут")
+            updated = "".join([*lines[:place], *old_block, *lines[place + len(new_block):]])
+            with _apply_files(root, {path: updated.encode("utf-8")}, expected={path: (current, signature)}):
+                new_id = int(conn.execute(
+                    "INSERT INTO change_sets(project_id, turn_id, description, diff, owner_id) VALUES (?, ?, ?, ?, ?)",
+                    (status["project_id"], status["turn_id"], f"Откат куска: {relative}",
+                     unified_diff(relative, text, updated), _change_owner())).lastrowid)
+                conn.execute(
+                    "INSERT INTO file_changes(change_set_id, path, before_hash, after_hash, before_text, after_text) VALUES (?,?,?,?,?,?)",
+                    (new_id, relative, sha256_text(text), sha256_text(updated), text, updated))
+                conn.execute("INSERT INTO snapshots(change_set_id, path, content, existed) VALUES (?,?,?,1)",
+                             (new_id, str(path), current))
+                # ошибка commit тоже должна запускать восстановление исходного файла
+                conn.commit()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        return refused("unsafe", str(exc) if isinstance(exc, _UnsafeRestore) else "Не удалось записать файл")
+    return {"rolled_back": True, "id": change_set_id, "change_set_id": new_id, "path": relative}
+
+
 def _rollback_paths(changes, snapshots, project):
     if not changes or len(changes) != len(snapshots):
         raise _UnsafeRestore("incomplete snapshots")

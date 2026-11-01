@@ -4,7 +4,8 @@
  */
 import { nativeTiles } from '../lib/glass';
 import { toTile } from '../lib/mirror';
-import { openFile as realOpenFile, selectInspector as realSelectInspector } from './workspace';
+import { loadFiles as realLoadFiles, openFile as realOpenFile, selectInspector as realSelectInspector } from './workspace';
 
 export const openFile = toTile('inspector', 'openFile', realOpenFile, nativeTiles);
+export const reloadFiles = toTile('inspector', 'loadFiles', realLoadFiles, nativeTiles);
 export const selectInspector = toTile('inspector', 'selectInspector', realSelectInspector, nativeTiles);

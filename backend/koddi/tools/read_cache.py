@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -13,6 +14,8 @@ class FileReadCache:
         self.entries = OrderedDict()
         self.size = 0
         self.hits = self.misses = self.invalidations = 0
+        # оркестратор читает файлы параллельно: словарь кэша меняется только под замком, сам файл читается без него
+        self.lock = threading.Lock()
 
     @staticmethod
     def version(stat):
@@ -22,15 +25,16 @@ class FileReadCache:
         version = self.version(path.stat())
         key = (str(path), offset, size, *version)
         now = time.monotonic()
-        for old in list(self.entries):
-            if now - self.entries[old][0] > self.ttl or (old[0] == str(path) and old[3:] != version):
-                self.size -= len(self.entries.pop(old)[1])
-        if key in self.entries:
-            self.hits += 1
-            self.entries.move_to_end(key)
-            _, data, digest = self.entries[key]
-            return data, digest
-        self.misses += 1
+        with self.lock:
+            for old in list(self.entries):
+                if now - self.entries[old][0] > self.ttl or (old[0] == str(path) and old[3:] != version):
+                    self.size -= len(self.entries.pop(old)[1])
+            if key in self.entries:
+                self.hits += 1
+                self.entries.move_to_end(key)
+                _, data, digest = self.entries[key]
+                return data, digest
+            self.misses += 1
         with path.open("rb") as handle:
             opened = self.version(os.fstat(handle.fileno()))
             handle.seek(offset)
@@ -40,16 +44,19 @@ class FileReadCache:
         # изменившийся во время чтения файл не становится долгоживущим снимком
         stable = version == opened == after == self.version(path.stat())
         if stable and len(data) <= self.max_bytes:
-            self.entries[key] = (now, data, digest)
-            self.size += len(data)
-            while self.size > self.max_bytes:
-                self.size -= len(self.entries.popitem(last=False)[1][1])
+            with self.lock:
+                if key not in self.entries:
+                    self.entries[key] = (now, data, digest)
+                    self.size += len(data)
+                while self.size > self.max_bytes:
+                    self.size -= len(self.entries.popitem(last=False)[1][1])
         return data, digest
 
     def clear(self):
-        self.invalidations += bool(self.entries)
-        self.entries.clear()
-        self.size = 0
+        with self.lock:
+            self.invalidations += bool(self.entries)
+            self.entries.clear()
+            self.size = 0
 
     def stats(self) -> dict:
         return {"hits": self.hits, "misses": self.misses, "invalidations": self.invalidations,

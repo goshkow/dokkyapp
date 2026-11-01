@@ -95,6 +95,37 @@ def suggest(message: str, *, project_id: int | None, owner: str, root: Path | No
     return [{"name": item["name"], "source": item["source"], "why": ", ".join(hits[:3])} for _, item, hits in scored[:limit]]
 
 
+def _match(items: list[dict[str, Any]], wanted: str) -> dict[str, Any] | None:
+    match = next((item for item in items if item["name"].casefold() == wanted or (item["key"] or "") == wanted), None)
+    if match is None and ":" not in wanted:
+        # навык плагина можно назвать без префикса, если имя однозначно
+        short = [item for item in items if item["source"] == "plugin" and item["name"].casefold().split(":", 1)[1] == wanted]
+        match = short[0] if len(short) == 1 else None
+    return match
+
+
+def needs_consent(name: str, project_id: int | None, root: Path | None) -> bool:
+    """Навык из скачанного плагина агент только предлагает: подключает его человек, каждый раз.
+    Встроенные, свои и подтверждённые навыки проекта агент берёт сам."""
+    from fastapi import HTTPException
+
+    from koddi.policy.account import local_owner
+
+    try:
+        owner = local_owner()
+    except HTTPException:
+        return False
+    match = _match(catalog(project_id, owner, root), (name or "").strip().casefold())
+    return match is not None and match["source"] == "plugin"
+
+
+def available(project_id: int | None, owner: str, root: Path | None, limit: int = 40) -> list[dict[str, Any]]:
+    """Короткий список навыков для контекста хода: модель видит, что есть, и решает сама."""
+    return [{"name": item["name"], "description": item["description"][:120],
+             **({"needs_user_ok": True} if item["source"] == "plugin" else {})}
+            for item in catalog(project_id, owner, root)[:limit]]
+
+
 def load(name: str, *, project_id: int | None, owner: str, root: Path | None, file: str | None = None) -> dict[str, Any]:
     from koddi.skills.service import skill_instruction
 
@@ -107,11 +138,7 @@ def load(name: str, *, project_id: int | None, owner: str, root: Path | None, fi
 
         return read_file(wanted, file, owner)
     items = catalog(project_id, owner, root)
-    match = next((item for item in items if item["name"].casefold() == wanted or (item["key"] or "") == wanted), None)
-    if match is None and ":" not in wanted:
-        # навык плагина можно назвать без префикса, если имя однозначно
-        short = [item for item in items if item["source"] == "plugin" and item["name"].casefold().split(":", 1)[1] == wanted]
-        match = short[0] if len(short) == 1 else None
+    match = _match(items, wanted)
     if match is None:
         manual = next((item for item in list_plugin_entries(owner)
                        if wanted in {item["name"].casefold(), item["name"].casefold().split(":", 1)[1]}), None)
@@ -122,7 +149,7 @@ def load(name: str, *, project_id: int | None, owner: str, root: Path | None, fi
 
         pending = []
         if project_id is not None and root is not None:
-            pending = [item for item in sync(project_id, owner, root) if item["name"].casefold() == wanted and item["status"] != "trusted"]
+            pending = [item for item in sync(project_id, owner, root) if item["kind"] == "skill" and item["name"].casefold() == wanted and item["status"] != "trusted"]
         if pending:
             return {"ok": False, "error": f"project skill '{name}' is not confirmed by the user ({pending[0]['status']}); "
                                           "it cannot be used until the user trusts this version in Dokky"}

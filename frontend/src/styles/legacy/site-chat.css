@@ -360,3 +360,12 @@ main.chat-page {
   grid-template-columns: 112px minmax(0, 1fr);
   font-size: var(--fs-12);
 }
+
+/* без Liquid Glass (Windows): «Чат / Поиск» и поле не крупнее кнопок окна и плиток меню. Переключатель в ряд с кнопками
+   окна (сверху 6px, высота 30px), кнопки поля 32px, как в шапке. Под стеклом на Mac размеры прежние */
+html:not(.glass) .ai-product-switch { top: 6px; width: min(176px, calc(100% - 154px)); height: 30px; padding: 3px; border-radius: 16px; }
+html:not(.glass) .ai-product-switch button { border-radius: 13px; font-size: var(--fs-13); }
+html:not(.glass) .ai-product-indicator { inset: 3px auto 3px 3px; width: calc(50% - 3px); border-radius: 13px; }
+html:not(.glass) .composer-field { min-height: 46px; padding: 6px; border-radius: 23px; }
+html:not(.glass) .composer-field .composer-icon { flex-basis: 32px; width: 32px; height: 32px; }
+html:not(.glass) .composer-field .composer-icon svg { width: 18px; height: 18px; }

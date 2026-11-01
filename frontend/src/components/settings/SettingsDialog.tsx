@@ -49,6 +49,8 @@ const groups: Array<{ title: string; items: Entry[] }> = [
 ];
 
 const all = groups.flatMap((group) => group.items);
+/** Разделы для быстрого перехода (Cmd+K). */
+export const settingsEntries = all.map(({ id, title, keywords }) => ({ id, title, keywords }));
 
 export function SettingsDialog() {
   const open = useSettingsUi((s) => s.open);

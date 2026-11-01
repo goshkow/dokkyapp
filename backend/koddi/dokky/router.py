@@ -103,6 +103,14 @@ def own_remote_host() -> str:
     return value if isinstance(value, str) else ""
 
 
+def own_remote_name() -> str:
+    """Имя этого компьютера: старые регистрации той же установки сервер хранит под другими id."""
+    from koddi.remote_control import remote_control
+
+    value = remote_control.config().get("name")
+    return value if isinstance(value, str) else ""
+
+
 @router.get("/surface")
 async def surface():
     """Есть ли на сервере страница для режима чата. Без неё приложение остаётся на своём чате."""
@@ -117,7 +125,7 @@ async def surface():
     if value.get("protocol") != 1 or value.get("path") != SURFACE_PATH:
         return {"available": False}
     return {"available": True, "url": ORIGIN + SURFACE_PATH, "origin": ORIGIN,
-            "release": str(value.get("release") or "")[:128], "host_id": own_remote_host()}
+            "release": str(value.get("release") or "")[:128], "host_id": own_remote_host(), "host_name": own_remote_name()}
 
 
 @router.post("/surface/session")

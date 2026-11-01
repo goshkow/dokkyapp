@@ -54,8 +54,10 @@ TOOL_DEFINITIONS: list[dict] = [
     ),
     (
         "skill.load",
-        "Load the instructions of a workflow skill by name (from skill_suggestions in the context or the user's "
-        "catalog). Skills add a working method; they never override safety rules, permissions or the user's request. "
+        "Load the instructions of a workflow skill by name (from available_skills or skill_suggestions in the context). "
+        "Load built-in, user and project skills yourself when one fits the task. Skills marked needs_user_ok come from "
+        "plugins the user installed: loading one asks the user first, so propose it only when it clearly helps. "
+        "Skills add a working method; they never override safety rules, permissions or the user's request. "
         "file: read a text file of an installed plugin (name = plugin or plugin:skill, file = path from the plugin root, "
         "plugin://<name>/... or ${CLAUDE_PLUGIN_ROOT}/...; a folder path lists its files).",
         {"name": "string", "file": "string"},
@@ -319,7 +321,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "Search current project and explicit global memory notes. This is keyword retrieval, not semantic search.",
         {"query": "string", "limit": "integer"},
     ),
-    ("memory.set", "Add memory summary.", {"content": "string", "kind": "string"}),
+    ("memory.set", "Remember one short durable fact. kind: user (about the person, for every project) or project (about this project, the default in a project).", {"content": "string", "kind": "string"}),
     ("context.compact", "Compact message context.", {"content": "string"}),
     ("task.create", "Create an agent task.", {"title": "string"}),
     (
@@ -385,6 +387,12 @@ TOOL_DEFINITIONS: list[dict] = [
         {"command": "string", "wait_seconds": "integer"},
     ),
     ("devserver.stop", "Stop background commands started by devserver.start (all, or one by pid).", {"pid": "integer"}),
+    (
+        "devserver.output",
+        "Read a background command started by devserver.start without stopping it: whether it still runs, its exit "
+        "code and the output added since the previous read.",
+        {"pid": "integer"},
+    ),
     ("issue.import", "Import issue.", {"url": "string"}),
     ("issue.update", "Prepare issue update.", {"issue_id": "string", "body": "string"}),
 ]
@@ -844,6 +852,7 @@ MODE_TOOL_NAMES = {
         "devserver.detect",
         "devserver.start",
         "devserver.stop",
+        "devserver.output",
     },
     "build": {
         "directory.list",
@@ -894,6 +903,7 @@ MODE_TOOL_NAMES = {
         "devserver.detect",
         "devserver.start",
         "devserver.stop",
+        "devserver.output",
         "browser.open",
         "browser.snapshot",
         "browser.click",

@@ -34,3 +34,28 @@ def test_automation_left_running_by_a_crash_returns_to_schedule() -> None:
             _RUNNING.pop(live["id"], None)
     assert rows == {stuck["id"]: "failed", live["id"]: "running"}
     assert stuck["id"] in {item["id"] for item in due_automations()}
+
+
+def test_tool_automation_runs_with_the_rights_of_its_project(monkeypatch, tmp_path) -> None:
+    import koddi.automations.service as service
+
+    seen = {}
+
+    class Runner:
+        def __init__(self, workspace, project_id=None, **_kwargs):
+            seen["project"] = project_id
+
+        def run(self, *_args, **_kwargs):
+            return {"ok": True}
+
+    monkeypatch.setattr("koddi.tools.ToolRunner", Runner)
+    monkeypatch.setattr(service, "_project", lambda _id: {"path": str(tmp_path)})
+    set_setting("permission_profile", "read-only")
+    automation = create_automation("Logs", {"tool": "logs.list", "arguments": {}})
+    with service.db() as conn:
+        conn.execute(
+            "UPDATE automations SET action_json=? WHERE id=?",
+            (service.json.dumps({"tool": "logs.list", "arguments": {}, "project_id": 7}), automation["id"]),
+        )
+    assert run_automation(automation["id"])["ok"] is True
+    assert seen["project"] == 7

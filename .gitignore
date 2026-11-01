@@ -61,3 +61,6 @@ backend/koddi/computer_use/native/dokky-computer-helper*
 installer/*/bin/
 installer/*/obj/
 *.profraw
+
+# локальные настройки инструментов
+.claude/

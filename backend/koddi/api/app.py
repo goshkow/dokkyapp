@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import uuid
 import json
 import hashlib
@@ -131,6 +132,27 @@ class WorktreeCleanupIn(BaseModel):
 class CheckpointRestoreIn(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=500)
     force: bool = False
+
+
+class HunkRollbackIn(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    hunk: str = Field(min_length=1, max_length=200)
+
+
+class GitSwitchIn(BaseModel):
+    branch: str = Field(min_length=1, max_length=250)
+    create: bool = False
+
+
+class GitCommitIn(BaseModel):
+    message: str = Field(min_length=1, max_length=5000)
+    paths: list[str] = Field(min_length=1, max_length=200)
+
+
+class GitPushIn(BaseModel):
+    branch: str = Field(min_length=1, max_length=250)
+    remote: str = Field(min_length=1, max_length=250)
+    confirm: bool = False
 
 
 class KnowledgeNoteIn(BaseModel):
@@ -461,6 +483,7 @@ def create_app() -> FastAPI:
             "dev_instructions": get_setting("dev_instructions", ""),
             "launch_at_login": _autostart_enabled(),
             "enter_sends": get_setting("enter_sends", True),
+            "agent_notifications": get_setting("agent_notifications", True),
             "coding_reasoning_mode": reasoning_mode(),
             "coding_runtime_extensions": get_setting("coding_runtime_extensions:" + str(get_setting("dokky_user", {}).get("id") or get_setting("dokky_user", {}).get("user_id") or ""), False),
             "coding_keepalive": get_setting("coding_keepalive:" + str(get_setting("dokky_user", {}).get("id") or get_setting("dokky_user", {}).get("user_id") or "__test__"), True),
@@ -522,8 +545,9 @@ def create_app() -> FastAPI:
                 autostart.set_enabled(payload["launch_at_login"])
             except (ValueError, OSError) as exc:
                 raise HTTPException(409, str(exc) or "Не удалось изменить автозапуск") from exc
-        if "enter_sends" in payload and type(payload["enter_sends"]) is not bool:
-            raise HTTPException(422, "Ожидалось логическое значение")
+        for flag in ("enter_sends", "agent_notifications"):
+            if flag in payload and type(payload[flag]) is not bool:
+                raise HTTPException(422, "Ожидалось логическое значение")
         if "inspector_order" in payload:
             order = payload["inspector_order"]
             # порядок блоков правой панели: только известные блоки и без повторов
@@ -563,7 +587,14 @@ def create_app() -> FastAPI:
                     (owner, project_id, int(payload['private_network']), {"trusted": 1, "full": 2}.get(profile, 0), "allow-all" if profile == "full" else profile),
                 )
         if "permission_profile" in payload:
-            set_setting("permission_profile:" + owner, payload["permission_profile"])
+            from koddi.policy.grants import permission_profile
+
+            # «Разрешить всё» остаётся в проекте, где его выбрали: иначе его молча получат все новые проекты.
+            # Режим только чтения аккаунта при этом снимается: он важнее выбора проекта
+            if project_id is None or payload["permission_profile"] != "full":
+                set_setting("permission_profile:" + owner, payload["permission_profile"])
+            elif permission_profile(owner=owner) == "read-only":
+                set_setting("permission_profile:" + owner, "trusted")
         if "coding_reasoning_mode" in payload:
             from koddi.policy.preferences import save_reasoning_mode
 
@@ -583,6 +614,7 @@ def create_app() -> FastAPI:
             "ui_font",
             "dev_instructions",
             "enter_sends",
+            "agent_notifications",
             "inspector_order",
         ):
             if key in payload:
@@ -590,6 +622,8 @@ def create_app() -> FastAPI:
         # личные инструкции не пишутся в журнал целиком
         safe = {k: ("<текст>" if k == "dev_instructions" else v) for k, v in payload.items()}
         log_event("INFO", "settings.update", "settings updated", safe)
+        if "permission_profile" in payload:
+            remote_control.publish_controls()
         if owner is not None and local_owner() != owner:
             raise HTTPException(409, "Аккаунт изменился; повторите изменение настроек")
         return settings_get(project_id)
@@ -628,6 +662,28 @@ def create_app() -> FastAPI:
         except WriteRecoveryError as exc:
             raise HTTPException(409,str(exc)) from exc
 
+    @app.post("/api/projects/{project_id}/relocate")
+    def project_relocate(project_id: int, payload: ProjectIn) -> dict:
+        from koddi.projectmap import forget, schedule
+        from koddi.projects.service import relocate_project
+
+        with db() as conn:
+            if conn.execute(
+                "SELECT 1 FROM turns t JOIN chats c ON c.id=t.chat_id WHERE c.project_id=? AND t.status='running' LIMIT 1",
+                (project_id,),
+            ).fetchone():
+                raise HTTPException(409, "Сначала остановите агента в проекте")
+        try:
+            project = relocate_project(project_id, payload.path)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        # карта описывала прежнюю папку
+        forget(project_id)
+        schedule(project_id, Path(project["path"]))
+        return project
+
     @app.delete("/api/projects/{project_id}")
     def project_remove(project_id: int) -> dict:
         with db() as conn:
@@ -651,6 +707,67 @@ def create_app() -> FastAPI:
         if not root.is_dir():
             raise HTTPException(409, "Папка проекта недоступна")
         return project, root
+
+    def _require_project_idle(project_id: int | None) -> None:
+        # ход агента прямо сейчас правит файлы: откат, переключение ветки и коммит столкнулись бы с его работой
+        with db() as conn:
+            chats = conn.execute("SELECT DISTINCT t.chat_id FROM turns t JOIN chats c ON c.id=t.chat_id "
+                                 "WHERE c.project_id=? AND t.status='running'", (project_id,)).fetchall()
+        if any(agent_runs.active(row["chat_id"]) for row in chats):
+            raise HTTPException(409, "Агент сейчас работает в этом проекте: дождитесь конца или остановите его")
+
+    def _git_project(project_id: int, *, idle: bool = False) -> Path:
+        _, root = _map_project(project_id)
+        if idle:
+            _require_project_idle(project_id)
+        return root
+
+    def _git_call(action, *args, **kwargs) -> dict:
+        try:
+            return action(*args, **kwargs)
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(504, "git не ответил вовремя: возможно, он ждёт пароль. Проверьте доступ в терминале") from exc
+        except OSError as exc:
+            raise HTTPException(409, "Не удалось запустить git") from exc
+
+    @app.get("/api/projects/{project_id}/git")
+    def project_git_state(project_id: int, chat_id: int | None = None) -> dict:
+        from koddi.policy.account import owns
+        from koddi.projects.gitpanel import state
+
+        if chat_id is not None:
+            # подсказка коммита берётся из чата: только своего и только этого проекта
+            with db() as conn:
+                chat = conn.execute("SELECT owner_id,project_id FROM chats WHERE id=?", (chat_id,)).fetchone()
+            if chat is None or chat["project_id"] != project_id or not owns(chat["owner_id"], local_owner()):
+                chat_id = None
+        return _git_call(state, _git_project(project_id), chat_id=chat_id, project_id=project_id)
+
+    @app.post("/api/projects/{project_id}/git/switch")
+    def project_git_switch(project_id: int, payload: GitSwitchIn) -> dict:
+        from koddi.projects.gitpanel import switch
+
+        result = _git_call(switch, _git_project(project_id, idle=True), payload.branch, create=payload.create)
+        log_event("INFO" if result["ok"] else "WARNING", "git.ui_switch", str(project_id), {"ok": result["ok"], "create": payload.create})
+        return result
+
+    @app.post("/api/projects/{project_id}/git/commit")
+    def project_git_commit(project_id: int, payload: GitCommitIn) -> dict:
+        from koddi.projects.gitpanel import commit
+
+        result = _git_call(commit, _git_project(project_id, idle=True), payload.message, payload.paths)
+        log_event("INFO" if result["ok"] else "WARNING", "git.ui_commit", str(project_id), {"ok": result["ok"], "files": len(payload.paths)})
+        return result
+
+    @app.post("/api/projects/{project_id}/git/push")
+    def project_git_push(project_id: int, payload: GitPushIn) -> dict:
+        from koddi.projects.gitpanel import push
+
+        if not payload.confirm:
+            raise HTTPException(422, "Нужно явно подтвердить отправку")
+        result = _git_call(push, _git_project(project_id), payload.branch, payload.remote)
+        log_event("INFO" if result["ok"] else "WARNING", "git.ui_push", str(project_id), {"ok": result["ok"]})
+        return result
 
     @app.get("/api/projects/{project_id}/map")
     def project_map_get(project_id: int) -> dict:
@@ -1025,6 +1142,26 @@ def create_app() -> FastAPI:
         result["hash"] = hashlib.sha256(content.encode()).hexdigest()
         return result
 
+    @app.post("/api/projects/{project_id}/open-in-editor")
+    def project_open_in_editor(project_id: int, payload: dict) -> dict:
+        """Файл проекта открывается в редакторе человека (VS Code, Cursor или текстовый редактор системы)."""
+        project = get_project(project_id)
+        if not project:
+            raise HTTPException(404, "Проект не найден")
+        path, line = payload.get("path"), payload.get("line")
+        # нулевой байт роняет resolve() с ValueError, а не с понятным ответом
+        if not isinstance(path, str) or not path.strip() or "\0" in path or (line is not None and (type(line) is not int or line < 1)):
+            raise HTTPException(422, "Нужен путь к файлу проекта")
+        root = Path(project["path"]).resolve()
+        # только обычный файл внутри проекта: ни чужих путей, ни ссылок наружу, ни папок (.app - тоже папка)
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            raise HTTPException(404, "Файл не найден в проекте")
+        result = open_file(str(target), line)
+        if not result.get("ok"):
+            raise HTTPException(409, "Не удалось открыть редактор")
+        return {"ok": True}
+
     @app.put("/api/projects/{project_id}/file")
     def project_file_save(project_id: int, payload: dict) -> dict:
         project = get_project(project_id)
@@ -1199,7 +1336,10 @@ def create_app() -> FastAPI:
         owner = local_owner()
         with db() as conn:
             rows = conn.execute(
-                "SELECT r.*,t.chat_id,c.owner_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id JOIN chats c ON c.id=t.chat_id WHERE r.response_json IS NULL AND t.status='running' ORDER BY r.id"
+                # вопрос сабагента задаётся в чате, где его запустили: своего чата в списке у него нет
+                "SELECT r.*,COALESCE(c.parent_chat_id,t.chat_id) AS chat_id,c.owner_id FROM agent_requests r "
+                "JOIN turns t ON t.id=r.turn_id JOIN chats c ON c.id=t.chat_id "
+                "WHERE r.response_json IS NULL AND t.status='running' ORDER BY r.id"
             ).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload_json"])} for row in rows if owns(row["owner_id"], owner)]
 
@@ -1290,16 +1430,17 @@ def create_app() -> FastAPI:
         owner = local_owner()
         with db() as conn:
             if project_id:
+                # чаты сабагентов открываются из карточки в чате родителя, в списке их нет
                 rows = conn.execute(
-                    "SELECT * FROM chats WHERE project_id=? ORDER BY updated_at DESC", (project_id,)
+                    "SELECT * FROM chats WHERE project_id=? AND parent_chat_id IS NULL ORDER BY updated_at DESC", (project_id,)
                 ).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()
+                rows = conn.execute("SELECT * FROM chats WHERE parent_chat_id IS NULL ORDER BY updated_at DESC").fetchall()
             asking = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT DISTINCT t.chat_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id "
-                    "WHERE r.response_json IS NULL AND t.status='running'"
+                    "SELECT DISTINCT COALESCE(c.parent_chat_id,t.chat_id) FROM agent_requests r JOIN turns t ON t.id=r.turn_id "
+                    "JOIN chats c ON c.id=t.chat_id WHERE r.response_json IS NULL AND t.status='running'"
                 )
             }
         from koddi.agents.runs import agent_runs
@@ -1397,6 +1538,7 @@ def create_app() -> FastAPI:
             from koddi.policy.preferences import save_reasoning_mode
 
             save_reasoning_mode(payload["reasoning_mode"], owner=owner)
+            remote_control.publish_controls(chat_id)
             return public_session(result)
         except DokkyError as exc:
             raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
@@ -1482,6 +1624,12 @@ def create_app() -> FastAPI:
             remote_control.chat_renamed(chat_id, title)
         return dict(row)
 
+    @app.post("/api/chats/{chat_id}/seen")
+    def chat_seen(chat_id: int) -> dict:
+        # чат открыт в окне: чат компьютера становится прочитанным и на сайте (проверку чата делает local_chat_access)
+        remote_control.seen(chat_id)
+        return {"ok": True}
+
     @app.delete("/api/chats/{chat_id}")
     def chat_delete(chat_id: int) -> dict:
         if agent_runs.active(chat_id):
@@ -1493,33 +1641,34 @@ def create_app() -> FastAPI:
             exists = conn.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone()
             if not exists:
                 raise HTTPException(status_code=404, detail="chat not found")
+            # чаты сабагентов удаляются вместе с родителем: их ходы, файлы и текст принадлежат этому чату
+            chat_ids = [*(row[0] for row in conn.execute("SELECT id FROM chats WHERE parent_chat_id=?", (chat_id,))), chat_id]
             # дочерний чат делегирования не в реестре запусков, но его ход идёт
-            if running_here(conn, chat_id):
+            if any(running_here(conn, item) for item in chat_ids):
                 raise HTTPException(status_code=409, detail="cannot delete a chat while its agent is running")
-            turn_ids = [
-                row["id"]
-                for row in conn.execute("SELECT id FROM turns WHERE chat_id=?", (chat_id,))
-            ]
-            if turn_ids:
-                placeholders = ",".join("?" for _ in turn_ids)
-                conn.execute(f"DELETE FROM tool_calls WHERE turn_id IN ({placeholders})", turn_ids)
-                conn.execute(f"DELETE FROM approvals WHERE turn_id IN ({placeholders})", turn_ids)
-            conn.execute("DELETE FROM tasks WHERE chat_id=?", (chat_id,))
-            conn.execute("DELETE FROM memory_summaries WHERE chat_id=?", (chat_id,))
-            files = [dict(row) for row in conn.execute("SELECT * FROM attachments WHERE chat_id=?", (chat_id,))]
-            # текст документов из вложений тоже принадлежит чату: после удаления его не должно найтись поиском
-            conn.execute(
-                "DELETE FROM document_chunks WHERE document_id IN "
-                "(SELECT d.id FROM documents d JOIN attachments a ON a.id=d.attachment_id WHERE a.chat_id=?)",
-                (chat_id,),
-            )
-            conn.execute(
-                "DELETE FROM documents WHERE attachment_id IN (SELECT id FROM attachments WHERE chat_id=?)", (chat_id,)
-            )
-            conn.execute("DELETE FROM attachments WHERE chat_id=?", (chat_id,))
-            conn.execute("DELETE FROM messages WHERE chat_id=?", (chat_id,))
-            conn.execute("DELETE FROM turns WHERE chat_id=?", (chat_id,))
-            conn.execute("DELETE FROM chats WHERE id=?", (chat_id,))
+            files = []
+            for item in chat_ids:
+                turn_ids = [row["id"] for row in conn.execute("SELECT id FROM turns WHERE chat_id=?", (item,))]
+                if turn_ids:
+                    placeholders = ",".join("?" for _ in turn_ids)
+                    conn.execute(f"DELETE FROM tool_calls WHERE turn_id IN ({placeholders})", turn_ids)
+                    conn.execute(f"DELETE FROM approvals WHERE turn_id IN ({placeholders})", turn_ids)
+                conn.execute("DELETE FROM tasks WHERE chat_id=?", (item,))
+                conn.execute("DELETE FROM memory_summaries WHERE chat_id=?", (item,))
+                files += [dict(row) for row in conn.execute("SELECT * FROM attachments WHERE chat_id=?", (item,))]
+                # текст документов из вложений тоже принадлежит чату: после удаления его не должно найтись поиском
+                conn.execute(
+                    "DELETE FROM document_chunks WHERE document_id IN "
+                    "(SELECT d.id FROM documents d JOIN attachments a ON a.id=d.attachment_id WHERE a.chat_id=?)",
+                    (item,),
+                )
+                conn.execute(
+                    "DELETE FROM documents WHERE attachment_id IN (SELECT id FROM attachments WHERE chat_id=?)", (item,)
+                )
+                conn.execute("DELETE FROM attachments WHERE chat_id=?", (item,))
+                conn.execute("DELETE FROM messages WHERE chat_id=?", (item,))
+                conn.execute("DELETE FROM turns WHERE chat_id=?", (item,))
+                conn.execute("DELETE FROM chats WHERE id=?", (item,))
         forget_attachment_files(files)
         agent_runs.forget(chat_id)
         remote_control.chat_deleted(chat_id)
@@ -1559,6 +1708,25 @@ def create_app() -> FastAPI:
                     projected_turns.add(turn['id'])
             result.append(item)
         return result
+
+    @app.get("/api/chats/{chat_id}/messages/search")
+    def messages_search(chat_id: int, q: str = Query(min_length=1, max_length=200)) -> dict:
+        """Поиск по всей переписке, а не только по загруженной части: регистр сравниваем в Python, LIKE не знает кириллицу."""
+        from koddi.policy.account import owns
+
+        needle = q.casefold()
+        found, total = [], 0
+        with db() as conn:
+            chat = conn.execute("SELECT owner_id FROM chats WHERE id=?", (chat_id,)).fetchone()
+            if chat is None or not owns(chat["owner_id"], local_owner()):
+                raise HTTPException(404, "Чат не найден")
+            for row in conn.execute("SELECT id,content FROM messages WHERE chat_id=? AND role IN ('user','assistant') ORDER BY id", (chat_id,)):
+                count = (row["content"] or "").casefold().count(needle)
+                if count:
+                    total += count
+                    if len(found) < 500:
+                        found.append(row["id"])
+        return {"messages": found, "total": total}
 
     @app.get("/api/chats/{chat_id}/export")
     def chat_export(chat_id: int) -> StreamingResponse:
@@ -1657,6 +1825,19 @@ def create_app() -> FastAPI:
         workspace = Path(project["path"]) if project else None
         if agent_runs.active(chat_id):
             raise HTTPException(status_code=409, detail="agent turn is already running")
+        from koddi.agents.mentions import mentioned_files
+        from koddi.skills.service import project_command
+
+        owner = local_owner()
+        command_text = await asyncio.to_thread(project_command, payload.content, chat["project_id"], owner, workspace)
+        if command_text and slash:
+            try:
+                # команда проекта важнее одноимённой команды плагина, как в Claude Code
+                skills_text, skill_names = skill_block(list(dict.fromkeys(payload.skill_ids)))
+            except SkillError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        mentions_text = await asyncio.to_thread(mentioned_files, payload.content, workspace, chat["project_id"])
+        context_text = "\n\n".join(part for part in (skills_text, command_text, mentions_text) if part)
         orchestrator = AgentOrchestrator()
         cancel_event = threading.Event()
         run = await agent_runs.start(
@@ -1665,7 +1846,7 @@ def create_app() -> FastAPI:
                 chat_id=chat_id,
                 project_id=chat["project_id"],
                 workspace=workspace,
-                user_message=(skills_text + "\n\nЗапрос пользователя:\n" if skills_text else "") + payload.content,
+                user_message=(context_text + "\n\nЗапрос пользователя:\n" if context_text else "") + payload.content,
                 display_message=display_message if display_message is not None else (("Навыки: " + ", ".join(skill_names) + "\n\n" if skill_names else "") + payload.content),
                 attachment_ids=payload.attachment_ids,
                 queued_request_id=queued_request_id,
@@ -1693,7 +1874,13 @@ def create_app() -> FastAPI:
             previous=conn.execute('SELECT status FROM turns WHERE chat_id=? AND queued_request_id=?',(chat_id,key)).fetchone()
         if previous:
             return previous['status']
-        await start_chat_turn(chat_id, MessageIn(**payload),queued_request_id=key)
+        remote_control.queue_turns.add(chat_id)
+        try:
+            await start_chat_turn(chat_id, MessageIn(**payload),queued_request_id=key)
+        finally:
+            remote_control.queue_turns.discard(chat_id)
+        if payload.get("remote_command"):
+            remote_control.queued_started(payload["remote_command"])
         run = agent_runs.get(chat_id, owner_id=local_owner())
         if run and run.task:
             await asyncio.shield(run.task)
@@ -1721,6 +1908,22 @@ def create_app() -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/local-data")
+    def local_data_get() -> dict:
+        from koddi.dokky.coding import local_data_question
+
+        return local_data_question(local_owner())
+
+    @app.post("/api/local-data")
+    def local_data_post(payload: dict[str, Any]) -> dict:
+        from koddi.dokky.coding import answer_local_data, local_data_question
+
+        if set(payload) != {"take"} or type(payload["take"]) is not bool:
+            raise HTTPException(422, "Нужен ответ: take")
+        owner = local_owner()
+        answer_local_data(owner, payload["take"])
+        return local_data_question(owner)
 
     @app.get("/api/memory")
     def memory_get(project_id: int | None = None) -> dict:
@@ -1844,9 +2047,37 @@ def create_app() -> FastAPI:
         cancelled = await agent_runs.cancel(chat_id)
         return {"ok": True, "cancelled": cancelled, "chat_id": chat_id}
 
-    async def remote_start_turn(chat_id: int, text: str) -> None:
+    @app.post("/api/chats/{chat_id}/tools/{call_id}/stop")
+    async def chat_tool_stop(chat_id: int, call_id: str) -> dict[str, Any]:
+        """Остановить одну команду агента: ход продолжается, агент получает «остановлено пользователем»."""
+        from koddi.agents.orchestrator import stop_tool_call
+
+        if len(call_id) > 200 or not stop_tool_call(chat_id, call_id):
+            raise HTTPException(404, "Команда уже завершилась")
+        return {"ok": True}
+
+    async def remote_start_turn(chat_id: int, text: str, attachment_ids: list[int] | None = None) -> None:
         chat = require_chat(chat_id)
-        await start_chat_turn(chat_id, MessageIn(content=text, mode=chat["mode"] or "development"), origin="remote")
+        message = MessageIn(content=text, mode=chat["mode"] or "development", attachment_ids=attachment_ids or [])
+        await start_chat_turn(chat_id, message, origin="remote")
+
+    def remote_enqueue(chat_id: int, text: str, command_id: str, attachment_ids: list[int] | None = None) -> None:
+        chat = require_chat(chat_id)
+        state = request_queue.snapshot(chat_id)
+        if state["paused"]:
+            if any(item["status"] == "queued" for item in state["items"]):
+                raise HTTPException(409, "Очередь на компьютере на паузе: продолжите её в Докки или отправьте сообщение снова позже")
+            # в очереди никого нет, пауза осталась от прошлой остановки
+            request_queue.resume(chat_id)
+        # очередь запустит ход как начатый на компьютере: сообщение попадёт в историю в свою очередь, после текущего ответа
+        message = MessageIn(content=text, mode=chat["mode"] or "development", attachment_ids=attachment_ids or []).model_dump()
+        request_queue.add(chat_id, {**message, "remote_command": command_id}, str(uuid.uuid5(uuid.NAMESPACE_URL, command_id)))
+
+    def remote_cancel_queued(chat_id: int, command_id: str) -> None:
+        key = str(uuid.uuid5(uuid.NAMESPACE_URL, command_id))
+        for item in request_queue.snapshot(chat_id)["items"]:
+            if item["id"] == key and item["status"] == "queued":
+                request_queue.edit(chat_id, key, item["version"], None)
 
     async def remote_cancel_turn(chat_id: int) -> bool:
         request_queue.pause(chat_id)
@@ -1855,7 +2086,37 @@ def create_app() -> FastAPI:
     async def remote_create_chat(project_id: int | None, title: str) -> dict:
         return await chats_post(ChatIn(project_id=project_id, title=title))
 
-    remote_control.bind(Hooks(remote_start_turn, remote_cancel_turn, respond_request, remote_create_chat))
+    async def remote_change_settings(chat_id: int, payload: dict) -> None:
+        """Смена режима с телефона: те же проверки, что у поля ввода на компьютере."""
+        from koddi.dokky.client import DokkyError
+        from koddi.dokky.coding import switch_mode
+        from koddi.policy.grants import permission_profile
+        from koddi.policy.preferences import save_reasoning_mode
+
+        chat = require_chat(chat_id)
+        if "reasoning" in payload and agent_runs.active(chat_id):
+            raise HTTPException(409, "Режим можно сменить, когда агент закончит работу")
+        if "permission" in payload:
+            # «Только чтение» выбирают на компьютере осознанно: телефон не должен снимать этот запрет
+            if permission_profile(chat["project_id"]) == "read-only":
+                raise HTTPException(409, "Этот чат только для чтения. Режим меняется на компьютере")
+            await asyncio.to_thread(settings_put, {
+                "permission_profile": payload["permission"],
+                "confirm_full_access": payload.get("confirm_full_access") is True,
+                **({"project_id": chat["project_id"]} if chat["project_id"] is not None else {}),
+            })
+        if "reasoning" in payload:
+            owner = local_owner()
+            try:
+                await switch_mode(chat_id, payload["reasoning"], payload.get("acknowledge_cost") is True)
+            except DokkyError as exc:
+                raise HTTPException(exc.status, str(exc)) from exc
+            save_reasoning_mode(payload["reasoning"], owner=owner)
+        # окно компьютера показывает то же, что выбрано на телефоне
+        await event_bus.publish("remote.settings", {"chat_id": chat_id})
+
+    remote_control.bind(Hooks(remote_start_turn, remote_cancel_turn, respond_request, remote_create_chat,
+                              remote_enqueue, remote_cancel_queued, remote_change_settings))
 
     def remote_guard(function):
         from koddi.remote_control.bridge import LoginRequired
@@ -2066,10 +2327,17 @@ def create_app() -> FastAPI:
     def changes_get(project_id: int | None = None, limit: int = 100) -> list[dict]:
         return list_change_sets(project_id, min(max(limit, 1), 500))
 
+    def _require_change_project_idle(change_set_id: int) -> None:
+        with db() as conn:
+            row = conn.execute("SELECT project_id FROM change_sets WHERE id=?", (change_set_id,)).fetchone()
+        if row and row["project_id"] is not None:
+            _require_project_idle(row["project_id"])
+
     @app.post("/api/changes/{change_set_id}/rollback")
     def changes_rollback_selected(
         change_set_id: int, payload: dict[str, Any] | None = None
     ) -> dict:
+        _require_change_project_idle(change_set_id)
         result = rollback_change_set(change_set_id, bool((payload or {}).get("force", False)))
         log_event(
             "INFO" if result.get("rolled_back") else "WARNING",
@@ -2077,6 +2345,16 @@ def create_app() -> FastAPI:
             str(change_set_id),
             result,
         )
+        return result
+
+    @app.post("/api/changes/{change_set_id}/rollback-hunk")
+    def changes_rollback_hunk(change_set_id: int, payload: HunkRollbackIn) -> dict:
+        from koddi.changes.service import rollback_hunk
+
+        _require_change_project_idle(change_set_id)
+        result = rollback_hunk(change_set_id, payload.path, payload.hunk)
+        log_event("INFO" if result.get("rolled_back") else "WARNING", "changes.rollback_hunk", str(change_set_id),
+                  {key: result.get(key) for key in ("rolled_back", "reason", "change_set_id")})
         return result
 
     @app.get("/api/backups")
@@ -2115,9 +2393,47 @@ def create_app() -> FastAPI:
             payload.name, payload.arguments
         )
 
+    @app.post("/api/speech/recording")
+    async def speech_recording(file: UploadFile) -> dict:
+        """Запись голоса из окна распознаётся на этом компьютере и сразу удаляется: во вложения чата она не попадает."""
+        from koddi.storage.db import runtime_path
+
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".webm", ".ogg", ".wav", ".m4a", ".mp4"}:
+            raise HTTPException(422, "Неподдерживаемый формат записи")
+        target = runtime_path("speech", f"recording-{uuid.uuid4().hex}{suffix}")
+
+        def save() -> None:
+            size = 0
+            with target.open("xb") as out:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    # пять минут речи в opus - единицы мегабайт; больше - не запись окна
+                    if size > 64 * 1024 * 1024:
+                        raise ValueError("слишком длинная запись")
+                    out.write(chunk)
+
+        try:
+            try:
+                await asyncio.to_thread(save)
+            except ValueError as exc:
+                raise HTTPException(413, "Запись слишком длинная") from exc
+            return await asyncio.to_thread(transcribe_audio, str(target))
+        finally:
+            target.unlink(missing_ok=True)
+
     @app.post("/api/speech/transcribe")
-    async def speech_transcribe(payload: dict[str, str]) -> dict:
-        return transcribe_audio(payload["path"])
+    async def speech_transcribe(payload: dict[str, Any]) -> dict:
+        from koddi.storage.db import runtime_path
+
+        # распознаётся только запись, которую окно само сохранило во вложения, а не любой файл компьютера
+        path = payload.get("path")
+        root = runtime_path("attachments", "placeholder").parent.resolve()
+        target = Path(path).resolve() if isinstance(path, str) and path and "\0" not in path else None
+        if target is None or not target.is_relative_to(root) or not target.is_file():
+            raise HTTPException(422, "Запись не найдена")
+        # whisper считает секунды: в потоке, чтобы не вставал весь локальный сервер
+        return await asyncio.to_thread(transcribe_audio, str(target))
 
     @app.get("/api/tasks")
     def tasks_get(project_id: int | None = None) -> list[dict]:
@@ -2298,6 +2614,15 @@ def create_app() -> FastAPI:
 
         _, root = _map_project(project_id)
         return {"skills": sync(project_id, local_owner(), root)}
+
+    @app.get("/api/projects/{project_id}/commands")
+    def project_commands_get(project_id: int) -> dict:
+        """Подтверждённые команды проекта для меню «/»: только имя и описание, текст подставит сервер при отправке."""
+        from koddi.skills.project import trusted
+
+        _, root = _map_project(project_id)
+        return {"commands": [{"name": item["name"], "description": item["description"], "argument_hint": item.get("argument_hint", "")}
+                             for item in trusted(project_id, local_owner(), root, kind="command")]}
 
     @app.post("/api/projects/{project_id}/skills/decision")
     def project_skills_decide(project_id: int, payload: ProjectSkillDecisionIn) -> dict:

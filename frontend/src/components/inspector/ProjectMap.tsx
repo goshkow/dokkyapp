@@ -6,6 +6,7 @@ import { loadMap, setMapActive, useProjectMap } from '../../state/projectMap';
 import { useQuality, type HeatItem } from '../../state/quality';
 import { useView } from '../../state/view';
 import { openFile, openFolder } from '../../state/workspace';
+import { MissingFolder, useFolderMissing } from './MissingFolder';
 
 const HUES = 8;
 
@@ -94,6 +95,7 @@ function Tooltip({ hover, files, importers, heat, width, height }: {
 /** Карта проекта мозаикой: площадь плитки - размер файла, цвет - верхняя папка; щелчок открывает файл или папку. */
 export function ProjectMapView({ active }: { active: boolean }) {
   const project = useView((s) => s.project);
+  const missing = useFolderMissing(project);
   const tree = useProjectMap((s) => s.tree);
   const load = useProjectMap((s) => s.load);
   const error = useProjectMap((s) => s.error);
@@ -299,7 +301,9 @@ export function ProjectMapView({ active }: { active: boolean }) {
           onPointerMove={onPointerMove}
           onClick={onClick}
         />
-        {load === 'failed' && !tree ? (
+        {missing && project ? (
+          <div className="map-empty"><MissingFolder project={project} /></div>
+        ) : load === 'failed' && !tree ? (
           <div className="map-empty">
             <strong>Не удалось загрузить карту</strong><p>{error}</p>
             <button type="button" className="map-text-button" onClick={guarded(loadMap)}>Повторить</button>

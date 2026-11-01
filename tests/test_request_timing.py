@@ -89,11 +89,12 @@ def test_old_session_receives_execution_policy_as_one_context_delta(tmp_path, mo
     old = json.loads(current["content"][len(CONTEXT_PREFIX):])
     old.pop("execution_focus_policy")
     old.pop("plan_policy")
+    old.pop("harness_policy")
     pinned_system = {"role": "system", "content": "Old pinned system"}
     history = [pinned_system, {"role": "user", "content": CONTEXT_PREFIX + json.dumps(old)}]
     delta = coding_context_update(current, history)
     changes = json.loads(delta["content"][len(CONTEXT_PREFIX):])
-    assert list(changes) == ["execution_focus_policy", "plan_policy"]
+    assert sorted(changes) == ["execution_focus_policy", "harness_policy", "plan_policy"]
     assert "one or two" in changes["execution_focus_policy"]
     assert "plan.update" in changes["plan_policy"]
     assert old["work_depth"] == "pro" and history[0] == pinned_system

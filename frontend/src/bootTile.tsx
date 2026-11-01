@@ -14,16 +14,18 @@ import { plansStore } from './state/plans';
 import { applyAppearance, ui } from './state/ui';
 import { nav, view } from './state/view';
 import { updates } from './state/updates';
-import { openFile, selectInspector } from './state/workspace';
+import { git } from './state/git';
+import { loadFiles, openFile, selectInspector } from './state/workspace';
 
 for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav], ['updates', updates]] as const) mirrorStore(name, store as never);
 mirrorStore('chat', chat);
+mirrorStore('git', git);
 mirrorStore('fieldMirror', fieldMirror);
 mirrorStore('fieldHost', fieldHost);
 mirrorStore('voiceMeter', voiceMeter);
 // рабочая область (файлы и редактор) принадлежит правой панели: главный вид открывает файлы и карточки через неё
 if (role === 'inspector') {
-  exposeActions({ openFile, selectInspector });
+  exposeActions({ openFile, selectInspector, loadFiles });
   // у каждой карточки правой панели своё нативное стекло
   startTileGlass();
 }

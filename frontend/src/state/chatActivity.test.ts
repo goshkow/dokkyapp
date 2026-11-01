@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const network = vi.hoisted(() => ({ post: vi.fn(() => Promise.resolve({ ok: true })) }));
+vi.mock('../lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../lib/api')>()), post: network.post }));
+
 import type { Chat } from '../lib/types';
 import { chatActivity, markSeen, onQuestion, onRunState } from './chatActivity';
 import { data } from './data';
@@ -14,6 +18,7 @@ describe('состояние чатов в меню', () => {
     view.set({ chat: null });
     chatActivity.set({ activity: {}, done: {} });
     data.set({ localChats: [] });
+    network.post.mockClear();
   });
 
   it('работа, вопрос и синяя точка после конца хода в закрытом чате', () => {
@@ -55,5 +60,61 @@ describe('состояние чатов в меню', () => {
     expect(chatActivity.get().done['3']).toBe(true);
     view.set({ chat: chat(3) });
     expect(chatActivity.get().done['3']).toBeUndefined();
+  });
+
+  it('конец хода и вопрос агента уходят хосту уведомлением, сверка со списком - нет', () => {
+    const agentNotice = vi.fn();
+    window.koddiWindowBridge = { agentNotice } as unknown as typeof window.koddiWindowBridge;
+    data.set({ localChats: [chat(6)] });
+    onRunState(6, true);
+    onQuestion(6, true);
+    onQuestion(6, false);
+    onRunState(6, false);
+    expect(agentNotice.mock.calls.map(([payload]) => JSON.parse(payload as string))).toEqual([
+      { chat_id: 6, kind: 'question', title: 'Чат 6' },
+      { chat_id: 6, kind: 'done', title: 'Чат 6' },
+    ]);
+    // перезапуск окна: зависший ход снимает список сервера, о нём не уведомляем
+    agentNotice.mockClear();
+    data.set({ localChats: [chat(6, 'working')] });
+    data.set({ localChats: [chat(6)] });
+    expect(agentNotice).not.toHaveBeenCalled();
+    // выключатель в настройках
+    data.set({ settings: { ...data.get().settings, agent_notifications: false } });
+    onRunState(6, true);
+    onRunState(6, false);
+    expect(agentNotice).not.toHaveBeenCalled();
+    data.set({ settings: { ...data.get().settings, agent_notifications: true } });
+    delete window.koddiWindowBridge;
+  });
+
+  it('прочитанное в окне уходит на сервер, а прочитанное на телефоне снимает точку', () => {
+    view.set({ chat: chat(4) });
+    expect(network.post).toHaveBeenCalledWith('/api/chats/4/seen');
+    // ход закончился на глазах: ответ прочитан сразу
+    network.post.mockClear();
+    onRunState(4, true);
+    onRunState(4, false);
+    expect(network.post).toHaveBeenCalledWith('/api/chats/4/seen');
+    // в закрытом чате точка остаётся до прочтения где угодно, в том числе на телефоне (событие chat.read)
+    view.set({ chat: null });
+    network.post.mockClear();
+    onRunState(9, true);
+    onRunState(9, false);
+    expect(network.post).not.toHaveBeenCalled();
+    markSeen(9);
+    expect(chatActivity.get().done['9']).toBeUndefined();
+  });
+
+  it('окно в фоне не читает чат за человека: прочтение - когда окно снова впереди', () => {
+    window.koddiWindowActive!(false);
+    view.set({ chat: chat(6) });
+    onRunState(6, true);
+    onRunState(6, false);
+    expect(network.post).not.toHaveBeenCalled();
+    expect(chatActivity.get().done['6']).toBe(true);
+    window.koddiWindowActive!(true);
+    expect(network.post).toHaveBeenCalledWith('/api/chats/6/seen');
+    expect(chatActivity.get().done['6']).toBeUndefined();
   });
 });

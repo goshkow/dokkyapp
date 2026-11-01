@@ -130,7 +130,8 @@ def memory_context(project_id: int | None) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     with db() as conn:
         for scope in SCOPES:
-            items = [row["content"] for row in _rows(conn, owner, scope, project_id)] if scope == "user" or project_id is not None else []
+            # старые заметки агента бывают длиннее пункта: целиком их отдаёт memory.get
+            items = [row["content"][:ITEM_CHARS] for row in _rows(conn, owner, scope, project_id)] if scope == "user" or project_id is not None else []
             kept, used = [], 0
             for text in reversed(items):
                 if used + len(text) > CONTEXT_CHARS[scope]:
@@ -146,11 +147,14 @@ def _insert(conn, owner: str, scope: str, project_id: int | None, content: str, 
     rows = _rows(conn, owner, scope, project_id)
     if any(_normal(row["content"]).casefold() == content.casefold() for row in rows):
         return None
-    if len(rows) >= LIMITS[scope]:
+    extra = len(rows) - LIMITS[scope] + 1
+    if extra > 0:
+        # лишних может быть больше одного: старые заметки агента записывались без лимита
         learned = [row for row in rows if row["source"] == "auto"]
         if not learned:
             raise ValueError("Память заполнена: удалите ненужные пункты")
-        conn.execute("DELETE FROM memory_summaries WHERE id=? AND owner_id=?", (learned[0]["id"], owner))
+        for row in learned[:extra]:
+            conn.execute("DELETE FROM memory_summaries WHERE id=? AND owner_id=?", (row["id"], owner))
     return int(conn.execute(
         "INSERT INTO memory_summaries(project_id,kind,content,metadata_json,owner_id) VALUES (?,?,?,?,?)",
         (project_id if scope == "project" else None, scope, content, json.dumps({"source": source}), owner),
@@ -222,6 +226,25 @@ def clear(scope: str, project_id: int | None) -> dict:
     return list_memory(project_id)
 
 
+# обучение, начатое до стирания, не должно вернуть стёртое: оно сверяет этот номер перед записью
+_erasures = 0
+
+
+def forget_everything(message: str) -> dict[str, int] | None:
+    """Просьба стереть память выполняется до ответа: модель скажет, сколько пунктов удалено на самом деле."""
+    global _erasures
+    if not FORGET_ALL.fullmatch(message):
+        return None
+    _erasures += 1
+    owner = local_owner()
+    with db() as conn:
+        rows = conn.execute("SELECT kind FROM memory_summaries WHERE owner_id=?", (owner,)).fetchall()
+        conn.execute("DELETE FROM memory_summaries WHERE owner_id=?", (owner,))
+    kinds = [row[0] for row in rows]
+    personal = kinds.count("user")
+    return {"personal": personal, "projects": len(kinds) - personal}
+
+
 def parse(content: str) -> dict[str, dict[str, list[str]]]:
     text = content.strip().replace("```json", "").replace("```", "")
     start, end = text.find("{"), text.rfind("}")
@@ -265,7 +288,8 @@ def apply(project_id: int | None, operations: dict, owner: str) -> None:
 
 
 def should_learn(chat_id: int, message: str) -> bool:
-    if not enabled() or not message.strip():
+    # стирание уже сделано в начале хода, учиться на этой просьбе нечему
+    if not enabled() or not message.strip() or FORGET_ALL.fullmatch(message):
         return False
     if HINT.search(message):
         return True
@@ -288,9 +312,7 @@ async def learn(client, model: str, *, chat_id: int, project_id: int | None, mes
                 cancel_event: threading.Event | None = None) -> None:
     """Пополняет память по последним запросам; любой сбой только пишется в журнал."""
     owner = local_owner()
-    if FORGET_ALL.fullmatch(message):
-        await asyncio.to_thread(clear, "user", None)
-        return
+    erasures = _erasures
     requests = await asyncio.to_thread(recent_requests, chat_id, message)
     current = await asyncio.to_thread(list_memory, project_id)
     memory = json.dumps({scope: [row["content"] for row in current[scope]] for scope in SCOPES}, ensure_ascii=False)
@@ -313,7 +335,7 @@ async def learn(client, model: str, *, chat_id: int, project_id: int | None, mes
 
     operations = parse(await asyncio.wait_for(collect(), LEARN_SECONDS))
     # за время запроса могли выйти из аккаунта или выключить память: тогда ничего не пишем
-    if operations and local_owner() == owner and enabled(owner):
+    if operations and erasures == _erasures and local_owner() == owner and enabled(owner):
         await asyncio.to_thread(apply, project_id, operations, owner)
 
 

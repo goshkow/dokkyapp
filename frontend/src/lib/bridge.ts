@@ -22,12 +22,20 @@ interface WindowBridge {
   tray?(payload: string): void;
   /** Список выбора системным меню поверх плиток стекла; ответ приходит в koddiPopupResult (JSON). */
   popupMenu?(payload: string): void;
+  /** Окно меню поверх приложения: якорь в координатах страницы, размер панели, закрытие. */
+  popupOpen?(payload: string): void;
+  popupResize?(payload: string): void;
+  popupClose?(payload: string): void;
+  /** Агент закончил или ждёт ответа: хост покажет уведомление, если окно не на переднем плане (JSON). */
+  agentNotice?(payload: string): void;
 }
 
 declare global {
   interface Window {
     koddiWindowBridge?: WindowBridge;
     koddiDesktop?: boolean;
+    koddiPopupShown?: () => void;
+    koddiPopupBlur?: () => void;
     koddiPopupResult?: (id: number, value: string | null) => void;
   }
 }
@@ -119,6 +127,15 @@ export function announceTray(payload: string): boolean {
     return true;
   } catch {
     return false; /* окно без моста */
+  }
+}
+
+/** Уведомление о работе агента; показывать ли его, решает хост по состоянию окна. */
+export function announceAgentNotice(chatId: number, kind: 'done' | 'question', title: string): void {
+  try {
+    window.koddiWindowBridge?.agentNotice?.(JSON.stringify({ chat_id: chatId, kind, title }));
+  } catch {
+    /* окно без моста */
   }
 }
 

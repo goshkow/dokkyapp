@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AuthScreen } from './components/auth/AuthScreen';
+import { askFirstRunQuestions } from './state/firstRun';
 import { SourcePopover } from './components/chat/Viewers';
 import { MediaViewer } from './components/viewer/MediaViewer';
 import { PaymentDialog } from './components/billing/PaymentDialog';
@@ -9,10 +10,12 @@ import { Inspector } from './components/inspector/Inspector';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import { Shell } from './components/shell/Shell';
 import { Sidebar } from './components/sidebar/Sidebar';
+import { ConnectionNotice } from './components/ui/ConnectionNotice';
 import { ContextMenu } from './components/ui/ContextMenu';
+import { CommandPalette } from './components/shell/CommandPalette';
 import { DialogHost, ToastHost } from './components/ui/DialogHost';
 import { bindHostCallbacks } from './state/actions';
-import { bootApp, isReady, lastProject, useData } from './state/data';
+import { bootApp, data, isReady, lastProject, useData } from './state/data';
 import { guarded } from './state/overlay';
 import { ui, useUi } from './state/ui';
 import { restartEvents, startEvents } from './state/events';
@@ -35,10 +38,26 @@ function Main() {
   );
 }
 
+const start = guarded(async () => {
+  await bootApp();
+  if (data.get().bootFailed) return;
+  startEvents();
+  // первый экран: новый чат (в разработке - в последнем проекте)
+  if (view.get().version === 0) newChat(ui.get().scope === 'development' ? lastProject() : null);
+});
+
+// пока идёт повтор, на экране заставка, а не кнопка входа
+const retry = () => {
+  data.set({ booted: false });
+  start();
+};
+
 export function App() {
   const booted = useData((state) => state.booted);
+  const failed = useData((state) => state.bootFailed !== '');
   const ready = useData((state) => isReady(state.account));
   const signedIn = useData((state) => state.account?.authenticated === true);
+  const owner = useData((state) => String(state.account?.user?.id ?? ''));
   const scope = useUi((state) => state.scope);
   const siteLoading = useSurface((state) => state.status === 'loading' && surfaceShown(state, scope));
   // заставка держится, пока не загрузится и сайт режима чата: иначе после неё мелькал бы второй спиннер
@@ -52,29 +71,27 @@ export function App() {
 
   useEffect(() => {
     bindHostCallbacks();
-    guarded(async () => {
-      await bootApp();
-      startEvents();
-      // первый экран: новый чат (в разработке - в последнем проекте)
-      if (view.get().version === 0) newChat(ui.get().scope === 'development' ? lastProject() : null);
-    })();
+    start();
   }, []);
 
   useEffect(() => {
     if (signedIn && booted) restartEvents();
-  }, [signedIn, booted]);
+    if (signedIn && booted && !failed && owner) void askFirstRunQuestions(owner);
+  }, [signedIn, booted, failed, owner]);
 
   return (
     <>
       {ready && <Shell sidebar={<Sidebar />} main={<Main />} inspector={<Inspector />} />}
-      {(!ready || !booted || holding) && <AuthScreen pending={!booted || holding} />}
+      {(!ready || !booted || holding || failed) && <AuthScreen pending={(!booted || holding) && !failed} onRetry={retry} />}
       <SettingsDialog />
       <PaymentDialog />
       <SourcePopover />
       <MediaViewer />
       <ContextMenu />
       <DialogHost />
+      <CommandPalette />
       <ToastHost />
+      {ready && booted && <ConnectionNotice />}
     </>
   );
 }

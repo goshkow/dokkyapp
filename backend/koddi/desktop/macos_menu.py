@@ -8,7 +8,6 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QLibraryInfo, QTranslator, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWebEngineCore import QWebEnginePage
-from PySide6.QtWidgets import QApplication
 
 APP_NAME = "Докки"
 SITE = "https://dokky.goshkow.com"
@@ -71,7 +70,7 @@ def install(host) -> None:
     add(file, "Настройки…", command("settings"), "Ctrl+,", Role.PreferencesRole)
     add(file, "Тариф и оплата…", command("billing"), role=Role.ApplicationSpecificRole)
     add(file, "Выход из аккаунта…", command("sign-out"), role=Role.ApplicationSpecificRole)
-    add(file, f"Завершить {APP_NAME}", QApplication.quit, "Ctrl+Q", Role.QuitRole)
+    add(file, f"Завершить {APP_NAME}", host.quit_app, "Ctrl+Q", Role.QuitRole)
     # без своего пункта Qt оставляет в меню приложения стандартный «About Qt»
     add(file, "О Qt", lambda *_: None, role=Role.AboutQtRole).setVisible(False)
 
@@ -90,6 +89,9 @@ def install(host) -> None:
         else:
             page_action(edit, title, action, key)
 
+    edit.addSeparator()
+    add(edit, "Найти в чате", command("chat-search"), "Ctrl+F")
+
     view = bar.addMenu("Вид")
     add(view, "Главное меню", command("toggle-left"), "Ctrl+Alt+S")
     add(view, "Изменения и файлы", command("toggle-right"), "Ctrl+Alt+I")
@@ -104,6 +106,8 @@ def install(host) -> None:
         add(view, "Настройка стекла…", lambda *_: host.open_glass_tuner(), "Ctrl+Alt+G")
 
     go = bar.addMenu("Переход")
+    add(go, "Быстрый переход…", command("palette"), "Ctrl+K")
+    go.addSeparator()
     add(go, "Назад", command("back"), "Ctrl+[")
     add(go, "Вперёд", command("forward"), "Ctrl+]")
     go.addSeparator()

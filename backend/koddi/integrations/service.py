@@ -28,8 +28,9 @@ def _file_commands(target: Path, line: int | None) -> list[list[str]]:
     commands = [["code", "-g", spot], ["cursor", "-g", spot]]
     if sys.platform == "darwin":
         commands += [[binary, "-g", spot] for binary in _VSCODE_BINS if Path(binary).exists()]
-        # приложение без командной строки: открываем через систему, затем программой по умолчанию
-        commands += [["open", "-a", "Visual Studio Code", str(target)], ["open", "-a", "Cursor", str(target)], ["open", str(target)]]
+        # приложение без командной строки: открываем через систему, в конце - текстовым редактором по умолчанию.
+        # просто open запустил бы .app, .command и прочее исполняемое вместо того, чтобы показать
+        commands += [["open", "-a", "Visual Studio Code", str(target)], ["open", "-a", "Cursor", str(target)], ["open", "-t", str(target)]]
     elif os.name == "nt":
         commands.append(["notepad", str(target)])
     else:
@@ -39,6 +40,8 @@ def _file_commands(target: Path, line: int | None) -> list[list[str]]:
 
 def open_file(path: str, line: int | None = None) -> dict:
     target = Path(path).resolve()
+    if not target.is_file():
+        return {"ok": False, "errors": ["файл не найден"]}
     errors = []
     for command in _file_commands(target, line):
         try:

@@ -542,3 +542,43 @@ def test_callback_route_answers_404_to_strangers_and_redirects_only_after_login(
     asyncio.run(client.begin(REDIRECT))
     assert web.post("/api/dokky/auth/cancel").json() == {"ok": True}
     assert web.get("/api/dokky/auth/status").json() == {"status": "idle", "message": "", "pending": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"<html>401 Authorization Required</html>", b'["not", "an", "object"]', b'{"error": "text"}'])
+async def test_unauthorized_page_without_json_is_an_error_not_a_crash(body):
+    store = MemoryStore({"access_token": "a", "refresh_token": "r", "expires_at": time.time() + 900})
+    calls = []
+
+    def server(request):
+        calls.append(request.url.path)
+        return httpx.Response(401, content=body, headers={"content-type": "text/html"})
+
+    client = DokkyClient(store=store, transport=httpx.MockTransport(server))
+    with pytest.raises(DokkyError):
+        await client.request("GET", "/v1/subscription")
+    # чужая страница 401 - не повод обновлять токен и тем более выходить из аккаунта
+    assert len(calls) == 1 and store.load()["access_token"] == "a"
+
+
+@pytest.mark.asyncio
+async def test_proxy_error_page_and_lost_network_keep_the_session():
+    store = MemoryStore({"access_token": "a", "refresh_token": "r", "expires_at": 0, "client_id": "c"})
+
+    async def scenario(handler):
+        client = DokkyClient(store=store, transport=httpx.MockTransport(handler))
+        with pytest.raises(DokkyError) as caught:
+            await client.tokens({"grant_type": "refresh_token"})
+        return caught.value
+
+    html = await scenario(lambda _request: httpx.Response(400, text="<html>Bad gateway</html>"))
+    assert html.status == 503 and store.load()
+
+    def offline(request):
+        raise httpx.ConnectError("нет сети", request=request)
+
+    lost = await scenario(offline)
+    assert lost.status == 503 and store.load()
+    rejected = await scenario(lambda _request: httpx.Response(400, json={"error": "invalid_grant"}))
+    assert rejected.status == 401 and not store.load()
+

@@ -4,6 +4,7 @@
  * меню (и его плитка на macOS) рисует разделы и чаты по состоянию, которое сайт сообщает о себе.
  */
 import { api, post } from '../lib/api';
+import { connection } from './connection';
 import { kickGlass, setGlassSource, type GlassBlock, type GlassFade } from '../lib/glass';
 import { exposeStore, isMirror, mirrorStore, remote } from '../lib/mirror';
 import { createStore, useStore } from '../lib/store';
@@ -43,6 +44,7 @@ export interface SurfaceChat {
 /** Рамка блока страницы сайта в координатах фрейма; o - видимость с учётом предков. */
 export interface SurfaceBox { x: number; y: number; w: number; h: number; r: number; o: number }
 /** Поле ввода и «Чат / Поиск» страницы, которые на macOS со стеклом рисует приложение (state/siteField.ts). */
+export interface SiteWorkspace { kind: 'remote' | 'cloud'; name: string; online: boolean }
 export interface SiteField {
   composer: SurfaceBox | null;
   product: SurfaceBox | null;
@@ -54,6 +56,9 @@ export interface SiteField {
   /** Страница закрыла отправку: компьютер чата не в сети, идёт передача чата. */
   disabled: boolean;
   placeholder: string;
+  /** Рамка пилюли компьютера или облачного проекта; нет - пилюлю показывать не надо (нет её или она закрыта слоем). */
+  pill: SurfaceBox | null;
+  workspace: SiteWorkspace | null;
 }
 
 export interface SurfaceState {
@@ -63,6 +68,7 @@ export interface SurfaceState {
   origin: string;
   /** Этот компьютер в удалённом доступе: его чаты у нас и так свои. */
   hostId: string;
+  hostName: string;
   sections: SurfaceSection[];
   chats: SurfaceChat[];
   hasMore: boolean;
@@ -82,7 +88,7 @@ export interface SurfaceState {
 }
 
 export const surface = createStore<SurfaceState>({
-  status: 'off', url: '', origin: '', hostId: '', sections: [], chats: [], hasMore: false, multiChat: true,
+  status: 'off', url: '', origin: '', hostId: '', hostName: '', sections: [], chats: [], hasMore: false, multiChat: true,
   product: 'chat', epoch: 0, remoteChat: null, overlay: false, features: [], field: false, siteField: null,
 });
 export const useSurface = <S,>(selector: (state: SurfaceState) => S): S => useStore(surface, selector);
@@ -184,8 +190,8 @@ export function sendTheme(): void {
   command('theme', { theme: ui.get().theme });
 }
 
-export function sendLayout(insetLeft: number, insetRight: number, background: string, glass: boolean, field = false): void {
-  command('layout', { insetLeft, insetRight, background, glass, field });
+export function sendLayout(insetLeft: number, insetRight: number, background: string, glass: boolean, field = false, pill = false): void {
+  command('layout', { insetLeft, insetRight, background, glass, field, pill });
 }
 
 function parseBox(value: unknown): SurfaceBox | null {
@@ -196,6 +202,12 @@ function parseBox(value: unknown): SurfaceBox | null {
 }
 
 /** Поле страницы сайта: рамки и состояние кнопки отправки; всё обрезается и проверяется. */
+function parseWorkspace(value: unknown): SiteWorkspace | null {
+  const item = record(value);
+  const name = text(item.name, 120);
+  return name ? { kind: item.kind === 'remote' ? 'remote' : 'cloud', name, online: flag(item.online) } : null;
+}
+
 export function parseField(value: unknown): SiteField | null {
   if (!value || typeof value !== 'object') return null;
   const field = record(value);
@@ -207,6 +219,8 @@ export function parseField(value: unknown): SiteField | null {
     ready: flag(field.ready),
     disabled: flag(field.disabled),
     placeholder: text(field.placeholder, 200),
+    pill: parseBox(field.pill),
+    workspace: parseWorkspace(field.workspace),
   };
 }
 
@@ -359,8 +373,14 @@ export async function checkSurface(force = false): Promise<void> {
   }
   if (!force && owner === checkedFor && surface.get().status !== 'failed') return;
   const ticket = ++checking;
+  // без сети страница сайта не откроется: незачем ждать её полминуты
+  if (!connection.get().online) {
+    checkedFor = '';
+    surface.set({ status: 'failed' });
+    return;
+  }
   try {
-    const value = await api<{ available: boolean; url?: string; origin?: string; host_id?: string }>('/api/dokky/surface');
+    const value = await api<{ available: boolean; url?: string; origin?: string; host_id?: string; host_name?: string }>('/api/dokky/surface');
     if (ticket !== checking) return;
     checkedFor = owner;
     if (!value.available || !value.url || !value.origin) {
@@ -371,16 +391,20 @@ export async function checkSurface(force = false): Promise<void> {
     url.searchParams.set('theme', ui.get().theme);
     surface.set((state) => ({
       // другой аккаунт - другие чаты: прежний список не показываем ни секунды
-      status: 'loading', url: url.toString(), origin: value.origin!, hostId: value.host_id ?? '',
+      status: 'loading', url: url.toString(), origin: value.origin!, hostId: value.host_id ?? '', hostName: value.host_name ?? '',
       sections: [], chats: [], epoch: state.epoch + 1,
     }));
   } catch {
     if (ticket !== checking) return;
-    // сервер недоступен: остаётся свой чат приложения, проверим при следующем входе или «Повторить»
-    if (surface.get().status === 'off') return;
+    checkedFor = '';
     surface.set({ status: 'failed' });
   }
 }
+
+// связь вернулась: страница открывается сама, «Повторить» нажимать не нужно
+if (!isMirror) connection.subscribe(() => {
+  if (connection.get().online && surface.get().status === 'failed') void checkSurface(true);
+});
 
 /** «Повторить» после сбоя загрузки страницы. */
 export function reloadSurface(): void {
@@ -404,6 +428,7 @@ function realChatAction(id: number, action: string): void { command('chat-action
 function realLoadMore(): void { command('load-more'); }
 function realEnableMultiChat(): void { command('enable-multi-chat'); }
 function realSetProduct(product: 'chat' | 'search'): void { command('product', { product }); }
+function realOpenWorkspace(): void { command('open-workspace', {}); }
 
 export const openSurfaceChat = remote('openSurfaceChat', realOpenSurfaceChat);
 export const surfaceNewChat = remote('surfaceNewChat', realSurfaceNewChat);
@@ -412,6 +437,7 @@ export const surfaceChatAction = remote('surfaceChatAction', realChatAction);
 export const surfaceLoadMore = remote('surfaceLoadMore', realLoadMore);
 export const surfaceEnableMultiChat = remote('surfaceEnableMultiChat', realEnableMultiChat);
 export const setSurfaceProduct = remote('setSurfaceProduct', realSetProduct);
+export const openSurfaceWorkspace = remote('openSurfaceWorkspace', realOpenWorkspace);
 export const surfaceActions = {
   openSurfaceChat: realOpenSurfaceChat,
   surfaceNewChat: realSurfaceNewChat,
@@ -420,12 +446,15 @@ export const surfaceActions = {
   surfaceLoadMore: realLoadMore,
   surfaceEnableMultiChat: realEnableMultiChat,
   setSurfaceProduct: realSetProduct,
+  openSurfaceWorkspace: realOpenWorkspace,
 };
 
 /** Чаты сайта для меню: свои удалённые чаты этого компьютера не показываются нигде, чужие - только в режиме кода. */
 export const chatModeChats = (chats: SurfaceChat[]): SurfaceChat[] => chats.filter((chat) => !chat.remote);
-export const otherComputerChats = (chats: SurfaceChat[], hostId: string): SurfaceChat[] =>
-  chats.filter((chat) => chat.remote && chat.remote.host_id !== hostId);
+/** Чаты других компьютеров. После переустановки сервер держит прежнюю запись этого же компьютера: то же имя, не в сети. */
+export const otherComputerChats = (chats: SurfaceChat[], hostId: string, hostName = ''): SurfaceChat[] =>
+  chats.filter((chat) => chat.remote && chat.remote.host_id !== hostId
+    && !(hostName && !chat.remote.online && chat.remote.host_name === hostName));
 
 if (!isMirror) {
   // переход в приложении (свой чат, страница, другой режим) закрывает чат другого компьютера

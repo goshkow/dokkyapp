@@ -39,6 +39,14 @@ export async function refreshProjectPermissions(): Promise<void> {
   data.set({ settings: { ...data.get().settings, permission_profile: settings.permission_profile, private_network: settings.private_network } });
 }
 
+/** Режим разрешений сменили не в этом окне, например с телефона. */
+export async function reloadPermissions(): Promise<void> {
+  const project = view.get().project?.id ?? null;
+  const settings = await api<AppSettings>(`/api/settings${project ? `?project_id=${project}` : ''}`);
+  if ((view.get().project?.id ?? null) !== project) return;
+  data.set({ settings: { ...data.get().settings, permission_profile: settings.permission_profile } });
+}
+
 export async function refreshQueue(): Promise<void> {
   clearTimeout(queue.timer);
   const chatId = currentChatId();

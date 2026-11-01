@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import json
 import hashlib
 import fnmatch
@@ -17,6 +18,7 @@ import tempfile
 from dataclasses import replace
 from difflib import SequenceMatcher
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from koddi.agent_runtime import (
@@ -68,6 +70,7 @@ class ToolError(RuntimeError):
 
 _DEV_SERVERS: dict[int, dict[str, Any]] = {}
 _DEV_SERVERS_LOCK = threading.RLock()
+BACKGROUND_READ_LIMIT = 16000
 
 
 def _tail(path: Path, limit: int = 4000) -> str:
@@ -321,7 +324,8 @@ class ToolRunner:
         self.workspace = workspace.resolve() if workspace else None
         # в цикле агента решение review уходит на проверку Докки; прямой вызов из интерфейса делает сам человек
         self.review_actions = review_actions
-        self._external: set[str] = set()
+        # разрешённые внешние пути - на поток: читающие инструменты оркестратор выполняет параллельно
+        self._local = threading.local()
         self.project_id = project_id
         self.turn_id = turn_id
         self.explicit_write_consent = explicit_write_consent
@@ -334,6 +338,25 @@ class ToolRunner:
         self.quality_depth: str | None = None
         # файлы, которые агент сам положил в индекс: только их можно коммитить без явных путей
         self.agent_staged: set[str] = set()
+        # живой вывод команды для ленты и остановка одной команды человеком, без отмены всего хода
+        self.output_listener: Callable[[str], None] | None = None
+        self._stop_command = threading.Event()
+
+    @property
+    def _external(self) -> set[str]:
+        return getattr(getattr(self, "_local", None), "external", set())
+
+    @_external.setter
+    def _external(self, value: set[str]) -> None:
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+        self._local.external = value
+
+    def stop_command(self) -> None:
+        self._stop_command.set()
+
+    def reset_command(self) -> None:
+        self._stop_command.clear()
 
     async def _network(self, coroutine):
         import asyncio
@@ -350,6 +373,22 @@ class ToolRunner:
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
 
+    def _root_chat(self) -> int | None:
+        """Чат человека: вложенный агент пользуется его разрешениями."""
+        if self.turn_id is None:
+            return None
+        with db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(c.parent_chat_id,t.chat_id) FROM turns t JOIN chats c ON c.id=t.chat_id WHERE t.id=?",
+                (self.turn_id,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def fetch_host_approved(self, args: dict[str, Any]) -> bool:
+        from koddi.policy.grants import fetch_host_allowed
+
+        return fetch_host_allowed(self._root_chat(), str(args.get("url") or ""))
+
     def run(self, name: str, args: dict[str, Any], *, approved: bool = False) -> dict[str, Any]:
         if self.cancel_event.is_set():
             return {"ok": False, "cancelled": True, "error": "operation cancelled"}
@@ -359,6 +398,13 @@ class ToolRunner:
             log_event("ERROR", "tool.invalid_arguments", name, validation_error)
             return validation_error
         decision = decide(name, args, self.workspace, self.project_id)
+        if name == "web.fetch" and decision.action == "ask":
+            from koddi.policy.grants import allow_fetch_host
+
+            if approved:
+                allow_fetch_host(self._root_chat(), str(args.get("url") or ""))
+            elif self.fetch_host_approved(args):
+                decision = replace(decision, action="allow", reason="site allowed earlier in this chat")
         if approved and decision.action in {"ask", "review"}:
             decision = replace(decision, action="allow", reason="approved for this exact call")
         if decision.action == "review" and not self.review_actions:
@@ -467,6 +513,10 @@ class ToolRunner:
                     )
                     for key, value in result.items()
                 }
+            finished = self._finished_background()
+            if finished:
+                # как уведомление в Claude Code: агент узнаёт о конце фоновой команды со следующим действием
+                result = {**result, "background_finished": finished}
             return result
         except Exception as exc:
             result = redact({"ok": False, "error": str(exc)})
@@ -620,6 +670,8 @@ class ToolRunner:
             return self.patch_preview(args)
         if name == "devserver.start":
             return self.devserver_start(args)
+        if name == "devserver.output":
+            return self.devserver_output(args)
         if name in {"format.run", "test.run", "build.run", "lint.run"}:
             return self.shell_run(
                 {"command": args["command"], "timeout_seconds": args.get("timeout_seconds", 600)}
@@ -1485,27 +1537,40 @@ class ToolRunner:
         return self.run_process(shell_argv(args["command"]), workspace, timeout)
 
     def run_process(self, argv: list[str], cwd: Path, timeout: int) -> dict[str, Any]:
-        """Процесс без shell с остановкой всего дерева по отмене хода или тайм-ауту; вывод ограничен."""
+        """Процесс без shell с остановкой всего дерева по отмене хода, просьбе человека или тайм-ауту; вывод ограничен."""
         proc = subprocess.Popen(
             argv,
             cwd=cwd,
-            text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL if os.name != "nt" else None,
             creationflags=HIDDEN_SUBPROCESS,
             # своя группа процессов, чтобы остановка снимала и дочерние процессы команды
             start_new_session=os.name != "nt",
-            encoding="utf-8",
-            errors="replace",
+            # питон за трубой копит вывод в буфере: без этого строки приходят пачкой в конце
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         buffers = {"stdout": _ToolOutputBuffer(20000), "stderr": _ToolOutputBuffer(12000)}
         output_locks = {key: threading.Lock() for key in buffers}
+        listener = self.output_listener
 
         def drain(stream, key):
-            while chunk := stream.read(4096):
-                with output_locks[key]:
-                    buffers[key].append(chunk)
+            # read1 отдаёт то, что уже пришло; read(4096) ждал бы 4096 байт или конца, и лента не видела бы вывод
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            read = getattr(stream, "read1", None) or stream.read
+            while True:
+                data = read(4096)
+                text = decoder.decode(data, final=not data) if isinstance(data, bytes) else data or ""
+                if text:
+                    with output_locks[key]:
+                        buffers[key].append(text)
+                    if listener is not None:
+                        try:
+                            listener(text)
+                        except Exception:  # noqa: BLE001 - лента не должна ронять команду
+                            pass
+                if not data:
+                    break
             stream.close()
 
         readers = [
@@ -1536,11 +1601,15 @@ class ToolRunner:
                     _signal_group(proc, signal.SIGKILL)
                 proc.wait(timeout=2)
 
-        cancelled = timed_out = False
+        cancelled = timed_out = stopped = False
         started = time.monotonic()
         while proc.poll() is None:
             if self.cancel_event.is_set():
                 cancelled = True
+                stop_tree()
+                break
+            if self._stop_command.is_set():
+                stopped = True
                 stop_tree()
                 break
             if time.monotonic() - started >= timeout:
@@ -1555,11 +1624,17 @@ class ToolRunner:
             with output_locks[key]:
                 output[key] = buffer.finish()
         return {
-            "ok": proc.returncode == 0 and not cancelled and not timed_out,
+            "ok": proc.returncode == 0 and not cancelled and not timed_out and not stopped,
             "returncode": proc.returncode,
             **output,
             **({"output_incomplete": True} if any(reader.is_alive() for reader in readers) else {}),
             **({"cancelled": True, "error": "operation cancelled"} if cancelled else {}),
+            **(
+                {"stopped_by_user": True, "error": "Пользователь остановил эту команду. Не запускайте её снова без его "
+                 "просьбы: продолжайте задачу другим способом или спросите, как быть."}
+                if stopped and not cancelled
+                else {}
+            ),
             **(
                 {"timed_out": True, "error": f"command timed out after {timeout} seconds"}
                 if timed_out
@@ -1802,7 +1877,7 @@ class ToolRunner:
             log.close()
         with _DEV_SERVERS_LOCK:
             _DEV_SERVERS[proc.pid] = {"proc": proc, "command": str(args["command"]), "log": log_path, "started": time.time(),
-                                      "owner_id": owner_id, "workspace": str(workspace)}
+                                      "owner_id": owner_id, "workspace": str(workspace), "offset": 0, "reported": False}
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline and proc.poll() is None and not self.cancel_event.is_set():
             time.sleep(0.1)
@@ -1813,8 +1888,68 @@ class ToolRunner:
             "running": proc.poll() is None,
             "returncode": proc.poll(),
             "output": output,
-            "hint": "Команда работает в фоне; остановить: devserver.stop с этим pid.",
+            "hint": "Команда работает в фоне: новый вывод - devserver.output, остановить - devserver.stop с этим pid. "
+                    "Когда она завершится, это придёт в background_finished одного из следующих результатов.",
         }
+
+    def _own_background(self, pid: int) -> dict[str, Any] | None:
+        from koddi.policy.account import local_owner
+
+        item = _DEV_SERVERS.get(pid)
+        if item is None or item.get("owner_id") != local_owner() or item.get("workspace") != str(self._require_workspace()):
+            return None
+        return item
+
+    def devserver_output(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Вывод фоновой команды с прошлого чтения: агент следит за сборкой или тестами, не останавливая их."""
+        pid = int(args["pid"])
+        with _DEV_SERVERS_LOCK:
+            item = self._own_background(pid)
+            if item is None:
+                return {"ok": False, "error": f"фоновой команды с pid {pid} нет"}
+            try:
+                size = item["log"].stat().st_size
+            except OSError:
+                size = item["offset"]
+            start = max(item["offset"], size - BACKGROUND_READ_LIMIT)
+            skipped = start - item["offset"]
+            try:
+                with item["log"].open("rb") as log:
+                    log.seek(start)
+                    data = log.read(size - start)
+            except OSError:
+                data = b""
+            item["offset"] = start + len(data)
+            returncode = item["proc"].poll()
+            if returncode is not None:
+                item["reported"] = True
+        return {
+            "ok": True,
+            "pid": pid,
+            "running": returncode is None,
+            "returncode": returncode,
+            "output": data.decode("utf-8", errors="replace"),
+            **({"skipped_bytes": skipped} if skipped > 0 else {}),
+        }
+
+    def _finished_background(self) -> list[dict[str, Any]]:
+        if self.workspace is None:
+            return []
+        from koddi.policy.account import local_owner
+
+        owner_id, workspace = local_owner(), str(self.workspace)
+        finished = []
+        with _DEV_SERVERS_LOCK:
+            for pid, item in _DEV_SERVERS.items():
+                if item.get("reported") or item.get("owner_id") != owner_id or item.get("workspace") != workspace:
+                    continue
+                returncode = item["proc"].poll()
+                if returncode is None:
+                    continue
+                item["reported"] = True
+                finished.append({"pid": pid, "command": item["command"], "returncode": returncode,
+                                 "output_tail": _tail(item["log"], 2000)})
+        return finished
 
     def devserver_stop(self, args: dict[str, Any]) -> dict[str, Any]:
         pid = args.get("pid")
@@ -1885,28 +2020,17 @@ class ToolRunner:
         return {
             "ok": True,
             "memory": retrieve_memory(
-                self.project_id, args.get("query", ""), int(args.get("limit", 12))
+                self.project_id, args.get("query", ""), int(args.get("limit", 12)), whole=True
             ),
         }
 
     def memory_set(self, args: dict[str, Any]) -> dict[str, Any]:
         from koddi.agents import profile_memory
-        from koddi.logs.service import redact
-        from koddi.policy.account import local_owner
 
-        kind = str(args.get("kind") or "note").strip()[:40] or "note"
-        # сведения о пользователе и проекте попадают в каждый будущий чат: только через общую память с её правилами
-        if kind in profile_memory.SCOPES:
-            return profile_memory.remember(kind, self.project_id, args.get("content", ""))
-        content = redact(str(args.get("content") or "").strip())[:MEMORY_NOTE_CHARS]
-        if not content:
-            return {"ok": False, "error": "Пустая заметка"}
-        with db() as conn:
-            conn.execute(
-                "INSERT INTO memory_summaries(project_id, kind, content, owner_id) VALUES (?, ?, ?, ?)",
-                (self.project_id, kind, content, local_owner()),
-            )
-        return {"ok": True}
+        kind = str(args.get("kind") or "").strip()
+        # любая заметка попадает в память из настроек: видна там, удаляется и слушается выключателя
+        scope = kind if kind in profile_memory.SCOPES else ("project" if self.project_id is not None else "user")
+        return profile_memory.remember(scope, self.project_id, args.get("content", ""))
 
     def task_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name in {"task.create", "orchestrator.start_turn"}:

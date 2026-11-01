@@ -10,8 +10,10 @@ import {
 } from './chatCore';
 import { handlePlanRequired } from './access';
 import { scheduleKeepalive } from './codingSession';
+import { appendCommandOutput, clearCommandOutput, commandOutput, lastOutputLine } from './commandOutput';
+import { clearSubagents, trackSubagent } from './subagents';
 import { revoke } from './data';
-import { applyBillingLimits } from './limits';
+import { applyBillingLimits, loadLimits } from './limits';
 import { view } from './view';
 import { notify } from './overlay';
 import { onQualityEvent } from './quality';
@@ -88,6 +90,8 @@ function rekeyStream(from: string, to: string): void {
 
 export function clearStreamState(): void {
   clearBuffers();
+  clearCommandOutput();
+  clearSubagents();
   clearReplays();
   redirects.clear();
   if (frame) cancelAnimationFrame(frame);
@@ -148,6 +152,8 @@ export function resetStreamMessage(delta: { message_id?: string | number }): voi
 
 /* обработка событий */
 const terminal = ['turn.completed', 'turn.failed', 'turn.cancelled'];
+// идущий вызов: подпись живого вывода берётся из его имени и команды
+let runningCall: Record<string, any> | null = null;
 
 function localJournal(kind: string, data: Record<string, any>): void {
   if (!isDevelopment()) return;
@@ -171,8 +177,17 @@ function localJournal(kind: string, data: Record<string, any>): void {
     // путь берётся из ещё недописанного вызова: «Редактирую templates/landing.html · 12 КБ»
     const kb = Math.round((data.bytes_received || 0) / 1024);
     patch.liveStatus = data.name ? `${liveLabel({ event: 'tool.call', data: { ...data, arguments: { path: data.path } } })}${kb ? ` · ${kb} КБ` : ''}` : 'Готовлю действие…';
-  } else if (kind === 'tool.call' || kind === 'tool.result') patch.liveStatus = liveLabel({ event: kind, data });
-  else if (terminal.includes(kind)) {
+  } else if (kind === 'tool.call' || kind === 'tool.result') {
+    runningCall = kind === 'tool.call' ? data : null;
+    patch.liveStatus = liveLabel({ event: kind, data });
+  } else if (kind === 'tool.output' && runningCall && String(runningCall.id) === String(data.id)) {
+    const line = lastOutputLine(commandOutput.get().output[String(data.id)] ?? '');
+    const label = liveLabel({ event: 'tool.call', data: runningCall });
+    patch.liveStatus = line ? `${label} · ${line}` : label;
+  } else if (kind === 'task.progress' && data.event === 'tool') {
+    // пока сабагент работает, строка состояния показывает его действие, а не «Передаю подзадачу»
+    patch.liveStatus = `Агент ${data.agent} · ${liveLabel({ event: 'tool.call', data: { name: data.name, arguments: data.arguments } })}`;
+  } else if (terminal.includes(kind)) {
     patch.turnEnded = true;
     scheduleSync(0);
   }
@@ -211,6 +226,8 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     const { event: kind, data: payload } = event;
     if (!isDevelopment()) cloudCursor.value = event.id || cloudCursor.value;
     if (away()) continue;
+    if (kind === 'tool.output') appendCommandOutput(String(payload.id ?? ''), String(payload.text ?? ''));
+    if (kind === 'task.progress') trackSubagent(payload);
     localJournal(kind, payload);
     cloudProgressEvent(kind, payload);
     if (kind === 'stream.reset') {
@@ -267,6 +284,8 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     if (kind === 'agent.input_required') await showRequests();
     if (kind === 'context.compacting' || kind === 'context.compacted') setStatus(payload.text || 'Сжимаю контекст…');
     if (kind === 'turn.failed') {
+      // лимит кончился посреди хода: полоска лимита и кнопка продления должны появиться сразу
+      if (['quota_exceeded', 'window_exhausted', 'overall_exhausted', 'usage_exhausted', 'rate_limited'].includes(String(payload.code ?? ''))) void loadLimits();
       if (payload.code === 'plan_required') {
         // подписка закончилась или не включает режим: задача остановлена, всё сделанное и очередь сохранены, запись закрыта
         handlePlanRequired();
@@ -276,6 +295,8 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     if (terminal.includes(kind)) {
       setPlanTurnState({ active: false, turn: { id: payload.turn_id ?? chat.get().turnId ?? undefined, status: kind.slice(5) } });
       clearBuffers();
+      clearCommandOutput();
+      clearSubagents();
       await hooks.sync();
       if (gone()) return;
       setRunning(false);

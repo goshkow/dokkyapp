@@ -18,6 +18,7 @@ import { attachmentsReady, clearAttachments, composer, draftContent, focusCompos
 import { beginProgress, bindProgress, clearProgress, finishProgress, progress } from './cloudProgress';
 import { data, isReady, login, revoke, saveSettings, setScope } from './data';
 import { clearBodies } from './stream';
+import { askRemoteAccess } from './firstRun';
 import { choiceDialog, confirmDialog, inputDialog, notify } from './overlay';
 import { enqueueDraft, refreshProjectPermissions, refreshQueue, resetPermissions, resetQueue } from './queue';
 import { resetCloudPreferences } from './cloudPrefs';
@@ -193,7 +194,7 @@ export async function attachLocal(chatId: Id, after: string | number = 0): Promi
     }
     await consume(response, chatId, controller);
   } catch (error) {
-    if ((error as Error).name !== 'AbortError') notify(`Поток прервался: ${(error as Error).message}`, true);
+    if ((error as Error).name !== 'AbortError') notify('Связь с программой прервалась. Откройте чат заново, чтобы увидеть ответ.', true);
   } finally {
     if (ctl.stream === controller) {
       ctl.stream = null;
@@ -407,8 +408,11 @@ async function sendLocalDraft(prepared: () => void): Promise<void> {
   if (state.running) { await enqueueDraft(); return; }
   const model = selectedLocalModel();
   if (!model) {
-    notify('Войдите с помощью Докки');
-    openSettings('account');
+    if (data.get().account?.authenticated) notify('Модели сейчас недоступны. Проверьте подключение и попробуйте ещё раз.', true);
+    else {
+      notify('Войдите с помощью Докки');
+      openSettings('account');
+    }
     return;
   }
   const mode = composer.get().agentMode;
@@ -420,6 +424,8 @@ async function sendLocalDraft(prepared: () => void): Promise<void> {
   const { project } = view.get();
   let current = view.get().chat;
   if (!current) {
+    // отмена оставляет текст в поле: сообщение ещё никуда не ушло
+    if (!await askRemoteAccess() || !currentView()) return;
     current = await post<Chat>('/api/chats', { title: 'Новый чат', project_id: project?.id ?? null, mode, model }, { signal: ctl.view.signal });
     if (!currentView()) { void refreshLists().catch(() => undefined); return; }
     adoptChat(current);
@@ -597,6 +603,11 @@ async function stopCloud(): Promise<void> {
 export const sendOrStop = (): Promise<void> => {
   if (siteFieldActive()) return Promise.resolve(surface.get().siteField?.busy ? stopSite() : sendToSite());
   return chat.get().running ? (isDevelopment() ? stopLocal() : stopCloud()) : send();
+};
+/** Esc в поле: только остановка. Если ход уже закончился, ничего не отправляется. */
+export const stopRun = (): Promise<void> => {
+  if (siteFieldActive()) return Promise.resolve(surface.get().siteField?.busy ? stopSite() : undefined);
+  return chat.get().running ? (isDevelopment() ? stopLocal() : stopCloud()) : Promise.resolve();
 };
 export const loadOlder = (): Promise<void> => (isDevelopment() ? loadOlderLocal() : loadOlderCloud());
 export const reloadChat = (): void => {

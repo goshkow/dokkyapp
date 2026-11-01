@@ -8,7 +8,7 @@ import { useChatMark } from '../../state/chatActivity';
 import { useData } from '../../state/data';
 import { guarded } from '../../state/overlay';
 import { refreshRemote, setChatShared, sharedOnPhone, useRemote } from '../../state/remoteControl';
-import { deleteChat, loadCloud, newChat, openChat, removeProject, renameChat, setProjectOpen, togglePin } from '../../state/remote';
+import { deleteChat, loadCloud, newChat, openChat, relocateProject, removeProject, renameChat, setProjectOpen, togglePin } from '../../state/remote';
 import { useSidebarQuery } from '../../state/sidebarQuery';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
@@ -155,12 +155,13 @@ function ProjectGroup({ project, chats, open, onToggle, onMenu, children }: { pr
             // стрелка раскрывает и сворачивает список, остальная строка открывает пустой чат в проекте
             if ((event.target as Element).closest('.project-chevron')) { onToggle(!open); return; }
             if (!open) onToggle(true);
-            newChat(project);
+            if (project.exists !== false) newChat(project);
           }}
         >
           <ChevronRight className="project-chevron" aria-hidden="true" />
           <Folder aria-hidden="true" />
           <span title={project.name}>{project.name}</span>
+          {project.exists === false && <small className="project-missing">Папка не найдена</small>}
         </button>
         <button type="button" className="icon-btn" aria-label={`Новый чат в проекте ${project.name}`} onClick={() => newChat(project)}>
           <Plus aria-hidden="true" />
@@ -170,7 +171,15 @@ function ProjectGroup({ project, chats, open, onToggle, onMenu, children }: { pr
         </button>
       </div>
       <div className="project-body" inert={!open}>
-        <div className="project-body-inner">{children}</div>
+        <div className="project-body-inner">
+          {project.exists === false && (
+            <div className="project-missing-actions">
+              <button type="button" onClick={guarded(() => relocateProject(project))}>Указать заново</button>
+              <button type="button" onClick={guarded(() => removeProject(project))}>Убрать из списка</button>
+            </div>
+          )}
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -191,7 +200,7 @@ export function ChatLists() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [projectMenu, setProjectMenu] = useState<ProjectMenuState | null>(null);
   const remoteStatus = useRemote((state) => state.status);
-  const phone = development && remoteStatus?.enabled === true;
+  const phone = development && remoteStatus?.enabled === true && remoteStatus.state !== 'revoked';
   const menuChatId = menu?.chat.id;
   // видимость могла смениться с телефона (новая сессия, удаление в вебе): перед показом пункта сверяемся
   useEffect(() => { if (development && menuChatId !== undefined) refreshRemote(); }, [development, menuChatId]);

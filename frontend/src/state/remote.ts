@@ -9,11 +9,13 @@ import { deleteChat as realDeleteChat, renameChat as realRenameChat, switchScope
 import { loadCloud as realLoadCloud, loadLocal as realLoadLocal, saveSettings, setProjectOpen as realSetProjectOpen } from './data';
 import { openLibrary as realOpenLibrary } from './library';
 import { loadLimits as realLoadLimits } from './limits';
+import { relocateProject as realRelocateProject } from './actions';
 import { confirmDialog } from './overlay';
 import { setPanel as realSetPanel, togglePanel as realTogglePanel } from './panels';
 import { syncChat } from './chat';
-import { restoreTurn as realRestoreTurn, rollbackChange as realRollbackChange, selectChange as realSelectChange } from './chatAgent';
+import { restoreTurn as realRestoreTurn, rollbackChange as realRollbackChange, rollbackHunk as realRollbackHunk, selectChange as realSelectChange } from './chatAgent';
 import type { Change } from './chatTypes';
+import { commitFiles as realCommitFiles, pushBranch as realPushBranch, refreshGit as realRefreshGit } from './git';
 import { openBilling as realOpenBilling, openSettings as realOpenSettings } from './settingsUi';
 import { startChat, surfaceActions } from './surface';
 import { downloadUpdate as realDownloadUpdate, restartForUpdate as realRestartForUpdate } from './updates';
@@ -28,8 +30,10 @@ async function realRemoveProject(project: Project): Promise<void> {
 }
 
 /** Откат изменения агента: подтверждение показывает главный вид. */
-const realRollback = (id: Change['id'], fileCount: number): Promise<void> => realRollbackChange(id, fileCount, syncChat);
-const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncChat);
+const syncAfterRollback = async (): Promise<void> => { await syncChat(); await realRefreshGit(); };
+const realRollback = (id: Change['id'], fileCount: number): Promise<void> => realRollbackChange(id, fileCount, syncAfterRollback);
+const realHunk = (id: Change['id'], path: string, hunk: string): Promise<void> => realRollbackHunk(id, path, hunk, syncAfterRollback);
+const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncAfterRollback);
 /** Порядок блоков правой панели сохраняет главный вид: его данные зеркалят плитки. */
 const realSaveInspectorOrder = async (order: string[]): Promise<void> => { await saveSettings({ inspector_order: order }); };
 
@@ -46,6 +50,7 @@ const table = {
   renameChat: realRenameChat,
   togglePin: realTogglePin,
   removeProject: realRemoveProject,
+  relocateProject: realRelocateProject,
   setProjectOpen: realSetProjectOpen,
   loadCloud: realLoadCloud,
   loadLocal: realLoadLocal,
@@ -57,6 +62,10 @@ const table = {
   setPanel: realSetPanel,
   selectChange: realSelectChange,
   rollbackChange: realRollback,
+  rollbackHunk: realHunk,
+  commitFiles: realCommitFiles,
+  pushBranch: realPushBranch,
+  refreshGit: realRefreshGit,
   restoreTurn: realRestore,
   saveInspectorOrder: realSaveInspectorOrder,
   ...surfaceActions,
@@ -73,6 +82,7 @@ export const deleteChat = remote('deleteChat', realDeleteChat);
 export const renameChat = remote('renameChat', realRenameChat);
 export const togglePin = remote('togglePin', realTogglePin);
 export const removeProject = remote('removeProject', realRemoveProject);
+export const relocateProject = remote('relocateProject', realRelocateProject);
 export const setProjectOpen = remote('setProjectOpen', realSetProjectOpen);
 export const loadCloud = remote('loadCloud', realLoadCloud);
 export const loadLocal = remote('loadLocal', realLoadLocal);
@@ -83,6 +93,10 @@ export const openLibrary = remote('openLibrary', realOpenLibrary);
 export const togglePanel = remote('togglePanel', realTogglePanel);
 export const selectChange = remote('selectChange', realSelectChange);
 export const rollbackChange = remote('rollbackChange', realRollback);
+export const rollbackHunk = remote('rollbackHunk', realHunk);
+export const commitFiles = remote('commitFiles', realCommitFiles);
+export const pushBranch = remote('pushBranch', realPushBranch);
+export const refreshGit = remote('refreshGit', realRefreshGit);
 export const restoreTurn = remote('restoreTurn', realRestore);
 export const saveInspectorOrder = remote('saveInspectorOrder', realSaveInspectorOrder);
 

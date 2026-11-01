@@ -2,15 +2,17 @@ import { isReady, lastProject, saveSettings, data } from './data';
 import { switchScope } from './actions';
 import { guarded } from './overlay';
 import { togglePanel } from './panels';
+import { openChatSearch } from './chatSearch';
+import { togglePalette } from './palette';
 import { signOut } from './session';
 import { openBilling, openSettings } from './settingsUi';
 import { ui, type Scope } from './ui';
 import { openSection, startChat, surface } from './surface';
-import { goBack, goForward, openPage, view, type PageKey } from './view';
+import { goBack, goForward, openChat, openPage, view, type PageKey } from './view';
 
 declare global {
   interface Window {
-    /** Команды строки меню macOS и меню значка в трее; вызывает хост окна. */
+    /** Команды строки меню macOS, горячих клавиш Windows, меню трея и системных уведомлений; вызывает хост окна. */
     koddiMenu?: (action: string) => void;
   }
 }
@@ -26,6 +28,14 @@ const DEV_PAGES: Record<string, Page> = {
 async function goToPage(page: Page, scope: Scope): Promise<void> {
   if (ui.get().scope !== scope) await switchScope(scope);
   openPage(page);
+}
+
+/** Щелчок по системному уведомлению: открывается чат режима кода, о котором оно. */
+async function openNoticeChat(id: number): Promise<void> {
+  const chat = data.get().localChats.find((item) => item.id === id);
+  if (!chat) return;
+  if (ui.get().scope !== 'development') await switchScope('development');
+  openChat(chat);
 }
 
 async function resizeText(change: number | 'reset'): Promise<void> {
@@ -50,6 +60,8 @@ async function run(action: string): Promise<void> {
   if (scope) return switchScope(scope);
   const page = DEV_PAGES[action];
   if (page) return goToPage(page, 'development');
+  const notice = /^open-chat:([1-9][0-9]*)$/.exec(action);
+  if (notice) return openNoticeChat(Number(notice[1]));
   switch (action) {
     case 'page-library':
       if (surface.get().status === 'off') return goToPage('library', 'chat');
@@ -59,6 +71,8 @@ async function run(action: string): Promise<void> {
     case 'usage': return openSettings('usage');
     case 'sign-out': return signOut();
     case 'new-chat': return startChat(ui.get().scope === 'development' ? view.get().project ?? lastProject() : null);
+    case 'chat-search': return openChatSearch();
+    case 'palette': return togglePalette();
     case 'toggle-left': return togglePanel('left');
     case 'toggle-right': return togglePanel('right');
     case 'back': return goBack();
@@ -68,3 +82,13 @@ async function run(action: string): Promise<void> {
 }
 
 window.koddiMenu = guarded(run);
+
+// в браузере и в режиме разработки без окна приложения эти сочетания ловит страница: в приложении их забирает меню окна
+document.addEventListener('keydown', (event) => {
+  if (window.koddiDesktop || !(/mac/i.test(navigator.platform) ? event.metaKey : event.ctrlKey) || event.altKey || event.shiftKey || event.defaultPrevented) return;
+  const key = event.key.toLowerCase();
+  const action = key === 'k' || key === 'л' ? 'palette' : key === 'f' || key === 'а' ? 'chat-search' : '';
+  if (!action) return;
+  event.preventDefault();
+  window.koddiMenu?.(action);
+});

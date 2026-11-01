@@ -82,7 +82,7 @@ def test_local_chats_stay_on_the_computer_after_switching_accounts(isolated, tmp
     attachment = store_attachment(isolated, 'notes.txt', io.BytesIO(b'project data'))
     runner = ToolRunner(tmp_path)
     assert runner.run('memory.set', {'content': 'privateword owner A', 'kind': 'note'}, approved=True)['ok']
-    assert retrieve_memory(None, 'privateword')[0]['owner_id'] == 'a'
+    assert retrieve_memory(None, 'privateword', whole=True)[0]['owner_id'] == 'a'
     with storage.db() as conn:
         conn.execute("INSERT INTO coding_sessions(chat_id,user_id,session_json) VALUES (?,'a','{}')", (isolated,))
         conn.execute("INSERT INTO coding_session_keys(chat_id,user_id,request_key,body_json) VALUES (?,'a','k','{}')", (isolated,))
@@ -92,7 +92,7 @@ def test_local_chats_stay_on_the_computer_after_switching_accounts(isolated, tmp
     assert client.get(f'/api/chats/{isolated}/messages').status_code == 200
     assert [chat['id'] for chat in client.get('/api/chats').json()] == [isolated]
     assert client.get(f"/api/attachments/{attachment['id']}/content").status_code == 200
-    assert retrieve_memory(None, 'privateword') == []
+    assert retrieve_memory(None, 'privateword', whole=True) == []
     with storage.db() as conn:
         assert conn.execute('SELECT owner_id FROM chats WHERE id=?', (isolated,)).fetchone()[0] == 'b'
         assert conn.execute('SELECT owner_id FROM memory_summaries').fetchone()[0] == 'a'
@@ -103,7 +103,7 @@ def test_local_chats_stay_on_the_computer_after_switching_accounts(isolated, tmp
     storage.set_setting('dokky_user', {'id': 'a'})
     adopt_local_data('a')
     assert client.get(f'/api/chats/{isolated}/messages').status_code == 200
-    assert retrieve_memory(None, 'privateword')[0]['content'] == 'privateword owner A'
+    assert retrieve_memory(None, 'privateword', whole=True)[0]['content'] == 'privateword owner A'
 
 
 def test_logs_changes_and_rollback_do_not_cross_accounts_or_project(isolated, tmp_path):
@@ -161,3 +161,39 @@ def test_devservers_do_not_cross_account_or_workspace(isolated, tmp_path, monkey
     assert not runner.devserver_stop({'pid': 10003})['ok']
     assert runner.devserver_stop({})['ok']
     assert stopped == [one] and set(entries) == {10002, 10003}
+
+
+def test_new_account_is_asked_before_taking_local_data(isolated) -> None:
+    from koddi.dokky.coding import answer_local_data, local_data_question, settle_local_data
+
+    with storage.db() as conn:
+        unowned = conn.execute("INSERT INTO chats(title,mode,owner_id) VALUES ('ничей','development','')").lastrowid
+
+    def owner(chat: int) -> str:
+        with storage.db() as conn:
+            return conn.execute("SELECT owner_id FROM chats WHERE id=?", (chat,)).fetchone()[0]
+
+    # первый аккаунт видит ничьё без вопроса
+    assert local_data_question("a") == {"ask": False, "chats": 0}
+    settle_local_data("a")
+    assert owner(unowned) == "a"
+    # второй аккаунт: ничего не переходит, пока не ответит
+    settle_local_data("b")
+    assert owner(isolated) == "a" and local_data_question("b") == {"ask": True, "chats": 2}
+    # отказ: данные остаются первому и больше не спрашиваем
+    answer_local_data("b", False)
+    settle_local_data("b")
+    assert owner(isolated) == "a" and local_data_question("b")["ask"] is False
+    # первый аккаунт возвращается и всё на месте
+    settle_local_data("a")
+    assert owner(isolated) == "a" and local_data_question("a")["ask"] is False
+    # третий забирает себе
+    settle_local_data("c")
+    answer_local_data("c", True)
+    assert owner(isolated) == "c" and local_data_question("c")["ask"] is False
+
+
+def test_local_data_answer_is_validated(isolated) -> None:
+    client = TestClient(create_app())
+    assert client.get("/api/local-data").json()["ask"] is False
+    assert client.post("/api/local-data", json={"take": "да"}).status_code == 422

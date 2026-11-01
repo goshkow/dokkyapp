@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import koddi.documents.pdf_entry  # noqa: F401 - работник PDF выходит здесь, до загрузки Qt
+
 import base64
 import ctypes
 import json
@@ -61,7 +63,7 @@ from koddi.desktop import server as desktop_server
 LOGGER = logging.getLogger("koddi.desktop")
 IS_MAC = sys.platform == "darwin"
 # плитки, у которых вид страницы лежит внутри стекла над лентой: поле ввода и «Чат / Поиск» режима чата
-CONTENT_TILES = ("composer", "product")
+CONTENT_TILES = ("composer", "product", "pill")
 # виды, в которые страница может перевести клавиатуру (навигация с клавиатуры)
 FOCUS_ROLES = frozenset({"main", "sidebar", "inspector", "composer"})
 
@@ -381,6 +383,17 @@ class WindowBridge(QObject):
             self.host.tray.update(state)
 
     @Slot(str)
+    def agentNotice(self, payload: str):  # noqa: N802
+        """Агент закончил ход или ждёт ответа: окно решает, нужно ли системное уведомление."""
+        if self.role != "main" or not self._own_page():
+            return
+        from koddi.desktop import notices
+
+        notice = notices.parse(payload)
+        if notice is not None:
+            self.host.agent_notice(notice)
+
+    @Slot(str)
     def popupMenu(self, payload: str):  # noqa: N802
         """Список выбора у поля ввода: системное меню ложится поверх плиток стекла, страница получает выбранное значение."""
         if self.role != "main" or not self._own_page() or len(payload) > 16 * 1024:
@@ -391,6 +404,22 @@ class WindowBridge(QObject):
         if request is not None:
             # меню крутит свой цикл событий: из обработчика сообщения страницы его не запускаем
             QTimer.singleShot(0, lambda: self.host.show_popup_menu(request))
+
+    @Slot(str)
+    def popupOpen(self, payload: str):  # noqa: N802
+        """Меню открывается отдельным окном: якорь в координатах страницы этого вида."""
+        if self.role != "popup" and self._own_page() and len(payload) <= 1024 and self.host.popup is not None:
+            self.host.popup.open_at(self.view, payload)
+
+    @Slot(str)
+    def popupResize(self, payload: str):  # noqa: N802
+        if self.role == "popup" and self._own_page() and len(payload) <= 256 and self.host.popup is not None:
+            self.host.popup.resize_to(payload)
+
+    @Slot(str)
+    def popupClose(self, payload: str):  # noqa: N802
+        if self.role != "popup" and self._own_page() and len(payload) <= 256 and self.host.popup is not None:
+            self.host.popup.close_request(payload)
 
     @Slot(str)
     def focusComposer(self, payload: str):  # noqa: N802
@@ -593,10 +622,10 @@ class KoddiPage(QWebEnginePage):
         self.permissionRequested.connect(self._permission)
 
     def _permission(self, permission) -> None:
-        """Микрофон нужен только голосовому вводу: своей страницы и сайта в режиме чата; остальное запрещено."""
-        if (
-            trusted_origin(permission.origin(), self.host.api_base)
-            and permission.permissionType() == QWebEnginePermission.PermissionType.MediaAudioCapture
+        """Микрофон и камера (голосовой ввод, фото в «Еде») - только своей странице и сайту в режиме чата."""
+        kinds = QWebEnginePermission.PermissionType
+        if trusted_origin(permission.origin(), self.host.api_base) and permission.permissionType() in (
+            kinds.MediaAudioCapture, kinds.MediaVideoCapture, kinds.MediaAudioVideoCapture,
         ):
             permission.grant()
         else:
@@ -647,8 +676,14 @@ class WebHost(QMainWindow):
         # Liquid Glass только на macOS 26+; окно сразу прозрачное, а обычный вид рисует страница сама
         self.glass = macos_glass.GlassLayer(self) if IS_MAC and macos_glass.supported() else None
         self.tiles: dict = {}
+        self.popup = None
         # значок в трее ставит main() после создания окна
         self.tray = None
+        # системные уведомления о работе агента (macOS) и число непрочитанных на значке
+        self.notices = None
+        self._unseen_notices = 0
+        self._stop_confirmed = False
+        self._notice_chat = 0
         self._last_regions = None
         self._final_width = None
         if self.glass:
@@ -699,7 +734,8 @@ class WebHost(QMainWindow):
         from koddi.desktop import splash
 
         self._startup_look = splash.load()
-        self.startup_label = splash.Splash(root, self._startup_look)
+        # на Windows кнопки окна рисует страница, а до неё - заставка
+        self.startup_label = splash.Splash(root, self._startup_look, window_action=self.window_action if sys.platform == "win32" else None)
         layout.addWidget(self.view, 1)
         self.setCentralWidget(root)
         self._fit_startup_overlay()
@@ -728,6 +764,10 @@ class WebHost(QMainWindow):
             from koddi.desktop import macos_menu
 
             macos_menu.install(self)
+        else:
+            from koddi.desktop import shortcuts
+
+            shortcuts.install(self)
         QTimer.singleShot(0, self._enable_native_frame)
         QTimer.singleShot(250, self._load_ui)
 
@@ -766,8 +806,9 @@ class WebHost(QMainWindow):
         """Скрипт страницы: связь с окном и оформление; channel_code - реализация QWebChannel."""
         from koddi.desktop import splash
 
-        # выбор стекла из startup.json: вызывается ещё из __init__, до self._startup_look
-        glass_preferred = bool(splash.load()["glass"])
+        # выбор стекла из startup.json: вызывается ещё из __init__, до self._startup_look; выбора нет - решает страница
+        glass_off = splash.glass_turned_off()
+        glass_choice = "" if glass_off is None else "window.koddiGlassPreferred = %s;" % json.dumps(not glass_off)
         return (
             channel_code
             + "\n"
@@ -817,7 +858,7 @@ class WebHost(QMainWindow):
             const js=document.createElement('script');js.src='/ui/desktop-window.js';document.head.append(js);
           }
         """
-            % (json.dumps(self.api_base), ("document.documentElement.classList.add('platform-mac', %s);" % json.dumps("role-" + role) + (" document.documentElement.classList.add('glass-capable'); window.koddiTiles = true; window.koddiGlassPreferred = %s;" % json.dumps(glass_preferred) if self.glass else "")) if IS_MAC else "document.documentElement.classList.add(%s);" % json.dumps(("platform-win " if sys.platform == "win32" else "") + "role-" + role).replace(" ", '", "'))
+            % (json.dumps(self.api_base), ("document.documentElement.classList.add('platform-mac', %s);" % json.dumps("role-" + role) + (" document.documentElement.classList.add('glass-capable'); window.koddiTiles = true; %s" % glass_choice if self.glass else "")) if IS_MAC else "document.documentElement.classList.add(%s);" % json.dumps(("platform-win " if sys.platform == "win32" else "") + "role-" + role).replace(" ", '", "'))
         )
 
     def _install_page(self, view, role: str):
@@ -861,7 +902,8 @@ class WebHost(QMainWindow):
         if (current.scheme(), current.host(), current.port()) != (base.scheme(), base.host(), base.port()):
             return
         if url.host() == "open-folder":
-            self.open_project_folder()
+            relocate = QUrlQuery(url).queryItemValue("relocate")
+            self.open_project_folder(relocate=int(relocate) if relocate.isdecimal() else None)
         elif url.host() == "product":
             mode = QUrlQuery(url).queryItemValue("mode")
             if mode in {"chat", "search", "development"}:
@@ -920,6 +962,13 @@ class WebHost(QMainWindow):
         """Корневой NSView окна: сюда кладутся плитки стекла."""
         return self.glass._objc(self)
 
+    def _ensure_popup(self) -> None:
+        """Окно меню готовится заранее: на первое открытие страница успевает загрузиться."""
+        if self.popup is None:
+            from koddi.desktop import popup_window
+
+            self.popup = popup_window.create(self)
+
     def _ensure_tiles(self) -> None:
         """Нативные плитки боковых панелей создаются один раз, когда запущен сервер и окно показано."""
         if self.tiles or self.glass is None or not self._initial_show_done:
@@ -942,6 +991,9 @@ class WebHost(QMainWindow):
     def relay(self, from_role: str, payload: str) -> None:
         """Пересылка сообщения остальным видам: каждый вид слушает window.koddiRelayIn."""
         views = {"main": self.view, **{role: tile.view for role, tile in self.tiles.items()}}
+        # окну меню снимки состояния не нужны: оно показывает присланную копию, а снимки бывают большими
+        if self.popup is not None and not payload.startswith('{"k":"state"'):
+            views["popup"] = self.popup.view
         literal = json.dumps(payload)
         for role, view in views.items():
             if role != from_role:
@@ -1025,13 +1077,14 @@ class WebHost(QMainWindow):
             # заливка окна Qt лежала бы поверх нативного стекла и закрывала его
             self.centralWidget().setAutoFillBackground(not enabled)
             self.setStyleSheet("#windowRoot { background: %s; }" % ("transparent" if enabled else "#101010"))
+            from koddi.desktop import splash
+
+            # страница присылает выбор человека: своё значение она берёт из того же startup.json или localStorage
+            splash.save(glass.theme, enabled, glass.color, glass_off=not enabled)
         cleaned = macos_glass.clean_regions(regions) if enabled else []
         self._last_regions = (cleaned, size)
         self._apply_composer(cleaned, size)
         glass.set_regions([item for item in cleaned if item["id"] not in CONTENT_TILES], size)
-        from koddi.desktop import splash
-
-        splash.save(glass.theme, enabled, glass.color)
 
     def _apply_composer(self, regions: list[dict], size=None) -> None:
         """Рамки поля ввода и «Чат / Поиск» идут их плиткам: стекло над лентой; нет плитки - блок остаётся без стекла."""
@@ -1105,6 +1158,51 @@ class WebHost(QMainWindow):
 
     def toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
+
+    def install_notices(self) -> None:
+        if IS_MAC:
+            from koddi.desktop import macos_notices
+
+            self.notices = macos_notices.install(self.open_notice_chat)
+
+    def _in_front(self) -> bool:
+        return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
+
+    def agent_notice(self, notice) -> None:
+        """Окно на переднем плане - человек и так видит чат, уведомление лишнее."""
+        if self._in_front():
+            return
+        self._notice_chat = notice.chat_id
+        self._unseen_notices += 1
+        # кнопка на панели задач Windows мигает, пока окно не откроют; Dock прыгает до открытия только ради вопроса,
+        # о конце работы на Mac хватает уведомления и числа на значке
+        if notice.kind == "question" or not IS_MAC:
+            QApplication.alert(self, 0)
+        if IS_MAC:
+            from koddi.desktop import macos_notices
+
+            macos_notices.set_badge(self._unseen_notices)
+            if self.notices is not None:
+                self.notices.post(notice)
+        elif self.tray is not None and hasattr(self.tray, "notify"):
+            self.tray.notify(notice.title, notice.body, lambda: self.open_notice_chat(self._notice_chat))
+
+    def open_notice_chat(self, chat_id: int) -> None:
+        """Щелчок по уведомлению: окно выходит вперёд и открывает чат, о котором уведомление."""
+        self.bring_to_front()
+        if chat_id > 0:
+            self.menu_action(f"open-chat:{int(chat_id)}")
+
+    def _notices_seen(self) -> None:
+        if not getattr(self, "_unseen_notices", 0):
+            return
+        self._unseen_notices = 0
+        if IS_MAC:
+            from koddi.desktop import macos_notices
+
+            macos_notices.set_badge(0)
+            if self.notices is not None:
+                self.notices.clear()
 
     def _enable_native_frame(self) -> None:
         if not self._initial_show_done:
@@ -1244,6 +1342,7 @@ class WebHost(QMainWindow):
         super().show()
         # Cocoa может обработать zero-timer внутри show_sys; менять styleMask там нельзя
         self._initial_show_done = True
+        QTimer.singleShot(600, self._ensure_popup)
         self._enable_native_frame()
         if self.glass is not None and self._startup_look["glass"]:
             # вид окна как в прошлый раз: скругление, стекло и подложка готовы до загрузки страницы
@@ -1317,7 +1416,35 @@ class WebHost(QMainWindow):
         if maximized:
             self.setWindowState(Qt.WindowState.WindowMaximized)
 
+    def _stop_agreed(self) -> bool:
+        """Закрытие окна завершает программу: идущий ход агента оборвётся, поэтому сначала вопрос."""
+        if self._stop_confirmed:
+            return True
+        from koddi.agents.runs import agent_runs
+
+        if agent_runs.active_ids():
+            from PySide6.QtWidgets import QMessageBox
+
+            box = QMessageBox(QMessageBox.Icon.Question, "Докки ещё работает",
+                              "Если закрыть приложение сейчас, работа агента остановится. "
+                              "Правки, которые он уже сделал, останутся.")
+            stop = box.addButton("Остановить и закрыть", QMessageBox.ButtonRole.DestructiveRole)
+            stay = box.addButton("Продолжить работу", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(stay)
+            box.exec()
+            if box.clickedButton() is not stop:
+                return False
+            self._stop_confirmed = True
+        return True
+
+    def quit_app(self, *_args) -> None:
+        if self._stop_agreed():
+            QApplication.quit()
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        if not self._stop_agreed():
+            event.ignore()
+            return
         try:
             rect = self.normalGeometry() if self.isMaximized() or self.isMinimized() else self.geometry()
             self._geometry_file().write_text(
@@ -1469,6 +1596,13 @@ class WebHost(QMainWindow):
 
     def changeEvent(self, event) -> None:  # noqa: N802
         super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            front = self._in_front()
+            if front:
+                self._notices_seen()
+            # в WKWebView страница остаётся visible и в фоновом окне: прочтение чата она сверяет с этим флагом
+            if hasattr(self, "view"):
+                self.view.page().runJavaScript(f"window.koddiWindowActive?.({str(front).lower()})")
         if event.type() == QEvent.Type.WindowStateChange:
             if hasattr(self, "view"):
                 self.view.page().runJavaScript(
@@ -1499,15 +1633,16 @@ class WebHost(QMainWindow):
         for item in views:
             item.page().runJavaScript(code)
 
-    def open_project_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Выберите папку проекта")
+    def open_project_folder(self, *, relocate: int | None = None) -> None:
+        title = "Где теперь папка проекта?" if relocate is not None else "Выберите папку проекта"
+        folder = QFileDialog.getExistingDirectory(self, title)
         if not folder:
             return
 
         def register():
             payload = json.dumps({"path": folder}, ensure_ascii=False).encode("utf-8")
             request = urllib.request.Request(
-                f"{self.api_base}/api/projects",
+                f"{self.api_base}/api/projects" + (f"/{relocate}/relocate" if relocate is not None else ""),
                 data=payload,
                 headers={
                     "Content-Type": "application/json",
@@ -1643,10 +1778,11 @@ def main() -> None:
             activate()
             host.menu_action("usage")
 
-        host.tray = tray.install(tray.Actions(open=activate, usage=open_usage, quit=app.quit), host)
+        host.tray = tray.install(tray.Actions(open=activate, usage=open_usage, quit=host.quit_app), host)
         if host.tray is not None:
             # значок пропадает сразу, а не после остановки локального сервера
             app.aboutToQuit.connect(host.tray.remove)
+        host.install_notices()
 
         def incoming():
             connection = broker.nextPendingConnection()
@@ -1672,6 +1808,7 @@ def main() -> None:
             # помощник обновления уже ждёт выхода: закрываемся штатно, с сохранением окна и остановкой ходов
             if quit_marker.exists():
                 quit_marker.unlink(missing_ok=True)
+                host._stop_confirmed = True
                 app.quit()
                 return
             current = marker.stat().st_mtime_ns if marker.exists() else 0

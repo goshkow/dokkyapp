@@ -38,8 +38,9 @@ def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProce
     from koddi.tools.runner import HIDDEN_SUBPROCESS
 
     # git пишет UTF-8, а text=True без кодировки на Windows читает в ANSI-кодовой странице
+    # stdin закрыт и своя сессия без терминала: git и ssh не должны ждать ввода пароля, которого никто не увидит
     return subprocess.run(["git", *SAFE_CONFIG, *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, check=False, env=git_env(),
+                          stdin=subprocess.DEVNULL, start_new_session=True, errors="replace", timeout=timeout, check=False, env=git_env(),
                           creationflags=HIDDEN_SUBPROCESS)
 
 

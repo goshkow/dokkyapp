@@ -4,6 +4,8 @@ interface Props {
   children: ReactNode;
   /** Что показать вместо упавшей части. */
   title?: string;
+  /** Упало всё окно: сообщение на весь экран, повтор перезагружает страницу. */
+  fatal?: boolean;
 }
 
 /** Сбой одной страницы не роняет всё приложение: показывается сообщение и кнопка «Повторить». */
@@ -21,9 +23,15 @@ export class ErrorBoundary extends Component<Props, { failed: boolean }> {
   override render(): ReactNode {
     if (!this.state.failed) return this.props.children;
     return (
-      <div className="error-state" role="alert">
+      <div className={this.props.fatal ? 'error-state is-fatal' : 'error-state'} role="alert">
         <p>{this.props.title ?? 'Не удалось показать эту часть окна'}</p>
-        <button type="button" className="secondary" onClick={() => this.setState({ failed: false })}>Повторить</button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => (this.props.fatal ? window.location.reload() : this.setState({ failed: false }))}
+        >
+          Повторить
+        </button>
       </div>
     );
   }

@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass
 from functools import wraps
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -29,7 +29,7 @@ from koddi.logs import log_event
 from koddi.remote_control import api, outbox, power
 from koddi.remote_control.api import RemoteFailure
 from koddi.remote_control.mirror import Mirror
-from koddi.remote_control.redact import MESSAGE_CHARS, clean_text
+from koddi.remote_control.redact import MESSAGE_CHARS, clean_text, secret_file
 from koddi.storage.db import db
 
 HEARTBEAT_SECONDS = 15
@@ -38,10 +38,20 @@ SEND_DELAY = 0.15
 SEND_NOW = 50
 SHARE_LIMIT = 150
 HISTORY_LIMIT = 400
+CUT_NOTE = "\n\n[Сообщение обрезано: целиком оно на компьютере]"
+# на телефоне видны только чаты, в которых работали за последнюю неделю
+ACTIVE_DAYS = 7
+# вложения компьютера нужны только для просмотра на телефоне: большие и лишние остаются здесь, на телефоне будет карточка
+VIEW_FILE_BYTES = 10 * 1024 * 1024
+VIEW_FILE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".pdf", ".docx",
+                      ".pptx", ".xlsx", ".txt", ".md", ".csv", ".json"}
+# прочтение, которое сервер не принял (ответ ещё не дошёл до него), пробуется ещё столько раз
+READ_ATTEMPTS = 3
 # дальше в очереди без сети остаются только итоги: сообщения, карточки, план, запросы
 NEW_SESSIONS_PER_HOUR = 20
 PREVENT_SLEEP = {"off", "working", "on_ac"}
 NAME_LIMIT = 60
+QUEUE_RETURNED = "Работа остановилась, и это сообщение не выполнено. Его можно отправить снова."
 
 
 class Revoked(Exception):
@@ -58,10 +68,13 @@ class Fatal(Exception):
 
 @dataclass
 class Hooks:
-    start_turn: Callable[[int, str], Awaitable[None]]
+    start_turn: Callable[..., Awaitable[None]]
     cancel_turn: Callable[[int], Awaitable[bool]]
     respond: Callable[[int, dict], dict]
     create_chat: Callable[[int | None, str], Awaitable[dict]]
+    enqueue: Callable[..., None] | None = None
+    cancel_queued: Callable[[int, str], None] | None = None
+    change_settings: Callable[[int, dict], Awaitable[None]] | None = None
 
 
 def _best_effort(function):
@@ -137,6 +150,33 @@ def _iso(value: Any) -> str | None:
     return moment.isoformat().replace("+00:00", "Z")
 
 
+def _recent(value: Any) -> bool:
+    when = _iso(value)
+    if not when:
+        return False
+    moment = datetime.fromisoformat(when.replace("Z", "+00:00"))
+    return moment > datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS)
+
+
+# время последней работы в чате: updated_at меняется и от переименования, и от переноса в папку
+_ACTIVE_AT = (
+    "COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.chat_id=c.id AND m.role IN ('user', 'assistant')), c.updated_at)"
+)
+
+
+def latest_answer(chat_id: int) -> int | None:
+    """Последний итоговый ответ чата - тот же, что уходит на сайт сообщением (журнал работы и недописанное не в счёт)."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT max(id) FROM messages WHERE chat_id=? AND role='assistant' AND content<>'' "
+            "AND COALESCE(json_extract(metadata_json, '$.channel'), '') IN ('', 'final') "
+            "AND COALESCE(json_extract(metadata_json, '$.kind'), '')<>'activity' "
+            "AND COALESCE(json_extract(metadata_json, '$.status'), '')<>'running'",
+            (chat_id,),
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _meta(value: Any) -> dict:
     try:
         meta = json.loads(value or "{}")
@@ -155,6 +195,9 @@ class RemoteControl:
         self.host: dict = {}
         self.registered_for = ""
         self.commands: dict[int, dict] = {}
+        self.queue_turns: set[int] = set()
+        self._settling: set[asyncio.Task] = set()
+        self._settle_lock = asyncio.Lock()
         self._created: list[float] = []
         self._tasks: set[asyncio.Task] = set()
         self.ack_pauses: tuple[float, ...] = (1, 3, 8)
@@ -167,6 +210,12 @@ class RemoteControl:
         self._poll: asyncio.Task | None = None
         self._sleep_watch: object | None = None
         self._enabled = False
+        # человек сам попросил подключить компьютер: только так сервер вернёт отозванный
+        self._reactivate = False
+        # прочтение для сайта: сессия -> последний прочитанный в окне ответ; уходит после очереди, где лежит сам ответ
+        self._reads: dict[str, int] = {}
+        self._read_sent: dict[str, int] = {}
+        self._read_tries: dict[str, int] = {}
 
     # настройки
     def config(self) -> dict:
@@ -195,6 +244,8 @@ class RemoteControl:
             rows = conn.execute("SELECT chat_id, shared FROM remote_sessions").fetchall()
         return {
             "enabled": bool(config["enabled"]),
+            # у обновившихся доступ уже мог работать: их не спрашиваем и не выключаем
+            "asked": bool(config["enabled"] or config.get("configured")),
             "state": self.state if config["enabled"] else "off",
             "message": self.message if config["enabled"] else "",
             "name": self.host.get("name") or config["name"] or _computer_name(),
@@ -230,10 +281,12 @@ class RemoteControl:
                 _owner()
                 self._update(enabled=1, configured=1)
                 self._enabled = True
+                self._reactivate = True
                 self.launch()
             else:
                 self._update(enabled=0, configured=1)
                 self._enabled = False
+                self._reactivate = False
                 await self.halt()
         return self.status()
 
@@ -243,6 +296,7 @@ class RemoteControl:
         await self.halt()
         # повторная регистрация с тем же install_id возвращает компьютер с теми же чатами
         self.registered_for = ""
+        self._reactivate = True
         self.launch()
         return self.status()
 
@@ -256,11 +310,11 @@ class RemoteControl:
         if self.on_run not in agent_runs.listeners:
             agent_runs.listeners.append(self.on_run)
         config = self.config()
-        if not config["enabled"] and not config.get("configured"):
-            # пока человек сам не выбирал: чаты компьютера видны на сайте и телефоне сразу после входа
-            self._update(enabled=1)
-            config["enabled"] = 1
         self._enabled = bool(config["enabled"])
+        from koddi.agents.queue import request_queue
+
+        if self.queue_changed not in request_queue.listeners:
+            request_queue.listeners.append(self.queue_changed)
         if self._enabled:
             self.launch()
 
@@ -349,9 +403,19 @@ class RemoteControl:
             conn.execute("DELETE FROM remote_sessions")
             conn.execute("DELETE FROM remote_outbox")
             conn.execute("DELETE FROM remote_commands_seen")
+            conn.execute("DELETE FROM remote_attachments_sent")
             conn.execute("UPDATE remote_control SET account_id=?, host_id=NULL WHERE id=1", (owner,))
         self.registered_for = ""
         self.host = {}
+        # в памяти то же самое: ход прошлого аккаунта не должен идти новому
+        for task in self.mirrors.values():
+            task.cancel()
+        self.mirrors.clear()
+        self.commands.clear()
+        self.queue_turns.clear()
+        self._reads.clear()
+        self._read_sent.clear()
+        self._read_tries.clear()
 
     def fail(self, exc: RemoteFailure) -> None:
         """Ошибки, после которых продолжать нельзя; остальное повторяется на месте."""
@@ -370,6 +434,7 @@ class RemoteControl:
             "platform": _platform(),
             "app_version": _app_version(),
             "state": await self.state_payload(),
+            "reactivate": self._reactivate,
         }
         try:
             value = await api.register(body)
@@ -382,6 +447,7 @@ class RemoteControl:
         if not isinstance(host.get("id"), str):
             raise RemoteFailure(502, "upstream_unavailable", "Сервер вернул некорректный ответ")
         self.host = host
+        self._reactivate = False
         self._update(host_id=host["id"], name=str(host.get("name") or body["name"])[:120])
 
     async def run_loops(self) -> None:
@@ -459,6 +525,7 @@ class RemoteControl:
             self.online()
             for item in items:
                 await self.execute(item)
+            await self.settle_queued()
 
     async def clock_loop(self) -> None:
         # процесс стоит, пока компьютер спит: скачок часов означает пробуждение
@@ -557,6 +624,25 @@ class RemoteControl:
             for group in outbox.batches(rows):
                 await self.send(host_id, group)
             self.online()
+        await self.send_reads(host_id)
+
+    async def send_reads(self, host_id: str) -> None:
+        for key, message_id in list(self._reads.items()):
+            try:
+                await api.read(host_id, key, f"m{message_id}")
+            except RemoteFailure as exc:
+                self.fail(exc)
+                if exc.network or exc.status == 429:
+                    raise
+                # ответ мог ещё не дойти до сервера; старый сервер и удалённая сессия повтором не исправятся
+                tries = self._read_tries.get(key, 0) + 1
+                if exc.code == "message_not_found" and tries < READ_ATTEMPTS:
+                    self._read_tries[key] = tries
+                    continue
+            self._read_tries.pop(key, None)
+            self._read_sent[key] = max(self._read_sent.get(key, 0), message_id)
+            if self._reads.get(key) == message_id:
+                del self._reads[key]
 
     async def send(self, host_id: str, group: list[dict]) -> None:
         first = group[0]
@@ -567,6 +653,8 @@ class RemoteControl:
                 await api.events(host_id, key, [row["body"] for row in group])
             elif kind == "message":
                 await api.message(host_id, key, first["body"])
+            elif kind == "attachment":
+                await self.send_attachment(host_id, key, first["body"])
             elif kind == "session":
                 value = await api.put_session(host_id, key, first["body"])
                 self.session_saved(key, value)
@@ -588,7 +676,8 @@ class RemoteControl:
                 # чат удалён в вебе или на компьютере слишком много чатов: больше не слать
                 self.unshare_local(key, exc.message if exc.code == "too_many_chats" else "")
                 return
-            if exc.status == 404 and kind in {"event", "message"}:
+            # сообщения нет и не будет (старое, вне истории), а сессию сервер может знать: повторять незачем
+            if exc.status == 404 and (kind in {"event", "message"} or (kind == "attachment" and exc.code != "message_not_found")):
                 # сервер не знает сессию (например, база сервера чистилась): регистрируем её снова
                 await self.reregister(host_id, key)
                 return
@@ -659,10 +748,66 @@ class RemoteControl:
             "title": clean_text(chat.get("title") or "Новый чат", None, 300),
             "folder_label": clean_text(project.get("name") if project and project.get("name") else label, None, 120),
             "status": "working" if agent_runs.active(chat_id) else "idle",
+            "controls": self.controls(chat),
         }
+        with db() as conn:
+            active = conn.execute(f"SELECT {_ACTIVE_AT} AS at FROM chats c WHERE c.id=?", (chat_id,)).fetchone()
+        when = _iso(active["at"]) if active else None
+        if when:
+            body["last_active_at"] = when
         if reshare:
             body["reshare"] = True
         return body
+
+    def controls(self, chat: dict) -> dict:
+        """Режимы чата для телефона: те же, что показывает поле ввода на компьютере."""
+        from koddi.dokky.client import DokkyError
+        from koddi.dokky.coding import cache_preserved, load
+        from koddi.policy.grants import permission_profile
+        from koddi.policy.preferences import reasoning_mode
+
+        if not chat:
+            return {}
+        profile = permission_profile(chat.get("project_id"))
+        try:
+            value = load(int(chat["id"]))
+        except DokkyError:
+            # без входа серверной сессии нет: остаётся выбор по умолчанию
+            value = None
+        session = value["session"] if value else {}
+        with db() as conn:
+            history = conn.execute("SELECT 1 FROM messages WHERE chat_id=? LIMIT 1", (chat["id"],)).fetchone()
+        return {
+            "permission": "full" if profile == "allow-all" else profile if profile in {"ask", "trusted", "full", "read-only"} else "ask",
+            "reasoning": session.get("pending_reasoning_mode") or session.get("reasoning_mode") or reasoning_mode(),
+            "reasoning_costly": bool(history or session.get("history", {}).get("length", 0)) and not cache_preserved(session),
+        }
+
+    def recent_chats(self) -> list[dict]:
+        """Чаты, которые видно на телефоне: верхние и с работой за неделю."""
+        from koddi.policy.account import owns
+
+        owner = _owner()
+        with db() as conn:
+            rows = conn.execute(
+                f"SELECT c.id, c.owner_id, s.shared, {_ACTIVE_AT} AS active_at FROM chats c "
+                "LEFT JOIN remote_sessions s ON s.chat_id=c.id WHERE c.parent_chat_id IS NULL ORDER BY active_at DESC LIMIT ?",
+                (SHARE_LIMIT,),
+            ).fetchall()
+        return [dict(row) for row in rows if owns(row["owner_id"], owner) and row["shared"] != 0 and _recent(row["active_at"])]
+
+    @_best_effort
+    def publish_controls(self, chat_id: int | None = None) -> None:
+        """Режим сменили на компьютере или с телефона: телефон показывает новый. Разрешения общие на папку или аккаунт,
+        поэтому без `chat_id` обновляются все видимые чаты."""
+        if not self._enabled:
+            return
+        for chat_id in [chat_id] if chat_id is not None else [row["id"] for row in self.recent_chats()]:
+            key = outbox.shared_key(chat_id)
+            chat = self._chat(chat_id)
+            if key and chat:
+                outbox.put(key, "session", {"controls": self.controls(chat)})
+        self.wake()
 
     def share(self, chat_id: int, *, reshare: bool = False) -> bool:
         chat = self._chat(chat_id)
@@ -676,6 +821,7 @@ class RemoteControl:
             return False
         outbox.put(row["session_key"], "session", self.session_body(chat_id, reshare=reshare))
         self.upload_history(chat_id, row["session_key"], self.workspace(chat), int(row["history_synced"] or 0))
+        self.upload_attachments(chat_id, row["session_key"])
         self.wake()
         return True
 
@@ -710,10 +856,62 @@ class RemoteControl:
             with db() as conn:
                 conn.execute("UPDATE remote_sessions SET history_synced=MAX(history_synced, ?) WHERE chat_id=?", (mark, chat_id))
 
+    def upload_attachments(self, chat_id: int, key: str) -> None:
+        """Вложения сообщений с компьютера за неделю. Сообщение уходит раньше: очередь идёт по порядку."""
+        since = (datetime.now(timezone.utc) - timedelta(days=ACTIVE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        pending = []
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT id, metadata_json FROM messages WHERE chat_id=? AND role='user' AND created_at>=? "
+                "AND metadata_json LIKE '%attachment_ids%'",
+                (chat_id, since),
+            ).fetchall()
+            for row in rows:
+                meta = _meta(row["metadata_json"])
+                raw = meta.get("attachment_ids")
+                # файл с телефона сервер уже хранит
+                if meta.get("origin") == "remote" or not isinstance(raw, list):
+                    continue
+                for attachment_id in raw:
+                    if type(attachment_id) is not int or conn.execute(
+                        "SELECT 1 FROM remote_attachments_sent WHERE attachment_id=?", (attachment_id,)
+                    ).fetchone():
+                        continue
+                    item = conn.execute(
+                        "SELECT original_name, media_type, size_bytes FROM attachments WHERE id=? AND chat_id=? AND status<>'deleted'",
+                        (attachment_id, chat_id),
+                    ).fetchone()
+                    if item and not secret_file(item["original_name"]):
+                        pending.append({
+                            "client_id": f"m{row['id']}", "attachment": attachment_id, "name": clean_text(item["original_name"], None, 200),
+                            "media_type": item["media_type"], "size": item["size_bytes"],
+                        })
+        for body in pending:
+            if outbox.put(key, "attachment", body):
+                with db() as conn:
+                    conn.execute("INSERT OR IGNORE INTO remote_attachments_sent(attachment_id) VALUES (?)", (body["attachment"],))
+
+    async def send_attachment(self, host_id: str, key: str, body: dict) -> None:
+        from koddi.policy.account import owns
+
+        with db() as conn:
+            row = conn.execute("SELECT stored_path, owner_id, status FROM attachments WHERE id=?", (body["attachment"],)).fetchone()
+        if not row or row["status"] == "deleted" or not owns(row["owner_id"], _owner()):
+            return
+        path = Path(row["stored_path"])
+        content = None
+        # чтение файла не должно задерживать цикл моста
+        if body["size"] <= VIEW_FILE_BYTES and Path(body["name"]).suffix.lower() in VIEW_FILE_SUFFIXES and path.is_file():
+            content = await asyncio.to_thread(path.read_bytes)
+        fields = {"attachment_id": f"a{body['attachment']}", "name": body["name"], "media_type": body["media_type"], "size": str(body["size"])}
+        await api.message_file(host_id, key, body["client_id"], fields, content)
+
     def upload_message(self, key: str, client_id: str, role: str, content: str, created_at: Any, workspace: Path | None = None) -> bool:
         text = clean_text(content, workspace, MESSAGE_CHARS).strip()
         if not text:
             return False
+        if len(text) >= MESSAGE_CHARS:
+            text = text[: MESSAGE_CHARS - len(CUT_NOTE)] + CUT_NOTE
         body: dict[str, Any] = {"client_id": client_id, "role": role, "content": text}
         when = _iso(created_at)
         if when:
@@ -722,18 +920,8 @@ class RemoteControl:
 
     async def sync_sessions(self) -> None:
         """После запуска: новые чаты - на телефон, у знакомых - актуальное название и статус."""
-        owner = _owner()
-        with db() as conn:
-            rows = conn.execute(
-                "SELECT c.id, c.owner_id, s.shared FROM chats c LEFT JOIN remote_sessions s ON s.chat_id=c.id "
-                "ORDER BY c.updated_at DESC LIMIT ?",
-                (SHARE_LIMIT,),
-            ).fetchall()
-        from koddi.policy.account import owns
-
-        for row in rows:
-            if owns(row["owner_id"], owner) and row["shared"] != 0:
-                self.share(row["id"])
+        for row in self.recent_chats():
+            self.share(row["id"])
 
     def retitle(self, chat_id: int, title: str) -> None:
         key = outbox.shared_key(chat_id)
@@ -766,6 +954,21 @@ class RemoteControl:
         outbox.put(row["session_key"], "close", {"forget": True})
         self.wake()
 
+    @_best_effort
+    def seen(self, chat_id: int) -> None:
+        """Чат открыт в окне: его последний ответ прочитан и на сайте, и на телефоне."""
+        key = outbox.shared_key(chat_id)
+        latest = latest_answer(chat_id) if key else None
+        if key and latest is not None:
+            self._threadsafe(self._queue_read, key, latest)
+
+    def _queue_read(self, key: str, message_id: int) -> None:
+        if message_id <= max(self._read_sent.get(key, 0), self._reads.get(key, 0)):
+            return
+        self._reads[key] = message_id
+        self._read_tries.pop(key, None)
+        self._send.set()
+
     def set_shared(self, chat_id: int, shared: bool) -> dict:
         if not self._chat(chat_id):
             raise HTTPException(404, "Чат не найден")
@@ -785,7 +988,8 @@ class RemoteControl:
         """Ответ на запрос (в окне или с телефона): карточка в вебе закрывается сразу."""
         with db() as conn:
             row = conn.execute(
-                "SELECT t.chat_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id WHERE r.id=?", (request_id,)
+                "SELECT COALESCE(c.parent_chat_id,t.chat_id) AS chat_id FROM agent_requests r JOIN turns t ON t.id=r.turn_id "
+                    "JOIN chats c ON c.id=t.chat_id WHERE r.id=?", (request_id,)
             ).fetchone()
         if row is None:
             return
@@ -819,7 +1023,8 @@ class RemoteControl:
         except RuntimeError:
             return
         # команда с телефона достаётся ходу, запущенному по ней: зеркало прошлого хода её уже не тронет
-        command = self.commands.pop(run.chat_id, None)
+        # ход из очереди начат не по ней, даже если обычная команда ждёт своего старта
+        command = None if run.chat_id in self.queue_turns else self.commands.pop(run.chat_id, None)
         previous = self.mirrors.get(run.chat_id)
         if previous and not previous.done():
             previous.cancel()
@@ -847,6 +1052,8 @@ class RemoteControl:
                         "(SELECT COALESCE(MAX(id), 0) FROM messages WHERE chat_id=?)) WHERE chat_id=?",
                         (run.chat_id, run.chat_id),
                     )
+            # после хода смена режима могла стать дороже, а отложенная - примениться
+            self.publish_controls(run.chat_id)
         except LoginRequired:
             return
         except Exception as exc:  # noqa: BLE001
@@ -888,6 +1095,63 @@ class RemoteControl:
                     break
                 await asyncio.sleep(pause)
 
+    def queued_started(self, command_id: str) -> None:
+        outbox.mark_seen(command_id, "done")
+        self.queue_changed()
+
+    def queue_changed(self) -> None:
+        """Слушатель очереди: вызывается и из потоков запросов."""
+        if self.loop is None or not self._enabled or self.loop.is_closed():
+            return
+        self.loop.call_soon_threadsafe(self._schedule_settle)
+
+    def _schedule_settle(self) -> None:
+        task = asyncio.get_running_loop().create_task(self.settle_queued(), name="dokky-remote-queue")
+        self._settling.add(task)
+        task.add_done_callback(self._settling.discard)
+
+    async def settle_queued(self) -> None:
+        """Итог сообщений из очереди. После accepted сервер команду не выдаёт, поэтому метка держится в запросе, пока итог не дошёл."""
+        if not self.host:
+            return
+        async with self._settle_lock:
+            try:
+                owner = _owner()
+                with db() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    # очередь встала: у отправителя на телефоне нет кнопки «Продолжить», сообщение возвращается ему
+                    conn.execute(
+                        "UPDATE queued_requests SET status='cancelled', version=version+1 "
+                        "WHERE owner_id=? AND status='queued' AND json_extract(payload_json,'$.remote_command') IS NOT NULL "
+                        "AND chat_id IN (SELECT chat_id FROM queue_state WHERE paused=1)",
+                        (owner,),
+                    )
+                    rows = conn.execute(
+                        "SELECT id, status, payload_json FROM queued_requests "
+                        "WHERE owner_id=? AND status!='queued' AND json_extract(payload_json,'$.remote_command') IS NOT NULL",
+                        (owner,),
+                    ).fetchall()
+                for row in rows:
+                    payload = json.loads(row["payload_json"])
+                    command_id = str(payload.pop("remote_command"))
+                    seen = outbox.seen(command_id)
+                    started = row["status"] == "completed" or bool(seen and seen["status"] == "done")
+                    if row["status"] == "running" and not started:
+                        continue
+                    status, error = ("done", "") if started else ("rejected", QUEUE_RETURNED)
+                    outbox.mark_seen(command_id, status, error)
+                    if await self.ack(command_id, status, error, retry=True):
+                        with db() as conn:
+                            conn.execute(
+                                "UPDATE queued_requests SET payload_json=? WHERE id=?",
+                                (json.dumps(payload, ensure_ascii=False, sort_keys=True), row["id"]),
+                            )
+            except (LoginRequired, Revoked, Fatal):
+                # разберётся основной цикл, итог уйдёт после следующего подключения
+                return
+            except Exception as exc:  # noqa: BLE001
+                log_event("ERROR", "remote.queue", type(exc).__name__, {})
+
     async def ack(self, command_id: str, status: str, error: str = "", *, retry: bool = False) -> bool:
         """Без `retry`: можно ли исполнять команду. С `retry`: можно ли больше не повторять (дошло или повтор не поможет)."""
         try:
@@ -919,13 +1183,26 @@ class RemoteControl:
                 return "rejected", "Пустое сообщение"
             from koddi.agents.runs import agent_runs
 
+            if not payload.get("queued") and agent_runs.active(chat_id):
+                return "rejected", "Агент уже работает в этом чате"
+            try:
+                attachment_ids = await self.fetch_files(str(item["id"]), chat_id, payload.get("attachments"))
+            except ValueError as exc:
+                return "rejected", str(exc)[:500]
+
+            # сервер не открывал ход по этой команде: сообщение ждёт своей очереди, итог придёт позже
+            if payload.get("queued"):
+                if not self.hooks.enqueue:
+                    return "rejected", "Очередь недоступна"
+                self.hooks.enqueue(chat_id, text, str(item["id"]), attachment_ids)
+                return "accepted", ""
             if agent_runs.active(chat_id):
                 return "rejected", "Агент уже работает в этом чате"
             # ход прочитает команду в turn.started: по ней сервер свяжет ход с сообщением с телефона
             previous = self.commands.get(chat_id)
             self.commands[chat_id] = {"id": item["id"], "request_uuid": payload.get("request_uuid")}
             try:
-                await self.hooks.start_turn(chat_id, text)
+                await self.hooks.start_turn(chat_id, text, attachment_ids)
             except BaseException as exc:
                 if self.commands.get(chat_id, {}).get("id") == item["id"]:
                     if previous:
@@ -943,7 +1220,34 @@ class RemoteControl:
             await event_bus.publish("remote.turn", {"chat_id": chat_id})
             return "accepted", ""
         if kind == "stop":
+            queued = payload.get("queued")
+            if isinstance(queued, str):
+                # отмена и само сообщение могли прийти одной выдачей, отмена идёт первой
+                if not outbox.seen(queued):
+                    outbox.mark_seen(queued, "rejected", "Сообщение убрано из очереди")
+                if self.hooks.cancel_queued:
+                    self.hooks.cancel_queued(chat_id, queued)
+                return "done", ""
             await self.hooks.cancel_turn(chat_id)
+            return "done", ""
+        if kind == "settings":
+            if not self.hooks.change_settings:
+                return "rejected", "Эта версия Докки не меняет режимы с телефона"
+            await self.hooks.change_settings(chat_id, payload)
+            self.publish_controls(None if "permission" in payload else chat_id)
+            return "done", ""
+        if kind == "read":
+            match = re.match(r"^m(\d+)$", str(payload.get("client_id") or ""))
+            if not match:
+                return "rejected", "Сообщение не найдено"
+            read = int(match[1])
+            self._read_sent[key] = max(self._read_sent.get(key, 0), read)
+            latest = latest_answer(chat_id)
+            # после прочитанного на телефоне ответа мог закончиться новый ход: его отметка в окне остаётся
+            if latest is None or latest <= read:
+                from koddi.events import event_bus
+
+                await event_bus.publish("chat.read", {"chat_id": chat_id})
             return "done", ""
         if kind in {"approval", "answer"}:
             match = re.match(r"^ar-(\d+)$", str(payload.get("request_id") or ""))
@@ -952,7 +1256,8 @@ class RemoteControl:
             request_id = int(match[1])
             with db() as conn:
                 found = conn.execute(
-                    "SELECT t.chat_id, r.kind FROM agent_requests r JOIN turns t ON t.id=r.turn_id WHERE r.id=?", (request_id,)
+                    "SELECT COALESCE(c.parent_chat_id,t.chat_id) AS chat_id, r.kind FROM agent_requests r JOIN turns t ON t.id=r.turn_id "
+                    "JOIN chats c ON c.id=t.chat_id WHERE r.id=?", (request_id,)
                 ).fetchone()
             # разрешение отвечается только решением, вопрос - только ответом: иначе агент получил бы не то, чего ждёт
             if not found or found["chat_id"] != chat_id or found["kind"] != ("approval" if kind == "approval" else "question"):
@@ -974,6 +1279,29 @@ class RemoteControl:
                 return "rejected", str(exc.detail)[:500]
             return "done", ""
         return "rejected", "Неизвестная команда"
+
+    async def fetch_files(self, command_id: str, chat_id: int, items: Any) -> list[int]:
+        """Файлы с телефона становятся обычными вложениями чата. Текст ошибки уходит на телефон."""
+        from io import BytesIO
+
+        from koddi.attachments.service import store_attachment
+
+        # сначала скачиваем всё: при обрыве на втором файле первый не останется в чате без сообщения
+        files: list[tuple[str, bytes]] = []
+        for item in items if isinstance(items, list) else []:
+            name = str(item.get("name") or "файл") if isinstance(item, dict) else "файл"
+            try:
+                files.append((name, await api.command_file(self.host["id"], command_id, int(item["index"]))))
+            except RemoteFailure as exc:
+                self.fail(exc)
+                raise ValueError(f"Компьютер не смог получить файл {name}. Отправьте сообщение ещё раз") from exc
+            except (KeyError, TypeError) as exc:
+                raise ValueError("Файл не найден") from exc
+        ids: list[int] = []
+        for name, content in files:
+            stored = await asyncio.to_thread(store_attachment, chat_id, name, BytesIO(content))
+            ids.append(int(stored["id"]))
+        return ids
 
     async def new_session(self, payload: dict) -> tuple[str, str]:
         assert self.hooks is not None

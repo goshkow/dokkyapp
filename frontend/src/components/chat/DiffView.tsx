@@ -11,7 +11,7 @@ const highlighted = (text: string, path: string): string => {
   return '';
 };
 
-const Row = memo(function Row({ row }: { row: FlatRow }) {
+const Row = memo(function Row({ row, onRevert }: { row: FlatRow; onRevert?: ((file: DiffFile, header: string) => void) | undefined }) {
   if (row.kind === 'file') {
     return (
       <div className="diff-file-heading">
@@ -22,9 +22,17 @@ const Row = memo(function Row({ row }: { row: FlatRow }) {
       </div>
     );
   }
-  if (row.kind === 'hunk' || row.kind === 'marker') {
-    return <div className={`diff-line ${row.kind}`}><span /><span /><code>{row.text}</code></div>;
+  if (row.kind === 'hunk') {
+    // созданный или удалённый файл откатывается только целиком
+    const revert = onRevert && row.file.status === 'modified' ? onRevert : undefined;
+    return (
+      <div className="diff-line hunk">
+        <span /><span /><code>{row.text}</code>
+        {revert && <button type="button" className="diff-hunk-revert" title="Вернуть этот кусок как было до агента" onClick={() => revert(row.file, row.text)}>Откатить</button>}
+      </div>
+    );
   }
+  if (row.kind === 'marker') return <div className="diff-line marker"><span /><span /><code>{row.text}</code></div>;
   const html = highlighted(row.text, row.path);
   return (
     <div className={`diff-line ${row.kind}`}>
@@ -36,7 +44,7 @@ const Row = memo(function Row({ row }: { row: FlatRow }) {
 });
 
 /** Дифф одного файла или набора: строки подгружаются порциями, положение прокрутки сохраняется. */
-export function DiffView({ files, id, bare = false, inline = false }: { files: DiffFile[]; id: string; bare?: boolean; inline?: boolean }) {
+export function DiffView({ files, id, bare = false, inline = false, onRevert }: { files: DiffFile[]; id: string; bare?: boolean; inline?: boolean; onRevert?: ((file: DiffFile, header: string) => void) | undefined }) {
   // bare: заголовок файла рисует сам список (карточка «Изменения»)
   const rows = useMemo(() => (bare ? diffRows(files).filter((row) => row.kind !== 'file') : diffRows(files)), [files, bare]);
   const [shown, setShown] = useState(STEP);
@@ -44,7 +52,7 @@ export function DiffView({ files, id, bare = false, inline = false }: { files: D
   useEffect(() => setShown(STEP), [id]);
   return (
     <div className="code-diff" id={inline ? `diff-${id}` : 'diff'} ref={root}>
-      {rows.slice(0, shown).map((row, index) => <Row key={index} row={row} />)}
+      {rows.slice(0, shown).map((row, index) => <Row key={index} row={row} onRevert={onRevert} />)}
       {shown < rows.length && (
         <button type="button" className="secondary diff-load-more" onClick={() => setShown((value) => value + STEP)}>
           Показать ещё строки ({rows.length - shown})

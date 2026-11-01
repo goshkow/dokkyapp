@@ -55,7 +55,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_SIZE = 4 * 1024**3
 EXTENSIONS = {"dmg": ".dmg", "setup": ".exe", "portable": ".zip"}
 FIRST_CHECK = (1, 4)
-CHECK_EVERY = 6 * 3600
+CHECK_EVERY = 15 * 60
 MANUAL_GAP = 10
 READY_SECONDS = 120
 CHUNK = 1024 * 1024
@@ -259,7 +259,7 @@ class Updater:
             try:
                 await self.check()
                 delay = 300
-                await asyncio.sleep(CHECK_EVERY + secrets.randbelow(1800))
+                await asyncio.sleep(CHECK_EVERY + secrets.randbelow(60))
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - фоновая проверка не показывает ошибки, только повторяет позже
@@ -358,10 +358,13 @@ class Updater:
             if time.monotonic() - self._last_manual < MANUAL_GAP:
                 return self.status()
             self._last_manual = time.monotonic()
-        if self.state["status"] in {"downloading", "preparing", "installing"}:
+        busy = {"downloading", "preparing", "installing"}
+        if self.state["status"] in busy:
             return self.status()
         previous = self.state["status"]
-        await self._set(status="checking", error="")
+        # фоновая проверка идёт каждые 15 минут: без «Проверяю» строка обновления в меню не мигает
+        if manual:
+            await self._set(status="checking", error="")
         try:
             async with self._client() as client:
                 response = await client.get(LATEST_PATH)
@@ -369,21 +372,32 @@ class Updater:
                 raise UpdateError("Сервер обновлений недоступен, попробуйте позже", "unavailable")
             entry = self._entry(response.json(), kind)
         except (httpx.HTTPError, ValueError) as exc:
+            if self.state["status"] in busy:
+                return self.status()
             await self._set(status=previous if previous not in {"checking"} else "idle", error="Нет связи с сервером обновлений" if manual else "")
             raise UpdateError("Нет связи с сервером обновлений", "network") from exc
         except UpdateError as exc:
             # сбой проверки не должен прятать уже найденное или скачанное обновление
+            if self.state["status"] in busy:
+                return self.status()
             kept = previous if previous in {"available", "skipped", "ready", "up_to_date"} else ("error" if manual else "idle")
             await self._set(status=kept, error=str(exc) if manual else "")
             raise
         self._save(checked_at=time.time())
+        # пока шёл запрос, пользователь нажал «Скачать»: загрузку не перебиваем
+        if self.state["status"] in busy:
+            return self.status()
         failed = self._failed()
         prefs = self.prefs()
         if not is_newer(entry["version"], __version__):
             await self._set(status="up_to_date", available=None)
             return self.status()
         if entry["version"] == failed and not manual:
-            await self._set(status="up_to_date", available=None)
+            # сама больше не качается, но человек должен знать и мог повторить
+            await self._set(
+                status="error", available=entry,
+                error=f"Обновление до версии {entry['version']} не установилось. Можно повторить.",
+            )
             return self.status()
         if prefs.get("skipped") == entry["version"] and not manual:
             await self._set(status="skipped", available=entry)
@@ -405,6 +419,10 @@ class Updater:
     def start_download(self) -> None:
         if self._download and not self._download.done():
             return
+        entry = self.state.get("available")
+        if entry:
+            # ответ на «Скачать» уже говорит о загрузке, иначе он затрёт пришедшее раньше событие с процентами
+            self.state.update(status="downloading", error="", progress={"done": 0, "total": entry["size"]})
         self._download = asyncio.create_task(self._run_download(), name="dokky-update-download")
 
     async def cancel_download(self) -> None:
@@ -483,7 +501,7 @@ class Updater:
                     with partial.open("ab" if offset else "wb") as sink:
                         done = offset
                         last = 0.0
-                        async for chunk in response.aiter_bytes(CHUNK):
+                        async for chunk in response.aiter_bytes():
                             done += len(chunk)
                             if done > entry["size"]:
                                 raise UpdateError("Файл обновления больше заявленного", "size_mismatch")

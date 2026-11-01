@@ -3,7 +3,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, del, post } from '../../lib/api';
-import { changeDiffModel, diffStats, pruneDiffCache, type Change } from '../../lib/diff';
+import { changeDiffModel, diffStats, pruneDiffCache, type Change, type DiffFile } from '../../lib/diff';
+import { rollbackError, rollbackHunk } from '../../state/chatAgent';
 import { createProject, openFolder } from '../../state/actions';
 import { loadLocal } from '../../state/data';
 import { confirmDialog, guarded, notify } from '../../state/overlay';
@@ -120,7 +121,15 @@ function ReviewFile({ change, onDone }: { change: Change; onDone: () => void }) 
         <span className="positive">+{counts.add}</span>
         <span className="danger">−{counts.remove}</span>
       </summary>
-      {open && <DiffView files={files} id={String(change.id)} />}
+      {open && (
+        <DiffView
+          files={files}
+          id={String(change.id)}
+          onRevert={change.status === 'rolled_back' ? undefined : guarded(async (file: DiffFile, hunk: string) => {
+            await rollbackHunk(change.id, file.path, hunk, async () => onDone());
+          })}
+        />
+      )}
       <div className="actions">
         <button
           type="button"
@@ -128,8 +137,8 @@ function ReviewFile({ change, onDone }: { change: Change; onDone: () => void }) 
           disabled={change.status === 'rolled_back'}
           onClick={guarded(async () => {
             if (!(await confirmDialog('Откатить изменения?', change.description, 'Откатить'))) return;
-            const result = await post<{ rolled_back: boolean; reason?: string }>(`/api/changes/${change.id}/rollback`);
-            if (!result.rolled_back) throw new Error(result.reason || 'Откат не выполнен');
+            const result = await post<Parameters<typeof rollbackError>[0]>(`/api/changes/${change.id}/rollback`);
+            if (!result.rolled_back) throw new Error(rollbackError(result));
             notify('Изменения отменены');
             onDone();
           })}

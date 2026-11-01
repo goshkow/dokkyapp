@@ -108,6 +108,8 @@ export interface JournalBlock {
 /** Длительность в виде «6 мин. 13 сек.». */
 export function duration(milliseconds: number): string {
   const seconds = Math.max(1, Math.round(milliseconds / 1000));
+  if (seconds >= 86400) return `${Math.floor(seconds / 86400)} дн. ${Math.floor(seconds / 3600) % 24} ч`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)} ч ${Math.floor(seconds / 60) % 60} мин.`;
   return seconds < 60 ? `${seconds} сек.` : `${Math.floor(seconds / 60)} мин. ${seconds % 60} сек.`;
 }
 
@@ -442,6 +444,7 @@ export function actionText(event: ActionEvent): string {
   const displayName = data.display_name || data.name;
   const command = brief(args.command ?? args.cmd);
   const query = brief(args.query ?? args.pattern);
+  const agent = String(args.agent || 'general');
   // ответ на вопросы агента: что выбрал или написал человек, одной строкой
   const reply = brief(String((result.response as { answer?: unknown } | undefined)?.answer ?? '').split('\n').filter((line) => line.startsWith('→ ')).map((line) => line.slice(2)).join('; '));
   let site = '';
@@ -468,10 +471,12 @@ export function actionText(event: ActionEvent): string {
     'shell.run': [command ? `Выполняю: ${command}` : 'Выполняю команду', command ? `Выполнена команда: ${command}` : 'Команда выполнена'],
     'verification.run': [command ? `Проверяю: ${command}` : 'Проверяю результат', command ? `Проверено: ${command}` : 'Результат проверен'],
     'test.run': [command ? `Запускаю тесты: ${command}` : 'Запускаю тесты', command ? `Тесты выполнены: ${command}` : 'Тесты выполнены'],
+    'devserver.output': ['Смотрю вывод фоновой команды', 'Вывод фоновой команды изучен'],
+    'skill.load': args.file ? ['Читаю файл навыка', 'Файл навыка прочитан'] : [`Подключаю навык: ${brief(args.name)}`, `Навык подключён: ${brief(args.name)}`],
     'plan.update': ['Обновляю план', 'План обновлён'],
     'qa.run': args.expect === 'fail' ? ['Проверяю, что тест падает по нужной причине', 'Красный тест проверен'] : ['Запускаю проверки', 'Проверки выполнены'],
     'quality.run': args.report_id ? ['Читаю отчёт качества', 'Отчёт качества прочитан'] : ['Проверяю качество кода', 'Качество кода проверено'],
-    'task.delegate': ['Передаю подзадачу агенту', 'Подзадача выполнена'],
+    'task.delegate': [`Агент ${agent} · ${brief(args.title ?? args.task)}`, `Агент ${agent} · ${brief(args.title ?? args.task)}`],
     'task.complete': ['Подвожу итог', 'Задача завершена'],
     'task.ask_user': ['Ожидаю уточнения', reply ? `Ответ пользователя: ${reply}` : 'Уточнение получено'],
   };
@@ -514,10 +519,12 @@ export function liveLabel(event: ActionEvent): string {
     'shell.run': 'Выполняю команду',
     'verification.run': 'Проверяю результат',
     'test.run': 'Запускаю тесты',
+    'devserver.output': 'Смотрю вывод фоновой команды',
+    'skill.load': args.file ? 'Читаю файл навыка' : `Подключаю навык ${clip(String(args.name ?? ''), 32)}`,
     'plan.update': 'Обновляю план',
     'qa.run': args.expect === 'fail' ? 'Проверяю красный тест' : 'Запускаю проверки',
     'quality.run': 'Проверяю качество кода',
-    'task.delegate': 'Передаю подзадачу агенту',
+    'task.delegate': `Агент ${String(args.agent || 'general')} · ${clip(String(args.title ?? ''))}`,
     'task.complete': 'Подвожу итог',
     'task.ask_user': 'Ожидаю уточнения',
   };

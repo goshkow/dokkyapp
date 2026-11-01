@@ -42,7 +42,8 @@ async def run(args) -> int:
         if kind == "agent.input_required":
             if args.non_interactive:
                 value = (
-                    {"approved": False}
+                    # длинный автозапуск не должен падать на вопросе «продолжить»: отвечать на него тут некому
+                    {"approved": payload.get("name") == "agent.continue"}
                     if payload["kind"] == "approval"
                     else {
                         "answer": "Автоматический запуск: уточнение невозможно. Отметьте задачу заблокированной."

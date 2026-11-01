@@ -145,6 +145,36 @@ def slash_skill(content: str) -> str | None:
     return found[0]["id"] if found else None
 
 
+def project_command(content: str, project_id: int | None, owner: str, root) -> str:
+    """Блок команды проекта для «/имя аргументы» в начале сообщения, как в Claude Code, или пустая строка.
+
+    Работают только подтверждённые человеком версии файлов `.claude/commands` и `.dokky/commands`. `$ARGUMENTS`,
+    `$1`...`$9` подставляются; строки `!команда` из текста сами не исполняются - агент запускает их через shell.run.
+    """
+    match = re.match(r"^/([^\s/]{1,80})(?:\s+(.*))?$", (content or "").lstrip(), re.S)
+    if not match or project_id is None or root is None:
+        return ""
+    from koddi.skills.project import trusted
+
+    wanted = match.group(1).casefold()
+    command = next((item for item in trusted(project_id, owner, root, kind="command") if item["name"].casefold() == wanted), None)
+    if command is None:
+        return ""
+    arguments = (match.group(2) or "").strip()
+    words = arguments.split()
+    body = command["instructions"]
+    used = "$ARGUMENTS" in body or re.search(r"\$[1-9]", body) is not None
+    body = body.replace("$ARGUMENTS", arguments)
+    body = re.sub(r"\$([1-9])", lambda found: words[int(found.group(1)) - 1] if int(found.group(1)) <= len(words) else "", body)
+    if arguments and not used:
+        body += f"\n\nARGUMENTS: {arguments}"
+    return (
+        f"Пользователь вызвал команду проекта /{command['name']} (файл {command['path']}, эту версию он подтвердил). "
+        "Это его инструкция: выполни её, пока она не противоречит правилам безопасности и правам приложения.\n\n"
+        f'<command name="{command["name"]}">\n{body}\n</command>'
+    )
+
+
 def skill_block(skill_ids: list[int | str]) -> tuple[str, list[str]]:
     """Блок инструкций выбранных навыков для начала пользовательского сообщения и список их названий.
 

@@ -61,7 +61,7 @@ def verify(directory: Path, source_manifest: Path) -> dict:
             raise ValueError("Старый интерфейс попал в поставку: " + relative)
         if (
             name.startswith((".env", "koddi.sqlite", "tokens."))
-            or name.endswith((".db", ".sqlite", ".sqlite3", ".log", ".key"))
+            or name.endswith((".db", ".sqlite", ".sqlite3", ".log", ".key", ".profraw"))
             or (name.endswith(".pem") and relative != "certifi/cacert.pem")
             or ".sqlite3-" in name
             or "__pycache__" in path.parts

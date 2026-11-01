@@ -95,13 +95,29 @@ export async function restoreTurn(turnId: number, afterSync: () => Promise<void>
   notify('Правки хода отменены, откат можно отменить в изменениях');
 }
 
+interface RollbackResult { rolled_back: boolean; reason?: string; error?: string; conflicts?: string[] }
+
+export const rollbackError = (result: RollbackResult): string => {
+  if (result.conflicts?.length) return `Файл изменился после агента, откат остановлен, чтобы не затереть правки: ${result.conflicts.join(', ')}. Можно откатить отдельные куски.`;
+  if (result.reason === 'change set already rolled back') return 'Эти изменения уже откатаны';
+  return result.error || result.reason || 'Откат не выполнен';
+};
+
 export async function rollbackChange(id: Change['id'], fileCount: number, afterSync: () => Promise<void>): Promise<void> {
   const text = fileCount > 1
     ? `Будет отменён весь набор изменений. Файлов: ${fileCount}. Это затронет не только открытый файл.`
     : 'Изменение выбранного файла будет отменено';
   if (!(await confirmDialog('Откатить изменения?', text, 'Откатить'))) return;
-  const result = await post<{ rolled_back: boolean; reason?: string }>(`/api/changes/${id}/rollback`);
-  if (!result.rolled_back) throw new Error(result.reason);
+  const result = await post<RollbackResult>(`/api/changes/${id}/rollback`);
+  if (!result.rolled_back) throw new Error(rollbackError(result));
   await afterSync();
   notify('Изменения отменены');
+}
+
+/** Откат одного куска diff: файл сверяется на сервере, отказ объясняет почему и ничего не пишет. */
+export async function rollbackHunk(id: Change['id'], path: string, hunk: string, afterSync: () => Promise<void>): Promise<void> {
+  const result = await post<RollbackResult>(`/api/changes/${id}/rollback-hunk`, { path, hunk });
+  if (!result.rolled_back) throw new Error(result.error || 'Кусок не откатился');
+  await afterSync();
+  notify('Кусок откатан, вернуть его можно в списке изменений');
 }

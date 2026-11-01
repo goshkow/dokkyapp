@@ -22,6 +22,14 @@ ALLOWED_EXTENSIONS = {
     ".jpeg",
     ".webp",
     ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".ico",
+    ".icns",
+    ".avif",
+    ".heic",
+    ".heif",
     ".pdf",
     ".docx",
     ".xlsx",
@@ -40,6 +48,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def unsupported_text(suffix: str) -> str:
+    return (f"Файлы {suffix} прикрепить нельзя" if suffix else "Файл без расширения прикрепить нельзя") + (
+        ". Подойдут картинки, документы, таблицы, текст и код."
+    )
+
+
 def store_attachment(chat_id: int | None, filename: str, stream: BinaryIO) -> dict:
     owner = local_owner()
     if chat_id is not None:
@@ -51,7 +65,7 @@ def store_attachment(chat_id: int | None, filename: str, stream: BinaryIO) -> di
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"Unsupported attachment type: {suffix}")
+        raise ValueError(unsupported_text(suffix))
     target_dir = runtime_path("attachments", "placeholder").parent
     target_dir.mkdir(parents=True, exist_ok=True)
     if target_dir.is_symlink() or (
@@ -68,7 +82,7 @@ def store_attachment(chat_id: int | None, filename: str, stream: BinaryIO) -> di
                     break
                 size += len(chunk)
                 if size > MAX_ATTACHMENT_BYTES:
-                    raise ValueError("Attachment exceeds size limit")
+                    raise ValueError("Файл больше 100 МБ: такой прикрепить нельзя")
                 out.write(chunk)
     except BaseException:
         temp_path.unlink(missing_ok=True)
@@ -238,7 +252,7 @@ def _read_attachment_bytes(item: dict, max_bytes: int) -> bytes:
 
 
 def read_attachment(attachment_id: int, chat_id: int) -> dict:
-    from koddi.documents.service import MAX_DOCUMENT_BYTES, READABLE_SUFFIXES, extract_text
+    from koddi.documents.service import READABLE_SUFFIXES, document_limit, extract_text
 
     owner = local_owner()
     require_chat(chat_id)
@@ -258,7 +272,7 @@ def read_attachment(attachment_id: int, chat_id: int) -> dict:
         }
     if Path(item["original_name"]).suffix.lower() not in READABLE_SUFFIXES:
         raise ValueError("Attachment type does not support bounded text extraction")
-    data = _read_attachment_bytes(item, MAX_DOCUMENT_BYTES)
+    data = _read_attachment_bytes(item, document_limit(item["original_name"]))
     text, outline = extract_text(Path(item["original_name"]), 120_001, source_bytes=data)
     current = require_attachment(attachment_id)
     if local_owner() != owner or current["chat_id"] != chat_id:

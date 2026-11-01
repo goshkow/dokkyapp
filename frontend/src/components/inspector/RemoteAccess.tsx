@@ -16,7 +16,7 @@ export function RemoteAccess() {
   useEffect(() => () => window.clearTimeout(timer.current), []);
   if (chatId === undefined) return null;
   const on = sharedOnPhone(status, chatId);
-  const available = Boolean(status?.enabled);
+  const available = Boolean(status?.enabled) && status?.state !== 'revoked';
   // короткая задержка: подсказка не мигает, когда мышь просто проходит мимо
   const hover = (open: boolean) => {
     window.clearTimeout(timer.current);

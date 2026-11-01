@@ -117,7 +117,10 @@ def test_download_refuses_bigger_file(updater):
 def test_failed_version_is_not_offered_again_automatically(updater):
     (service.updates_dir() / "failed.json").write_text(json.dumps({"version": "9.9.9"}))
     serve(updater, lambda request: httpx.Response(200, json=latest()))
-    assert asyncio.run(updater.check())["status"] == "up_to_date"
+    state = asyncio.run(updater.check())
+    assert state["status"] == "error" and "не установилось" in state["error"]
+    assert state["available"]["version"] == "9.9.9"
+    assert updater._download is None
 
 
 def test_install_needs_prepared_update(updater):
@@ -350,3 +353,38 @@ def test_source_runs_never_block_or_mark_versions(updater, monkeypatch):
     monkeypatch.setattr(service, "is_packaged_build", lambda: False)
     (service.data_dir() / "newest-version").write_text("99.0.0")
     assert service.newer_version_seen() is None
+
+
+def test_download_answer_already_reports_download(updater, monkeypatch):
+    # иначе ответ на «Скачать» со старым статусом затирает пришедшее раньше событие с процентами
+    entry = latest()["stable"]["macos-arm64"]["dmg"]
+    updater.state.update(status="available", available=entry)
+
+    async def run():
+        monkeypatch.setattr(updater, "_run_download", lambda: asyncio.sleep(0))
+        updater.start_download()
+        state = updater.status()
+        await updater._download
+        return state
+    state = asyncio.run(run())
+    assert state["status"] == "downloading" and state["progress"] == {"done": 0, "total": entry["size"]}
+
+
+def test_background_check_is_quiet_and_does_not_interrupt_download(updater):
+    entry = latest()["stable"]["macos-arm64"]["dmg"]
+    updater.state.update(status="available", available=entry)
+    seen = []
+
+    async def handler(request):
+        seen.append(updater.state["status"])
+        # пока шёл запрос, пользователь нажал «Скачать»
+        updater.state.update(status="downloading", progress={"done": 0, "total": entry["size"]})
+        return httpx.Response(200, json=latest())
+    serve(updater, handler)
+    state = asyncio.run(updater.check())
+    assert seen == ["available"]
+    assert state["status"] == "downloading"
+
+
+def test_updates_are_checked_every_15_minutes():
+    assert service.CHECK_EVERY == 15 * 60

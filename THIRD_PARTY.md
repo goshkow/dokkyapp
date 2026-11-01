@@ -15,6 +15,8 @@
 | Inter | `backend/koddi/desktop/web/assets/Inter-LICENSE` |
 | Unbounded (подмножество кириллицы, SIL OFL 1.1) | `backend/koddi/desktop/web-next/assets/fonts/OFL-Unbounded.txt` |
 | KaTeX 0.19.0 (MIT, шрифты KaTeX_* под SIL OFL) | `backend/koddi/desktop/web-next/assets/licenses/katex-LICENSE` |
+| pypdf (BSD-3-Clause) | `pypdf-*.dist-info/licenses/LICENSE` |
+| pi-heif (BSD-3-Clause), внутри libheif и libde265 как отдельные библиотеки (LGPL-3.0) | `pi_heif-*.dist-info/licenses/` |
 | Leaflet 1.9.4 (BSD-2-Clause) | `backend/koddi/desktop/web-next/assets/licenses/leaflet-LICENSE` |
 
 Плитки карты - © участники OpenStreetMap (ODbL). Приложение берёт их через свой

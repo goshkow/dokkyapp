@@ -36,7 +36,10 @@ def test_defaults_and_explicit_account_preferences_are_independent(profile):
     response = client.put('/api/settings', json={'project_id': project, 'permission_profile': 'full', 'confirm_full_access': True, 'coding_reasoning_mode': 'max', 'private_network': False, 'coding_keepalive': False})
     assert response.status_code == 200
     assert preferences.reasoning_mode() == 'max'
-    assert permission_profile(other) == 'full'
+    # «Разрешить всё» только там, где его выбрали
+    assert permission_profile(project) == 'full'
+    assert permission_profile(other) == 'trusted'
+    assert permission_profile(None) == 'trusted'
     assert private_network_allowed(other)
     # прежний ручной выбор проекта не заменяется последним режимом другого проекта
     assert client.put('/api/settings', json={'project_id': other, 'permission_profile': 'ask'}).status_code == 200
@@ -138,7 +141,17 @@ def test_new_account_choice_overrides_legacy_read_only(profile):
     assert permission_profile(project) == 'read-only'
     assert client.put('/api/settings', json={'project_id': project, 'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
     assert permission_profile(project) == 'full'
+    assert permission_profile(None) == 'trusted'
+
+
+def test_full_access_left_on_the_account_does_not_reach_a_project(profile):
+    client, project, other, _, _ = profile
+    # так значение попадало в аккаунт раньше, при выборе в любом проекте
+    assert client.put('/api/settings', json={'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
     assert permission_profile(None) == 'full'
+    assert permission_profile(project) == 'trusted'
+    assert client.put('/api/settings', json={'project_id': other, 'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
+    assert permission_profile(other) == 'full'
 
 
 def test_setting_updates_keep_the_captured_owner_on_account_switch(profile, monkeypatch):

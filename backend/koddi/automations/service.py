@@ -38,9 +38,9 @@ def _project(project_id: Any) -> dict:
 
 
 def _dangerous(command: str) -> bool:
-    from koddi.policy.engine import DANGEROUS_SHELL
+    from koddi.policy.engine import dangerous_command
 
-    return any(marker.lower() in command.lower() for marker in DANGEROUS_SHELL)
+    return dangerous_command(command)
 
 
 def normalize_action(action: dict[str, Any]) -> dict[str, Any]:
@@ -219,7 +219,7 @@ def _execute(automation_id: int, cancelled: threading.Event) -> dict:
         # опасные команды отсекаются при создании и ещё раз здесь
         if kind == "command" and _dangerous(arguments["command"]):
             raise ValueError("Опасная команда не запускается автоматически")
-        result = ToolRunner(Path(workspace) if workspace else None, cancel_event=cancelled).run(tool_name, arguments, approved=kind == "command")
+        result = ToolRunner(Path(workspace) if workspace else None, action.get("project_id"), cancel_event=cancelled).run(tool_name, arguments, approved=kind == "command")
         status = "cancelled" if cancelled.is_set() else "completed" if result.get("ok") else "failed"
     except Exception as exc:
         result = {"ok": False, "error": str(exc)}

@@ -29,7 +29,7 @@
 .agent-controls .select-trigger {
   background: transparent;
   border-color: transparent;
-  border-radius: 6px;
+  border-radius: 999px;
   color: var(--muted);
   font-size: var(--fs-12);
   max-width: 200px;
@@ -37,7 +37,7 @@
   padding: 4px 8px;
 }
 .agent-controls .select-trigger:hover:not(:disabled), .agent-controls .select-trigger[aria-expanded="true"] { background: var(--hover); color: var(--text); }
-.workspace-selector { border-radius: 6px; }
+.workspace-selector { border-radius: 999px; }
 .workspace-selector:hover { color: var(--text); }
 .composer-actions .mode-label { margin-left: auto; color: var(--muted); font-size: var(--fs-12); }
 .composer-actions .mode-option { align-items: flex-start; min-height: 48px; }
@@ -117,6 +117,36 @@
 .journal-change[open] > summary > svg:first-child { transform: rotate(90deg); }
 .journal-change-body { max-height: min(360px, 45dvh); overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); }
 .journal-change .code-diff { max-height: none; border: 0; border-radius: 0; margin: 0; }
+/* вывод команды: тихий хвост с линией слева, как в терминале, без своих рамок - карточка в карточке шумит */
+.command-live { display: grid; gap: 4px; margin: 0 8px 8px 31px; justify-items: start; }
+.command-screen {
+  max-height: min(180px, 30dvh); width: 100%; margin: 0; padding: 2px 0 2px 12px; overflow: auto; overscroll-behavior: contain;
+  border-left: 1px solid var(--line); color: var(--muted);
+  font-family: var(--code-font, monospace); font-size: var(--fs-11); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.command-stop {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 0; border: 0;
+  background: none; color: var(--muted); font-size: var(--fs-11); cursor: pointer;
+}
+.command-stop:hover:not(:disabled) { color: var(--text); }
+.command-stop-mark { width: 7px; height: 7px; border-radius: 1.5px; background: currentColor; }
+.command-stop:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.command-stop:disabled { cursor: default; opacity: 0.7; }
+.command-result { margin: 0 8px 8px 31px; }
+.command-result > summary { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; color: var(--muted); font-size: var(--fs-11); }
+.command-result > summary:hover { color: var(--text); }
+.command-result > summary::-webkit-details-marker { display: none; }
+.command-result > summary::marker { content: ''; }
+.command-result > summary > svg { transition: transform 120ms var(--ease); }
+.command-result[open] > summary > svg { transform: rotate(90deg); }
+.command-result > .command-screen { margin-top: 4px; max-height: min(320px, 45dvh); }
+/* сабагент: его действие тихой строкой, отчёт - свёрнутым текстом с той же линией слева, что у вывода команды */
+.subagent-live { margin: 0 8px 8px 31px; padding-left: 12px; border-left: 1px solid var(--line); color: var(--muted); font-size: var(--fs-12); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-live > span { opacity: 0.75; }
+.command-result > .subagent-report {
+  margin-top: 4px; max-height: min(360px, 50dvh); overflow: auto; overscroll-behavior: contain; padding-left: 12px;
+  border-left: 1px solid var(--line); font-size: var(--fs-13);
+}
 
 /* очередь и карточки над полем лежат поверх ленты: своя подложка с размытием, чтобы текст под ними не просвечивал */
 #composer { isolation: isolate; }
@@ -210,3 +240,78 @@
 .question-text:focus { outline: none; border-color: var(--accent); }
 .approval-panel.question-panel .actions { display: flex; align-items: center; }
 .question-hint { margin-right: auto; color: var(--muted); font-size: var(--fs-12); }
+/* подсказки «/» и «@» над полем: фокус остаётся в поле, выбранная строка подсвечена */
+.composer-suggest {
+  position: fixed; z-index: 450; max-height: min(320px, 45dvh); overflow: auto; overscroll-behavior: contain;
+  padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text);
+  box-shadow: 0 16px 40px #0006; transform-origin: bottom left; animation: pop-in 140ms var(--ease) both;
+}
+.suggest-item {
+  display: grid; grid-template-columns: minmax(0, 40%) minmax(0, 1fr); align-items: baseline; gap: 12px;
+  padding: 6px 10px; border-radius: 8px; font-size: var(--fs-13); cursor: pointer;
+}
+/* у файла папка идёт сразу за именем, колонки нужны только командам */
+.suggest-item[data-kind="file"] { grid-template-columns: fit-content(60%) minmax(0, 1fr); }
+.suggest-item[aria-selected="true"] { background: var(--hover); }
+.suggest-item[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.suggest-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-12); }
+.suggest-empty { padding: 8px 10px; color: var(--muted); font-size: var(--fs-12); }
+.suggest-keys { padding: 6px 10px 3px; color: var(--muted); font-size: var(--fs-11); opacity: 0.8; }
+@media (prefers-reduced-motion: reduce) { .composer-suggest { animation: none; } }
+
+/* откат одного куска diff: тихая подпись в строке заголовка, заметна при наведении */
+/* sticky: строка шире панели при длинном коде, кнопка не уезжает за край */
+.diff-hunk-revert { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; position: sticky; right: 8px; padding: 0 6px; border: 0; border-radius: 5px; background: var(--field); color: var(--muted); font: inherit; font-size: var(--fs-12); line-height: 18px; cursor: pointer; opacity: 0; }
+.diff-line.hunk code { grid-column: 3; grid-row: 1; }
+.diff-line.hunk:hover .diff-hunk-revert, .diff-hunk-revert:focus-visible { opacity: 1; }
+.diff-hunk-revert:hover { color: var(--text); }
+
+/* ветка в шапке: тихая подпись, как заголовок чата */
+.chat-header .header-end { display: flex; align-items: center; justify-content: flex-end; }
+/* шапка пропускает нажатия к ленте, а кнопка принимает; при свёрнутой правой панели справа стоят кнопки окна */
+#shell.right-collapsed .chat-header .header-end { padding-right: calc(var(--caption-width, 138px) + 36px); }
+.branch-button { pointer-events: auto; display: inline-flex; align-items: center; gap: 5px; max-width: 200px; height: 24px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: var(--fs-12); cursor: pointer; -webkit-app-region: no-drag; }
+.branch-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-button:hover:not(:disabled), .branch-button[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.branch-button:disabled { cursor: default; opacity: 0.6; }
+.branch-menu { padding: 6px; }
+.branch-search { width: 100%; box-sizing: border-box; height: 30px; padding: 0 8px; margin-bottom: 4px; border: 0; border-radius: 7px; background: var(--field); color: var(--text); font-size: var(--fs-13); }
+.branch-list { max-height: 280px; overflow-y: auto; }
+.branch-list .menu-item { min-height: 30px; padding: 4px 8px; border-radius: 7px; }
+.branch-empty { padding: 8px; color: var(--muted); font-size: var(--fs-12); }
+
+/* коммит под списком изменений */
+.git-commit { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, color-mix(in srgb, var(--text) 10%, transparent)); }
+.git-commit-files { display: flex; align-items: center; gap: 5px; width: 100%; padding: 2px 0; border: 0; background: transparent; color: var(--text); font-size: var(--fs-12); text-align: left; cursor: pointer; }
+.git-commit-files small { margin-left: auto; color: var(--muted); font-size: var(--fs-12); }
+.git-commit-files[aria-expanded="true"] .change-chevron { transform: rotate(90deg); }
+.git-commit-list { display: grid; gap: 1px; max-height: 180px; overflow-y: auto; }
+.git-commit-list label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 22px; font-size: var(--fs-12); cursor: pointer; }
+.git-commit-list label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-commit-list small { color: var(--muted); font-size: var(--fs-12); }
+.git-commit-message { width: 100%; box-sizing: border-box; min-height: 48px; padding: 6px 8px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: var(--fs-12); resize: vertical; }
+.git-commit-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.git-commit-actions button { min-height: 26px; padding: 2px 10px; font-size: var(--fs-12); }
+
+/* поиск по чату: строка под шапкой справа, совпадения подсвечены без правки разметки */
+.chat-search { position: absolute; top: calc(var(--controls-h) + 2px); right: 16px; z-index: 30; display: flex; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 9px; background: var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 6px 18px color-mix(in srgb, #000 18%, transparent); }
+.chat-search input { width: 180px; height: 24px; padding: 0 6px; border: 0; background: transparent; color: var(--text); font-size: var(--fs-13); outline: none; }
+.chat-search-count { min-width: 44px; color: var(--muted); font-size: var(--fs-12); text-align: right; white-space: nowrap; padding-right: 4px; }
+.chat-search button { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.chat-search button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.chat-search button:disabled { opacity: 0.4; cursor: default; }
+@supports not selector(::highlight(chat-search)) {
+  [data-search-current] { outline: 1px solid color-mix(in srgb, #f5c542 70%, transparent); outline-offset: 4px; border-radius: 6px; }
+}
+::highlight(chat-search) { background-color: color-mix(in srgb, #f5c542 55%, transparent); color: inherit; }
+
+/* быстрый переход: только поле и список */
+dialog.command-palette { width: min(560px, calc(100vw - 32px)); margin: 12vh auto auto; padding: 0; overflow: hidden; }
+.command-palette > input { display: block; width: 100%; box-sizing: border-box; height: 44px; padding: 0 16px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent); background: transparent; color: var(--text); font-size: var(--fs-13); outline: none; }
+.command-palette-list { max-height: min(380px, 56vh); overflow-y: auto; padding: 6px; }
+.command-palette-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 32px; padding: 4px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font-size: var(--fs-13); text-align: left; cursor: pointer; }
+.command-palette-list button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-palette-list button small { flex: none; color: var(--muted); font-size: var(--fs-12); }
+.command-palette-list button[aria-selected="true"] { background: var(--hover); }
+.command-palette-empty { padding: 12px 10px; color: var(--muted); font-size: var(--fs-13); }

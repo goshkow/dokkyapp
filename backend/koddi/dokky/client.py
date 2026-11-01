@@ -32,6 +32,16 @@ def account_identity():
     return user.get("id") or user.get("user_id")
 
 
+
+def error_body(response: httpx.Response) -> dict:
+    """Поле error ответа Докки; у ответа не в JSON или без него - пустой словарь."""
+    try:
+        body = response.json()
+    except ValueError:
+        return {}
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, dict) else {}
+
 class DokkyError(RuntimeError):
     def __init__(
         self, message: str, status: int = 502, code: str = "upstream_unavailable", *, details=None
@@ -228,8 +238,8 @@ class DokkyClient:
             async with self.http() as client:
                 response = await client.post(ORIGIN + "/oauth/par", data=form)
         except httpx.TransportError as exc:
-            self._login_result("error", "Не удалось связаться с Dokky. Проверьте подключение")
-            raise DokkyError("Не удалось связаться с Dokky. Проверьте подключение") from exc
+            self._login_result("error", "Не удалось связаться с Докки. Проверьте подключение к интернету")
+            raise DokkyError("Не удалось связаться с Докки. Проверьте подключение к интернету") from exc
         if response.status_code != 201:
             message = self._par_message(response)
             self._login_result("error", message)
@@ -241,8 +251,8 @@ class DokkyClient:
             if not isinstance(request_uri, str) or not request_uri or lifetime <= 0:
                 raise ValueError("request_uri")
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
-            self._login_result("error", "Dokky вернул некорректный ответ на вход")
-            raise DokkyError("Dokky вернул некорректный ответ на вход") from exc
+            self._login_result("error", "Докки вернул некорректный ответ на вход")
+            raise DokkyError("Докки вернул некорректный ответ на вход") from exc
         lifetime = min(lifetime, self.LOGIN_SECONDS)
         now = time.time()
         self.pending = {
@@ -271,7 +281,7 @@ class DokkyClient:
             text = str(body.get("error_description") or error)
         if response.status_code == 429:
             return "Слишком много попыток входа. Подождите минуту и повторите"
-        return (text or "Dokky не принял попытку входа")[:300]
+        return (text or "Докки не принял попытку входа")[:300]
 
     def login_status(self) -> dict:
         """Состояние попытки входа для окна приложения: идёт, закончена, истекла (10 минут) или отменена."""
@@ -290,12 +300,7 @@ class DokkyClient:
 
     def check(self, response: httpx.Response):
         if response.is_error:
-            try:
-                error = response.json().get("error", {})
-                if not isinstance(error, dict):
-                    error = {}
-            except (ValueError, AttributeError):
-                error = {}
+            error = error_body(response)
             if response.status_code == 401 and error.get("code") == "session_revoked":
                 try:
                     sent = response.request.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -315,29 +320,43 @@ class DokkyClient:
                 422: "validation_error",
             }
             messages = {
-                403: "Недостаточно прав в Dokky",
-                402: "Достигнут лимит тарифа Dokky",
+                403: "Недостаточно прав в Докки",
+                402: "Достигнут лимит тарифа Докки",
                 429: "Слишком много запросов. Повторите позже",
-                404: "Объект Dokky не найден",
+                404: "Объект Докки не найден",
                 409: "Данные изменились. Обновите страницу",
-                422: "Dokky отклонил параметры запроса",
+                422: "Докки отклонил параметры запроса",
             }
             raise DokkyError(
                 str(
                     error.get("message")
-                    or messages.get(response.status_code, "Dokky временно недоступен")
+                    or messages.get(response.status_code, "Докки временно недоступен")
                 )[:1000],
                 response.status_code,
                 str(error.get("code") or codes.get(response.status_code, "upstream_unavailable")),
                 details=error,
             )
 
+    @staticmethod
+    def _grant_rejected(response: httpx.Response) -> bool:
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        return isinstance(body, dict) and bool(body.get("error"))
+
     async def tokens(self, form: dict, *, persist: bool = True, client_id: str = CLIENT_ID) -> dict:
-        async with self.http() as client:
-            response = await client.post(
-                ORIGIN + "/oauth/token", data={"client_id": client_id, **form}
-            )
+        try:
+            async with self.http() as client:
+                response = await client.post(
+                    ORIGIN + "/oauth/token", data={"client_id": client_id, **form}
+                )
+        except httpx.TransportError as exc:
+            raise DokkyError("Не удалось связаться с Докки. Проверьте подключение к интернету", 503, "upstream_unavailable") from exc
         if response.status_code in {400, 401}:
+            # страница ошибки прокси - временный сбой: сессию стирает только настоящий отказ сервера авторизации
+            if not self._grant_rejected(response):
+                raise DokkyError("Не удалось связаться с Докки. Проверьте подключение к интернету", 503, "upstream_unavailable")
             if persist:
                 self.store.clear()
             raise DokkyError("Не удалось подтвердить вход. Войдите снова", 401, "invalid_grant")
@@ -454,13 +473,11 @@ class DokkyClient:
                     method, API + path, headers=headers, json=json, params=params, files=files, data=data
                 )
         except httpx.TransportError as exc:
-            raise DokkyError("Не удалось связаться с Dokky. Проверьте подключение") from exc
+            raise DokkyError("Не удалось связаться с Докки. Проверьте подключение к интернету") from exc
         if account_identity() != identity:
             raise DokkyError("Аккаунт изменился. Повторите действие", 409, "session_changed")
-        if (
-            response.status_code == 401
-            and response.json().get("error", {}).get("code") == "invalid_token"
-        ):
+        # 401 от прокси или балансировщика приходит HTML-страницей: это не истёкший токен, обновлять нечего
+        if response.status_code == 401 and error_body(response).get("code") == "invalid_token":
             async with self.lock:
                 if account_identity() != identity:
                     raise DokkyError(
@@ -514,9 +531,9 @@ class DokkyClient:
         set_setting("dokky_models", models)
         set_setting("dokky_user", value.get("user", {}))
         set_setting("dokky_bootstrap", value)
-        from koddi.dokky.coding import adopt_local_data
+        from koddi.dokky.coding import settle_local_data
 
-        adopt_local_data(str(value.get("user", {}).get("id") or value.get("user", {}).get("user_id") or ""))
+        settle_local_data(str(value.get("user", {}).get("id") or value.get("user", {}).get("user_id") or ""))
         return value
 
     async def logout(self, *, expected=None):

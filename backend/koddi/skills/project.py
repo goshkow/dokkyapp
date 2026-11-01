@@ -1,19 +1,27 @@
-"""Навыки проекта из файлов SKILL.md (`.dokky/skills`, `.claude/skills`, `.agents/skills`).
+"""Файлы проекта для агента в формате Claude Code: навыки (`*/SKILL.md` в `.dokky/skills`, `.claude/skills`,
+`.agents/skills`), команды (`.dokky/commands`, `.claude/commands`), агенты (`.dokky/agents`, `.claude/agents`)
+и хуки (`hooks` в `.dokky/settings.json`, `.claude/settings.json`, `.claude/settings.local.json`).
 
-Чужой файл в репозитории - непроверенная инструкция: навык виден агенту только после того, как человек
+Чужой файл в репозитории - непроверенная инструкция или команда: он действует только после того, как человек
 подтвердил именно эту версию файла (по sha256). Любое изменение файла снова требует подтверждения.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shlex
 from pathlib import Path
 
 from koddi.policy.paths import WorkspacePaths
 from koddi.storage.db import db
 
 ROOTS = (".dokky/skills", ".claude/skills", ".agents/skills")
+COMMAND_ROOTS = (".dokky/commands", ".claude/commands")
+AGENT_ROOTS = (".dokky/agents", ".claude/agents")
+HOOK_FILES = (".dokky/settings.json", ".claude/settings.json", ".claude/settings.local.json")
+KINDS = ("skill", "command", "agent", "hooks")
 MAX_SKILLS = 50
 MAX_BYTES = 64 * 1024
 FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.S)
@@ -77,24 +85,142 @@ def parse_skill(text: str, fallback_name: str) -> dict:
     return {"name": name, "description": description, "instructions": body.strip(), "version": str(meta.get("version") or "")}
 
 
+def kind_of(path: str) -> str:
+    """Вид файла по его месту в проекте: путь в таблице доверия один на все виды."""
+    if path.endswith("/SKILL.md"):
+        return "skill"
+    if path in HOOK_FILES:
+        return "hooks"
+    if path.startswith(AGENT_ROOTS):
+        return "agent"
+    return "command"
+
+
+def _name(value: object, fallback: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "") or fallback).strip()[:80]
+
+
+def _hooks_text(hooks: list[dict]) -> str:
+    lines = []
+    for hook in hooks:
+        matcher = f" [{hook['matcher']}]" if hook["matcher"] else ""
+        lines.append(f"{hook['event']}{matcher}: {hook['command']}")
+    return "\n".join(lines)
+
+
+def parse_hooks(text: str) -> list[dict]:
+    """Хуки из настроек проекта в формате Claude Code; неисполняемые Докки (не command, другие события) отбрасываются."""
+    from koddi.plugins.manifest import PluginSourceError, _hooks
+
+    try:
+        data = json.loads(text)
+        hooks = _hooks(data.get("hooks") if isinstance(data, dict) else None, "settings")
+    except (ValueError, PluginSourceError):
+        return []
+    return [hook for hook in hooks if hook["supported"]]
+
+
+def parse_file(kind: str, text: str, path: str) -> dict:
+    """Имя, описание и текст файла проекта; у агента ещё инструменты, у хуков - список команд."""
+    stem = path.rsplit("/", 1)[-1].removesuffix(".md")
+    if kind == "skill":
+        return parse_skill(text, path.rsplit("/", 2)[-2])
+    if kind == "hooks":
+        hooks = parse_hooks(text)
+        events = sorted({hook["event"] for hook in hooks})
+        return {"name": f"Хуки {path}", "description": f"{len(hooks)} шт.: {', '.join(events)}" if hooks else "",
+                "instructions": _hooks_text(hooks), "version": "", "hooks": hooks}
+    meta, body = frontmatter(text)
+    description = re.sub(r"\s+", " ", str(meta.get("description") or "")).strip()[:500]
+    if not description:
+        description = next((line.strip("# ").strip() for line in body.splitlines() if line.strip()), "")[:300]
+    item = {"name": _name(meta.get("name") if kind == "agent" else None, stem), "description": description,
+            "instructions": body.strip(), "version": ""}
+    if kind == "agent":
+        tools = meta.get("tools")
+        item["tools"] = [str(tool).strip() for tool in (tools if isinstance(tools, list) else str(tools or "").split(","))
+                         if str(tool).strip()]
+    else:
+        item["argument_hint"] = str(meta.get("argument-hint") or "")[:200]
+    return item
+
+
+def _scripts(root: Path, hooks: list[dict]) -> list[Path]:
+    """Файлы проекта, которые запускают команды хуков (`bash .claude/hooks/check.sh`): они входят в доверие."""
+    found: dict[str, Path] = {}
+    base = root.resolve()
+    for hook in hooks:
+        command = hook["command"].replace("${CLAUDE_PROJECT_DIR}", str(base)).replace("$CLAUDE_PROJECT_DIR", str(base))
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            words = command.split()
+        for word in words:
+            if not word or word.startswith("-") or ("/" not in word and "\\" not in word and "." not in word):
+                continue
+            candidate = Path(word) if Path(word).is_absolute() else base / word
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(base)
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file():
+                found[resolved.as_posix()] = resolved
+    return [found[key] for key in sorted(found)][:20]
+
+
+def digest(kind: str, data: bytes, root: Path, parsed: dict) -> str:
+    """Отпечаток версии: у хуков - файл настроек и скрипты проекта, которые он запускает."""
+    if kind != "hooks":
+        return hashlib.sha256(data).hexdigest()
+    total = hashlib.sha256(data)
+    base = root.resolve()
+    for script in _scripts(root, parsed.get("hooks") or []):
+        try:
+            content = script.read_bytes() if script.stat().st_size <= MAX_BYTES else b"<too large>"
+        except OSError:
+            content = b"<unreadable>"
+        total.update(b"\0" + script.relative_to(base).as_posix().encode() + b"\0" + hashlib.sha256(content).digest())
+    return total.hexdigest()
+
+
+def _candidates(root: Path) -> list[tuple[str, Path]]:
+    found: list[tuple[str, Path]] = []
+    for base in ROOTS:
+        found += [("skill", path) for path in sorted((root / base).glob("*/SKILL.md"))[:MAX_SKILLS]]
+    for base in COMMAND_ROOTS:
+        # подпапки команд, как в Claude Code, только для порядка: имя команды - имя файла
+        found += [("command", path) for path in sorted([*(root / base).glob("*.md"), *(root / base).glob("*/*.md")])[:MAX_SKILLS]]
+    for base in AGENT_ROOTS:
+        found += [("agent", path) for path in sorted((root / base).glob("*.md"))[:MAX_SKILLS]]
+    found += [("hooks", root / name) for name in HOOK_FILES]
+    return found
+
+
 def discover(root: Path) -> list[dict]:
     access = WorkspacePaths(root)
     found = []
-    for base in ROOTS:
-        directory = root / base
-        if not directory.is_dir():
+    counts = dict.fromkeys(KINDS, 0)
+    for kind, path in _candidates(root):
+        if counts[kind] >= MAX_SKILLS:
             continue
-        for path in sorted(directory.glob("*/SKILL.md"))[:MAX_SKILLS]:
-            try:
-                if path.is_symlink() or not access.accessible(path) or path.stat().st_size > MAX_BYTES:
-                    continue
-                data = path.read_bytes()
-            except OSError:
+        try:
+            if not path.is_file() or path.is_symlink() or not access.accessible(path) or path.stat().st_size > MAX_BYTES:
                 continue
-            parsed = parse_skill(data.decode("utf-8", errors="replace"), path.parent.name)
-            found.append({"path": path.relative_to(root).as_posix(), "sha256": hashlib.sha256(data).hexdigest(), **parsed})
-            if len(found) >= MAX_SKILLS:
-                return found
+            data = path.read_bytes()
+        except OSError:
+            continue
+        relative = path.relative_to(root).as_posix()
+        parsed = parse_file(kind, data.decode("utf-8", errors="replace"), relative)
+        if kind == "hooks" and not parsed["hooks"]:
+            continue  # настройки без хуков доверия не требуют
+        counts[kind] += 1
+        if kind == "hooks":
+            # человек видит, какие файлы проекта войдут в доверие вместе с настройками
+            scripts = [path.relative_to(root.resolve()).as_posix() for path in _scripts(root, parsed["hooks"])]
+            if scripts:
+                parsed["instructions"] += "\n\nСкрипты проекта, которые они запускают: " + ", ".join(scripts)
+        found.append({"path": relative, "kind": kind, "sha256": digest(kind, data, root, parsed), **parsed})
     return found
 
 
@@ -124,7 +250,7 @@ def sync(project_id: int, owner: str, root: Path) -> list[dict]:
         conn.executemany("DELETE FROM project_skills WHERE project_id=? AND owner_id=? AND path=?",
                          [(project_id, owner, path) for path in gone])
     # текст нужен человеку, чтобы решить, доверять ли этой версии файла
-    return [{key: item[key] for key in ("path", "name", "description", "sha256", "status", "version", "instructions")}
+    return [{key: item[key] for key in ("path", "kind", "name", "description", "sha256", "status", "version", "instructions")}
             for item in current]
 
 
@@ -133,9 +259,9 @@ def decide(project_id: int, owner: str, root: Path, path: str, sha256: str, trus
     listed = {item["path"]: item for item in sync(project_id, owner, root)}
     item = listed.get(path)
     if item is None:
-        raise ProjectSkillError("Навык не найден в папке проекта")
+        raise ProjectSkillError("Файл не найден в папке проекта")
     if item["sha256"] != sha256:
-        raise ProjectSkillError("Файл навыка изменился: просмотрите его снова")
+        raise ProjectSkillError("Файл изменился: просмотрите его снова")
     with db() as conn:
         conn.execute(
             "UPDATE project_skills SET status=?, trusted_sha256=?, updated_at=CURRENT_TIMESTAMP "
@@ -145,8 +271,8 @@ def decide(project_id: int, owner: str, root: Path, path: str, sha256: str, trus
     return {**item, "status": "trusted" if trust else "rejected"}
 
 
-def trusted(project_id: int | None, owner: str, root: Path | None) -> list[dict]:
-    """Подтверждённые навыки с текстом; файл перечитывается и сверяется с подтверждённым хешем."""
+def trusted(project_id: int | None, owner: str, root: Path | None, kind: str = "skill") -> list[dict]:
+    """Подтверждённые файлы одного вида с текстом; файл перечитывается и сверяется с подтверждённым хешем."""
     if project_id is None or root is None:
         return []
     with db() as conn:
@@ -156,6 +282,8 @@ def trusted(project_id: int | None, owner: str, root: Path | None) -> list[dict]
     result = []
     access = WorkspacePaths(root)
     for row in rows:
+        if kind_of(row["path"]) != kind:
+            continue
         path = root / row["path"]
         try:
             if path.is_symlink() or not access.accessible(path) or path.stat().st_size > MAX_BYTES:
@@ -163,7 +291,8 @@ def trusted(project_id: int | None, owner: str, root: Path | None) -> list[dict]
             data = path.read_bytes()
         except OSError:
             continue
-        if hashlib.sha256(data).hexdigest() != row["trusted_sha256"]:
-            continue  # файл изменили после подтверждения: до нового решения человека не используется
-        result.append({"path": row["path"], "source": "project", **parse_skill(data.decode("utf-8", errors="replace"), path.parent.name)})
+        parsed = parse_file(kind, data.decode("utf-8", errors="replace"), row["path"])
+        if digest(kind, data, root, parsed) != row["trusted_sha256"]:
+            continue  # файл или скрипт хука изменили после подтверждения: до нового решения человека не используется
+        result.append({"path": row["path"], "source": "project", "sha256": row["trusted_sha256"], **parsed})
     return result

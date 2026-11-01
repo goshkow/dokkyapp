@@ -66,6 +66,10 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 .project-head:hover { background: var(--hover); }
 .project-toggle { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 0 6px 0 9px; border-radius: 10px; font-size: var(--fs-15); text-align: left; }
 .project-toggle > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-toggle .project-missing { flex: none; color: var(--muted); font-size: 11px; }
+.project-missing-actions { display: flex; gap: 12px; padding: 2px 8px 6px 30px; }
+.project-missing-actions button { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.project-missing-actions button:hover { color: var(--text); text-decoration: underline; }
 .project-toggle svg { width: 16px; height: 16px; color: var(--muted); }
 .project-toggle .project-chevron { width: 12px; height: 12px; transition: transform 200ms var(--ease); }
 .project-group[data-open] .project-chevron { transform: rotate(90deg); }

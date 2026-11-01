@@ -321,7 +321,8 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
     def window(*args):
         if failure == "window":
             raise RuntimeError("window creation failed")
-        return SimpleNamespace(restore_geometry=lambda: None, show=lambda: None, bring_to_front=lambda: None, tray=None)
+        return SimpleNamespace(restore_geometry=lambda: None, show=lambda: None, bring_to_front=lambda: None, tray=None,
+                               install_notices=lambda: None, quit_app=lambda: None)
 
     monkeypatch.setattr(web_host, "QApplication", lambda args: app)
     monkeypatch.setattr(web_host, "QTimer", lambda parent: timer)
@@ -339,3 +340,52 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
         assert calls[-2] == "joined"
     if not failure:
         assert error.value.code == 7
+
+
+@pytest.mark.parametrize("answer,closes", [("stop", True), ("stay", False)])
+def test_closing_with_a_running_agent_asks_first(monkeypatch, answer, closes):
+    from PySide6 import QtWidgets
+
+    from koddi.agents.runs import agent_runs
+
+    class Box:
+        class Icon:
+            Question = 0
+
+        class ButtonRole:
+            DestructiveRole = "stop"
+            RejectRole = "stay"
+
+        def __init__(self, *_args):
+            self.buttons = {}
+
+        def addButton(self, _text, role):
+            self.buttons[role] = object()
+            return self.buttons[role]
+
+        def setDefaultButton(self, _button):
+            pass
+
+        def exec(self):
+            pass
+
+        def clickedButton(self):
+            return self.buttons[answer]
+
+    monkeypatch.setattr(QtWidgets, "QMessageBox", Box)
+    monkeypatch.setattr(agent_runs, "active_ids", lambda: [1])
+    host = SimpleNamespace(_stop_confirmed=False)
+    assert web_host.WebHost._stop_agreed(host) is closes
+    assert host._stop_confirmed is closes
+
+
+def test_closing_without_a_run_or_after_agreement_asks_nothing(monkeypatch):
+    from PySide6 import QtWidgets
+
+    from koddi.agents.runs import agent_runs
+
+    monkeypatch.setattr(QtWidgets, "QMessageBox", None)
+    monkeypatch.setattr(agent_runs, "active_ids", lambda: [])
+    assert web_host.WebHost._stop_agreed(SimpleNamespace(_stop_confirmed=False)) is True
+    monkeypatch.setattr(agent_runs, "active_ids", lambda: [1])
+    assert web_host.WebHost._stop_agreed(SimpleNamespace(_stop_confirmed=True)) is True

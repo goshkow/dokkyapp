@@ -79,6 +79,7 @@ export function SurfaceChatLists() {
   const hasMore = useSurface((state) => state.hasMore);
   const multiChat = useSurface((state) => state.multiChat);
   const ready = useSurface((state) => state.status === 'ready');
+  const failed = useSurface((state) => state.status === 'failed');
   const query = useSidebarQuery().trim().toLowerCase();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const chats = chatModeChats(all).filter(matches(query));
@@ -108,7 +109,7 @@ export function SurfaceChatLists() {
               {recent.map((chat) => <SurfaceRow key={chat.id} chat={chat} selected={chat.id === selected} onMenu={setMenu} />)}
             </div>
           ) : (
-            <span className="list-empty">{!ready ? 'Загрузка…' : query ? 'Ничего не найдено' : 'Чатов пока нет'}</span>
+            <span className="list-empty">{failed ? 'Чаты появятся вместе со связью' : !ready ? 'Загрузка…' : query ? 'Ничего не найдено' : 'Чатов пока нет'}</span>
           )}
           {multiChat && hasMore && !query && <Sentinel scroller=".sidebar-scroll" onReach={() => { void surfaceLoadMore(); }} />}
         </div>
@@ -124,11 +125,12 @@ const OPEN_KEY = 'koddi-other-computers-open';
 export function OtherComputerChats() {
   const all = useSurface((state) => state.chats);
   const hostId = useSurface((state) => state.hostId);
+  const hostName = useSurface((state) => state.hostName);
   const remoteChat = useSurface((state) => state.remoteChat);
   const query = useSidebarQuery().trim().toLowerCase();
   const [open, setOpen] = useState(() => readText(OPEN_KEY) === '1');
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const chats = otherComputerChats(all, hostId).filter(matches(query));
+  const chats = otherComputerChats(all, hostId, hostName).filter(matches(query));
   if (!chats.length) return null;
   const toggle = () => {
     setOpen(!open);

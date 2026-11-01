@@ -110,11 +110,69 @@ def test_learning_triggers_on_explicit_hints_and_periodically():
     assert memory.recent_requests(busy, "задача")[-1] == f"задача {memory.LEARN_EVERY - 1}"
 
 
-def test_forget_everything_clears_user_memory_without_a_model_call():
+def test_forget_everything_erases_all_memory_and_counts_it():
+    first, second = project("a"), project("b")
     memory.add("user", None, "Пишет на TypeScript")
-    model = Model({})
-    learn(model, chat(), None, "забудь всё обо мне")
-    assert texts("user") == [] and model.calls == []
+    memory.add("project", first, "FastAPI")
+    memory.add("project", second, "Django")
+    assert memory.forget_everything("почини тест") is None
+    assert memory.should_learn(chat(), "забудь всё обо мне") is False
+    assert memory.forget_everything("Забудь всё обо мне!") == {"personal": 1, "projects": 2}
+    assert memory.list_memory(first)["user"] == [] and memory.list_memory(first)["project"] == []
+    assert memory.list_memory(second)["project"] == []
+
+
+def test_notes_of_any_kind_follow_the_memory_settings(tmp_path):
+    from koddi.tools import ToolRunner
+
+    storage.set_setting("permission_profile", "trusted")
+    place = project("n")
+    with_project, without = ToolRunner(tmp_path, project_id=place), ToolRunner(tmp_path)
+    secret = "sk-" + "a" * 30
+    assert with_project.run("memory.set", {"kind": "note", "content": "Сборка через uv " + secret}, approved=True)["ok"]
+    assert without.run("memory.set", {"kind": "note", "content": "Отвечать кратко"}, approved=True)["ok"]
+    listed = memory.list_memory(place)
+    assert [row["content"] for row in listed["project"]] == ["Сборка через uv [redacted]"]
+    assert [row["content"] for row in listed["user"]] == ["Отвечать кратко"]
+    # памяти достаётся только короткий пункт, а memory.get находит и то, что не влезло в контекст
+    assert with_project.run("memory.get", {"query": "Сборка"}, approved=True)["memory"][0]["content"].startswith("Сборка")
+    memory.set_enabled(False)
+    assert with_project.run("memory.set", {"kind": "note", "content": "новое"}, approved=True)["ok"] is False
+    assert with_project.run("memory.get", {"query": "Сборка"}, approved=True)["memory"] == []
+    memory.set_enabled(True)
+    # больше лимита: старые заметки могли записаться без него
+    memory.add("user", None, "ручной пункт")
+    with storage.db() as conn:
+        for number in range(memory.LIMITS["user"] + 5):
+            conn.execute(
+                "INSERT INTO memory_summaries(project_id,kind,content,metadata_json,owner_id) VALUES (NULL,'user',?,?,?)",
+                (f"старый {number}", '{"source":"auto"}', "alice"),
+            )
+    assert without.run("memory.set", {"kind": "note", "content": "свежий"}, approved=True)["ok"]
+    assert len(memory.list_memory(None)["user"]) == memory.LIMITS["user"]
+
+
+def test_old_hidden_notes_become_visible_after_the_migration():
+    place = project("o")
+    with storage.db() as conn:
+        conn.execute("INSERT INTO memory_summaries(project_id,kind,content,owner_id) VALUES (?,?,?,?)",
+                     (place, "decision", "я" * 900, "alice"))
+        conn.execute("INSERT INTO memory_summaries(project_id,kind,content,owner_id) VALUES (NULL,?,?,?)",
+                     ("note", "Общая заметка", "alice"))
+        conn.executescript((storage.MIGRATIONS_DIR / "0032_memory_notes_visible.sql").read_text("utf-8"))
+    listed = memory.list_memory(place)
+    assert listed["project"][0]["content"] == "я" * 900 and listed["user"][0]["content"] == "Общая заметка"
+    assert memory.memory_context(place)["project"] == ["я" * memory.ITEM_CHARS]
+
+
+def test_learning_started_before_erasing_does_not_bring_memory_back():
+    class Erasing(Model):
+        async def stream(self, **kwargs):
+            memory.forget_everything("забудь всё обо мне")
+            yield {"content": json.dumps({"user": {"add": ["старый факт"]}})}
+
+    learn(Erasing({}), chat(), None, "запомни меня")
+    assert texts("user") == []
 
 
 def test_secrets_are_redacted_and_limits_drop_oldest_learned_items(monkeypatch):

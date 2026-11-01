@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 READ_ONLY_TOOLS = {
     "computer.status",
@@ -52,6 +54,7 @@ READ_ONLY_TOOLS = {
     "app.update_check",
     "app.diagnostics",
     "devserver.detect",
+    "devserver.output",
     "patch.preview",
     "test.detect",
     "build.detect",
@@ -132,18 +135,166 @@ BROWSER_ACTIVE_TOOLS = {
     "browser.select",
     "browser.eval",
 }
-DANGEROUS_SHELL = (
-    "Remove-Item",
-    "rm ",
-    "del ",
-    "format ",
-    "shutdown",
-    "reg delete",
-    "Set-ExecutionPolicy",
-    "sudo ",
-    "diskutil ",
-    "mkfs",
+# программы, которые сами по себе удаляют, форматируют, выключают или повышают права
+DANGEROUS_PROGRAMS = frozenset({
+    "rm", "rmdir", "rd", "del", "erase", "unlink", "shred", "dd", "format", "fdisk", "diskutil", "diskpart", "bcdedit",
+    "shutdown", "reboot", "halt", "poweroff", "sudo", "su", "doas", "takeown",
+    "remove-item", "ri", "clear-content", "clear-disk", "format-volume", "stop-computer", "restart-computer",
+    "set-executionpolicy",
+})
+# обёртки: настоящая команда стоит после них и их флагов
+_COMMAND_WRAPPERS = frozenset({
+    "env", "command", "exec", "nohup", "time", "timeout", "gtimeout", "nice", "ionice", "caffeinate", "busybox", "builtin",
+    "then", "do", "else", "if", "while", "!", "powershell", "pwsh", "cmd",
+})
+# выполняют переданные им слова как команду: на этом или другом компьютере
+_RUNS_ARGUMENTS = frozenset({"xargs", "parallel", "watch", "ssh", "docker", "podman", "kubectl"})
+_SHELLS = r"(?:sh|bash|zsh|dash|ksh|fish)"
+_SCRIPT_HOSTS = rf"(?:{_SHELLS}|eval|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)"
+# граница команды; строку после sh -c, cmd /c, powershell -Command и eval разбираем как отдельную команду
+_COMMAND_BREAK = re.compile(
+    r"&&|\|\||[;&|\n(){}`]|\$\(|\beval\s+"
+    rf"|\b{_SHELLS}\s+(?:-\w+\s+)*-\w*c\s+"
+    r"|\bcmd(?:\.exe)?\s+/[cCkK]\s+"
+    r"|\b(?:powershell|pwsh)(?:\.exe)?\s+(?:-\w+\s+)*-(?:c|C|Command|command)\s+"
 )
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SKIPPED_ARGUMENT = re.compile(r"^(?:-.*|\d+[smhd]?)$")
+_SIMPLE_WORD = re.compile(r"^[\w./\\-]+$")
+_FIND_DELETES = re.compile(r"\s-(?:delete\b|exec(?:dir)?\s+(?:\S*/)?(?:rm|shred|unlink)\b)")
+_CHANGES_TREE = re.compile(r"\s-[a-zA-Z]*R[a-zA-Z]*\b")
+# скачанное сразу выполняется: curl ... | sh, bash <(curl ...), sh -c "$(curl ...)", iex (iwr ...)
+_DOWNLOAD = r"(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)"
+_RUNNER = rf"(?:sudo\s+)?(?:\S*/)?(?:{_SHELLS}|python[0-9.]*|node|perl|ruby|php|pwsh|powershell|iex|invoke-expression)"
+_RUNS_DOWNLOAD = (
+    re.compile(rf"\b{_DOWNLOAD}\b[^\n]*\|\s*{_RUNNER}\b", re.IGNORECASE),
+    re.compile(rf"\b{_RUNNER}\b[^\n|]*(?:<\(|\$\(|`|\()\s*{_DOWNLOAD}\b", re.IGNORECASE),
+)
+# что подают оболочке на вход, заранее не видно
+_INTO_SHELL = re.compile(rf"\|\s*(?:sudo\s+)?(?:\S*/)?{_SHELLS}(?:\s|$)", re.IGNORECASE)
+_DEVICE_WRITE = re.compile(r">\s*/dev/(?:r?disk|sd|nvme|hd|mmcblk)", re.IGNORECASE)
+_HOSTED_SCRIPT = re.compile(rf"\b{_SCRIPT_HOSTS}\b[^;&|\n]*?\x00(\d+)\x00", re.IGNORECASE)
+_SUBSTITUTION = re.compile(r"\$\(([^)]*)\)|`([^`]*)`")
+_GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+
+
+def _unquote(command: str) -> tuple[str, list[str], list[str]]:
+    """Строка без кавычек: простое слово остаётся словом, остальное заменяется меткой, чтобы текст вроде сообщения коммита не считался командой."""
+    outer: list[str] = []
+    texts: list[str] = []
+    expanded: list[str] = []
+    index, size = 0, len(command)
+    while index < size:
+        char = command[index]
+        if char == "\\":
+            outer.append(command[index:index + 2])
+            index += 2
+        elif char in "\"'":
+            end = index + 1
+            while end < size and command[end] != char:
+                end += 2 if char == '"' and command[end] == "\\" else 1
+            text = command[index + 1:end]
+            # r''m для оболочки то же самое, что rm
+            if not text or _SIMPLE_WORD.match(text):
+                outer.append(text)
+            else:
+                outer.append(f"\x00{len(texts)}\x00")
+                texts.append(text)
+                if char == '"':
+                    expanded.extend(first or second for first, second in _SUBSTITUTION.findall(text))
+            index = end + 1
+        else:
+            outer.append(char)
+            index += 1
+    return "".join(outer), texts, expanded
+
+
+def _dangerous_git(words: list[str]) -> bool:
+    index = 1
+    while index < len(words) and words[index].startswith("-"):
+        index += 2 if words[index] in _GIT_VALUE_OPTIONS else 1
+    if index >= len(words):
+        return False
+    action, rest = words[index], words[index + 1:]
+    forced = any(word == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", word) for word in rest)
+    if action in {"rm", "filter-branch", "filter-repo"}:
+        return True
+    if action == "reset":
+        return "--hard" in rest
+    if action == "clean":
+        return forced
+    if action == "push":
+        return forced or any(
+            word.startswith(("--force", "+", ":")) or word in {"--delete", "-d", "--mirror"} for word in rest
+        )
+    if action == "branch":
+        return "-D" in rest or ("--delete" in rest and forced)
+    if action == "stash":
+        return rest[:1] in (["drop"], ["clear"])
+    if action == "checkout":
+        return forced or "." in rest or "--" in rest
+    if action == "switch":
+        return forced or "--discard-changes" in rest
+    if action == "restore":
+        return "--staged" not in rest or "--worktree" in rest or "-W" in rest
+    if action == "update-ref":
+        return "-d" in rest
+    if action == "worktree":
+        return rest[:1] == ["remove"] and forced
+    return False
+
+
+def _dangerous_segment(segment: str) -> bool:
+    words = segment.split()
+    while words:
+        word = words[0].strip("\\")
+        name = word.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        name = name[:-4] if name.endswith(".exe") else name
+        if _ASSIGNMENT.match(word):
+            words.pop(0)
+        elif name in _COMMAND_WRAPPERS:
+            words.pop(0)
+            while words and (_SKIPPED_ARGUMENT.match(words[0]) or _ASSIGNMENT.match(words[0])):
+                words.pop(0)
+        else:
+            break
+    if not words:
+        return False
+    line = " ".join(words)
+    if name in DANGEROUS_PROGRAMS or name.startswith("mkfs"):
+        return True
+    if name == "git":
+        return _dangerous_git(words)
+    if name == "find":
+        return bool(_FIND_DELETES.search(line))
+    if name in {"chmod", "chown"}:
+        return bool(_CHANGES_TREE.search(line))
+    if name == "reg":
+        return words[1:2] != [] and words[1].casefold() == "delete"
+    if name in _RUNS_ARGUMENTS:
+        return any(word.rsplit("/", 1)[-1].casefold() in DANGEROUS_PROGRAMS for word in words[1:])
+    return False
+
+
+def dangerous_command(command: str) -> bool:
+    """Разбор по программам, а не по подстрокам: «format» в обычном слове и текст в кавычках не срабатывают, rm через табуляцию срабатывает.
+
+    Это предохранитель от ошибки модели, а не песочница: команду, собранную из переменных, он не увидит.
+    """
+    if any(pattern.search(command) for pattern in _RUNS_DOWNLOAD):
+        return True
+    outer, texts, expanded = _unquote(command)
+    if _INTO_SHELL.search(outer) or _DEVICE_WRITE.search(outer):
+        return True
+    # строка в кавычках тоже бывает командой: bash -c "...", echo "$(...)"
+    hosted = [texts[int(number)] for number in _HOSTED_SCRIPT.findall(outer)]
+    if any(dangerous_command(text) for text in (*hosted, *expanded)):
+        return True
+    # r\m для оболочки то же самое, что rm, но обратная черта бывает и разделителем пути Windows: смотрим оба варианта
+    return any(
+        _dangerous_segment(segment) or ("\\" in segment and _dangerous_segment(segment.replace("\\", "")))
+        for segment in _COMMAND_BREAK.split(outer)
+    )
 
 
 # файлы вне проекта открываются только этим инструментам и только по абсолютному пути
@@ -190,6 +341,21 @@ def _confirm(profile: str, reason: str, **extra) -> Decision:
     if profile == "trusted":
         return Decision("review", reason, **extra)
     return Decision("ask", reason, **extra)
+
+
+def _decide_fetch(args: dict, profile: str) -> Decision:
+    """Адрес страницы уходит чужому серверу, и в нём можно вынести данные проекта. Вопрос зависит от режима."""
+    if profile == "full":
+        return Decision("allow", "full access granted by the user")
+    if profile == "trusted":
+        try:
+            parts = urlsplit(str(args.get("url") or ""))
+        except ValueError:
+            return Decision("ask", "the address could not be checked")
+        if not parts.query and "@" not in parts.netloc:
+            return Decision("allow", "page address without request parameters")
+        return Decision("ask", "the address carries request parameters: data could leave the computer")
+    return Decision("ask", "opens a site the user has not allowed in this chat")
 
 
 def is_inside(path: Path, root: Path) -> bool:
@@ -359,6 +525,14 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         if profile == "read-only":
             return Decision("ask", "file outside the project", external=tuple(external))
         return _confirm(profile, "file outside the project", external=tuple(external))
+    if tool_name == "skill.load" and not args.get("file"):
+        from koddi.skills.selector import needs_consent
+
+        # навык из скачанного плагина - чужая инструкция: агент предлагает, решает человек, в любом режиме
+        if needs_consent(str(args.get("name") or ""), project_id, workspace):
+            return Decision("ask", "uses a skill from a plugin the user installed: the user decides each time")
+    if tool_name == "web.fetch":
+        return _decide_fetch(args, profile)
     if tool_name in READ_ONLY_TOOLS:
         return Decision("allow", "read-only tool")
     if tool_name == "docs.lookup":
@@ -415,7 +589,7 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         return _confirm(profile, f"profile={profile}")
     if tool_name == "shell.run":
         command = str(args.get("command", ""))
-        if any(marker.lower() in command.lower() for marker in DANGEROUS_SHELL):
+        if dangerous_command(command):
             return _confirm(profile, "dangerous shell command", dangerous=True)
         return _confirm(profile, f"profile={profile}")
     return Decision("block", f"unknown tool {tool_name}")

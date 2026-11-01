@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,7 @@ class FakeServer:
         self.acks: list[tuple[str, str, str]] = []
         self.commands: list[dict] = []
         self.failures: list[tuple[object, RemoteFailure]] = []
+        self.reads: list[tuple[str, str]] = []
         self.public = 100
 
     def fail(self, match, failure: RemoteFailure) -> None:
@@ -76,6 +79,11 @@ class FakeServer:
             duplicate = json["client_id"] in box
             box.setdefault(json["client_id"], json)
             return {"message_id": len(box), "duplicate": duplicate}
+        if parts[-1] == "read":
+            if json["client_id"] not in self.messages.get(key, {}):
+                raise RemoteFailure(404, "message_not_found", "Сообщение ещё не загружено")
+            self.reads.append((key, json["client_id"]))
+            return {"ok": True}
         if parts[-1] == "events":
             for item in json["events"]:
                 if item["client_seq"] > self.watermark.get(key, 0):
@@ -365,7 +373,7 @@ async def test_server_errors_follow_the_protocol(env):
 
 
 def hooks(env, calls: list):
-    async def start_turn(chat_id: int, text: str) -> None:
+    async def start_turn(chat_id: int, text: str, attachment_ids=None) -> None:
         calls.append(("start", chat_id, text))
         if text == "занят":
             raise HTTPException(409, "Задача уже выполняется")
@@ -531,8 +539,8 @@ def test_settings_endpoints_and_sharing(tmp_path, monkeypatch):
     with TestClient(app) as client:
         chat = client.post("/api/chats", json={"title": "Локальный"}).json()["id"]
         state = client.get("/api/remote-control").json()
-        # пока человек не выбирал, доступ включается сам; выключение запоминается
-        assert state["enabled"] is True and state["prevent_sleep"] == "working"
+        # пока человек не ответил на вопрос, доступ выключен
+        assert state["enabled"] is False and state["asked"] is False and state["prevent_sleep"] == "working"
         state = client.put("/api/remote-control", json={"enabled": False}).json()
         assert state["enabled"] is False and state["state"] == "off"
         assert client.put("/api/remote-control", json={"prevent_sleep": "always"}).status_code == 422
@@ -666,3 +674,612 @@ async def test_new_sessions_from_phone_are_limited(env, monkeypatch):
         await env.control.execute({"id": f"rc_ns{index}", "kind": "new_session", "session_key": "", "payload": {"title": f"Чат {index}"}})
     assert [call[0] for call in calls].count("create") == 2
     assert env.server.acks[-1][:2] == ("rc_ns2", "rejected")
+
+
+def answer_row(chat: int, text: str = "Готово") -> int:
+    turn = insert("INSERT INTO turns(chat_id, status) VALUES (?, 'done')", chat)
+    return insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'assistant', ?, ?)",
+                  chat, text, json.dumps({"turn_id": turn, "channel": "final"}))
+
+
+@pytest.mark.asyncio
+async def test_chat_read_in_window_is_read_on_site(env):
+    env.control.loop = asyncio.get_running_loop()
+    first = answer_row(env.chat)
+    key = share(env)
+    await deliver(env.control)
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert env.server.reads == [(key, f"m{first}")]
+    # повторное открытие того же чата сервер не дёргает
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert len(env.server.reads) == 1
+    # журнал работы и недописанный ответ прочтением не считаются
+    insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'assistant', 'Смотрю', ?)",
+           env.chat, json.dumps({"channel": "commentary"}))
+    running = insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'assistant', 'Пишу', ?)",
+                     env.chat, json.dumps({"channel": "final", "status": "running"}))
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert len(env.server.reads) == 1
+    with storage.db() as conn:
+        conn.execute("DELETE FROM messages WHERE id=?", (running,))
+    # ответ ещё не дошёл до сервера: прочтение ждёт и уходит после него, а не теряется
+    second = answer_row(env.chat)
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert len(env.server.reads) == 1 and env.control._reads == {key: second}
+    env.control.share(env.chat)
+    await deliver(env.control)
+    assert env.server.reads[-1] == (key, f"m{second}") and env.control._reads == {}
+
+
+@pytest.mark.asyncio
+async def test_read_is_dropped_by_old_server_and_unshared_chat_is_not_reported(env):
+    env.control.loop = asyncio.get_running_loop()
+    answer_row(env.chat)
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert env.server.reads == [] and env.control._reads == {}
+    key = share(env)
+    await deliver(env.control)
+    env.server.fail(lambda m, p, b: p[-1] == "read", RemoteFailure(404, "not_found", "Not Found"))
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert env.server.reads == [] and env.control._reads == {}
+    assert outbox.count() == 0 and key
+
+
+@pytest.mark.asyncio
+async def test_chat_read_on_phone_clears_mark_in_window(env, monkeypatch):
+    from koddi.events import event_bus
+
+    published = []
+
+    async def publish(event, data=None):
+        published.append((event, data))
+
+    monkeypatch.setattr(event_bus, "publish", publish)
+    env.control.loop = asyncio.get_running_loop()
+    env.control.bind(hooks(env, []))
+    first = answer_row(env.chat)
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("read", key, "rc_r1", client_id=f"m{first}"))
+    assert ("chat.read", {"chat_id": env.chat}) in published and env.server.acks[-1] == ("rc_r1", "done", "")
+    # прочитанное на телефоне назад на сервер не уходит
+    env.control.seen(env.chat)
+    await deliver(env.control)
+    assert env.server.reads == []
+    # на телефоне прочитали старый ответ, а на компьютере уже закончился новый ход: отметка «готово» остаётся
+    published.clear()
+    answer_row(env.chat)
+    await env.control.execute(command("read", key, "rc_r2", client_id=f"m{first}"))
+    assert published == [] and env.server.acks[-1] == ("rc_r2", "done", "")
+    await env.control.execute(command("read", key, "rc_r3", client_id="x1"))
+    assert env.server.acks[-1] == ("rc_r3", "rejected", "Сообщение не найдено")
+
+
+@pytest.mark.asyncio
+async def test_only_a_request_from_the_person_brings_a_revoked_host_back(env):
+    await env.control.register()
+    assert env.server.calls[-1][2]["reactivate"] is False
+    env.control.launch = lambda: None
+    await env.control.configure({"enabled": True})
+    await env.control.register()
+    assert env.server.calls[-1][2]["reactivate"] is True
+    # просьба разовая: следующий запуск снова обычный
+    await env.control.register()
+    assert env.server.calls[-1][2]["reactivate"] is False
+    # отказ сервера не теряет просьбу
+    await env.control.reconnect()
+    env.server.fail(lambda m, p, b: p == ("hosts",), RemoteFailure(503, "upstream_unavailable", "Нет связи"))
+    with pytest.raises(RemoteFailure):
+        await env.control.register()
+    await env.control.register()
+    assert env.server.calls[-1][2]["reactivate"] is True
+
+
+
+@pytest.mark.asyncio
+async def test_phone_access_waits_for_the_answer_and_keeps_old_users_on(env, monkeypatch) -> None:
+    control = env.control
+    launches = []
+    monkeypatch.setattr(control, "launch", lambda: launches.append(1))
+    with storage.db() as conn:
+        conn.execute("UPDATE remote_control SET enabled=0, configured=0 WHERE id=1")
+    # новая установка: компьютер не регистрируется, пока человек не ответил
+    await control.start()
+    assert launches == [] and control.status()["enabled"] is False and control.status()["asked"] is False
+    # обновившийся, у которого доступ уже работает: не спрашиваем и не выключаем
+    with storage.db() as conn:
+        conn.execute("UPDATE remote_control SET enabled=1, configured=0 WHERE id=1")
+    await control.start()
+    assert launches == [1] and control.status()["enabled"] is True and control.status()["asked"] is True
+    # отказ запоминается
+    await control.configure({"enabled": False})
+    await control.start()
+    assert launches == [1] and control.status()["asked"] is True
+
+
+def queue_hooks(env, calls: list):
+    from koddi.agents.queue import request_queue
+
+    def enqueue(chat_id: int, text: str, command_id: str, attachment_ids=None) -> None:
+        calls.append(("enqueue", chat_id, text))
+        request_queue.add(chat_id, {"content": text, "remote_command": command_id}, str(uuid.uuid5(uuid.NAMESPACE_URL, command_id)))
+
+    def cancel_queued(chat_id: int, command_id: str) -> None:
+        key = str(uuid.uuid5(uuid.NAMESPACE_URL, command_id))
+        for item in request_queue.snapshot(chat_id)["items"]:
+            if item["id"] == key:
+                request_queue.edit(chat_id, key, item["version"], None)
+
+    base = hooks(env, calls)
+    return Hooks(base.start_turn, base.cancel_turn, base.respond, base.create_chat, enqueue, cancel_queued)
+
+
+@pytest.fixture
+def phone_queue(env, monkeypatch):
+    from koddi.agents.queue import request_queue
+
+    calls: list = []
+    env.control.bind(queue_hooks(env, calls))
+    env.control.loop = None
+    env.control.host = {"id": HOST}
+    env.control._enabled = True
+    env.control.ack_pauses = (0,)
+    monkeypatch.setattr(request_queue, "listeners", [])
+    monkeypatch.setattr(request_queue, "launch", None)
+    return request_queue
+
+
+async def settled(env) -> None:
+    await env.control.settle_queued()
+
+
+def acks_of(env, command_id: str) -> list[tuple[str, str]]:
+    return [(status, error) for cid, status, error in env.server.acks if cid == command_id]
+
+
+def queued_row(command_id: str) -> dict:
+    with storage.db() as conn:
+        row = conn.execute("SELECT * FROM queued_requests WHERE id=?", (str(uuid.uuid5(uuid.NAMESPACE_URL, command_id)),)).fetchone()
+    return dict(row)
+
+
+@pytest.mark.asyncio
+async def test_phone_message_waits_in_queue_while_turn_runs(env, phone_queue):
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("message", key, "rc_q1", text="Потом сделай это", queued=True))
+    # ход не начат, а итог придёт, когда очередь дойдёт до сообщения
+    assert env.server.acks == [("rc_q1", "accepted", "")] and env.control.commands == {}
+    assert queued_row("rc_q1")["status"] == "queued"
+    # повтор той же команды второй раз в очередь не ставит
+    await env.control.execute(command("message", key, "rc_q1", text="Потом сделай это", queued=True))
+    with storage.db() as conn:
+        assert conn.execute("SELECT count(*) FROM queued_requests").fetchone()[0] == 1
+    await settled(env)
+    assert acks_of(env, "rc_q1") == [("accepted", ""), ("accepted", "")]
+    # очередь начала ход: команда закрыта, метка снята
+    with storage.db() as conn:
+        conn.execute("UPDATE queued_requests SET status='running'")
+    env.control.queued_started("rc_q1")
+    await settled(env)
+    assert acks_of(env, "rc_q1")[-1] == ("done", "")
+    assert "remote_command" not in json.loads(queued_row("rc_q1")["payload_json"])
+    # ход потом упал: начатая команда не возвращается как невыполненная
+    with storage.db() as conn:
+        conn.execute("UPDATE queued_requests SET status='failed'")
+    await settled(env)
+    assert acks_of(env, "rc_q1")[-1] == ("done", "") and outbox.seen("rc_q1")["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_stopped_queue_returns_phone_messages(env, phone_queue):
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("message", key, "rc_q2", text="Первое", queued=True))
+    await env.control.execute(command("message", key, "rc_q3", text="Второе", queued=True))
+    phone_queue.pause(env.chat)
+    await settled(env)
+    for command_id in ("rc_q2", "rc_q3"):
+        status, error = acks_of(env, command_id)[-1]
+        assert status == "rejected" and "отправить снова" in error
+        assert queued_row(command_id)["status"] == "cancelled"
+    # второй проход ничего не шлёт: итог уже дошёл
+    before = len(env.server.acks)
+    await settled(env)
+    assert len(env.server.acks) == before
+
+
+@pytest.mark.asyncio
+async def test_queue_outcome_survives_network_break(env, phone_queue):
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("message", key, "rc_q4", text="Текст", queued=True))
+    phone_queue.pause(env.chat)
+    env.server.fail(lambda m, p, b: p[-1] == "rc_q4", RemoteFailure(502, "upstream_unavailable", "Нет связи"))
+    await settled(env)
+    # метка осталась, следующий опрос доставит итог
+    assert "remote_command" in json.loads(queued_row("rc_q4")["payload_json"])
+    await settled(env)
+    assert acks_of(env, "rc_q4")[-1][0] == "rejected"
+    assert "remote_command" not in json.loads(queued_row("rc_q4")["payload_json"])
+
+
+@pytest.mark.asyncio
+async def test_phone_removes_queued_message_without_stopping_turn(env, phone_queue):
+    calls = []
+    env.control.bind(queue_hooks(env, calls))
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("message", key, "rc_q5", text="Не надо", queued=True))
+    await env.control.execute(command("stop", key, "rc_q6", queued="rc_q5"))
+    assert acks_of(env, "rc_q6")[-1] == ("done", "") and ("cancel", env.chat) not in calls
+    assert queued_row("rc_q5")["status"] == "cancelled"
+    await settled(env)
+    assert acks_of(env, "rc_q5")[-1][0] == "rejected"
+    # отмена обогнала само сообщение: оно не выполняется
+    await env.control.execute(command("stop", key, "rc_q9", queued="rc_q10"))
+    await env.control.execute(command("message", key, "rc_q10", text="Поздно", queued=True))
+    assert acks_of(env, "rc_q10")[-1][0] == "rejected"
+    with storage.db() as conn:
+        assert conn.execute("SELECT count(*) FROM queued_requests").fetchone()[0] == 1
+    # не наш чат или старое приложение без очереди
+    env.control.bind(hooks(env, calls))
+    await env.control.execute(command("message", key, "rc_q7", text="Текст", queued=True))
+    assert acks_of(env, "rc_q7")[-1] == ("rejected", "Очередь недоступна")
+
+
+@pytest.mark.asyncio
+async def test_running_queued_item_is_not_closed_before_turn_starts(env, phone_queue):
+    key = share(env)
+    await deliver(env.control)
+    await env.control.execute(command("message", key, "rc_q8", text="Текст", queued=True))
+    with storage.db() as conn:
+        conn.execute("UPDATE queued_requests SET status='running'")
+    await settled(env)
+    assert acks_of(env, "rc_q8") == [("accepted", "")]
+    # ход так и не начался, приложение перезапустилось
+    with storage.db() as conn:
+        conn.execute("UPDATE queued_requests SET status='failed'")
+    await settled(env)
+    assert acks_of(env, "rc_q8")[-1][0] == "rejected"
+
+
+def test_window_queue_hook_respects_pause_and_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "remote-queue.sqlite3")
+    from koddi.agents.queue import request_queue
+    from koddi.api import create_app
+    from koddi.remote_control import remote_control
+
+    monkeypatch.setattr(api, "call", FakeServer().call)
+    with TestClient(create_app()) as client:
+        chat = client.post("/api/chats", json={"title": "Локальный"}).json()["id"]
+        monkeypatch.setattr(request_queue, "wake", lambda chat_id: None)
+        hook = remote_control.hooks
+        # пауза от прошлой остановки: очередь пуста, новое сообщение её снимает
+        request_queue.pause(chat)
+        hook.enqueue(chat, "Первое", "rc_h1")
+        state = request_queue.snapshot(chat)
+        assert state["paused"] is False and [item["content"] for item in state["items"]] == ["Первое"]
+        with storage.db() as conn:
+            payload = json.loads(conn.execute("SELECT payload_json FROM queued_requests").fetchone()[0])
+        assert payload["remote_command"] == "rc_h1" and payload["mode"]
+        # очередь остановили на компьютере, в ней ещё есть запросы
+        request_queue.add(chat, {"content": "С компьютера"}, str(uuid.uuid4()))
+        request_queue.pause(chat)
+        with pytest.raises(HTTPException) as refused:
+            hook.enqueue(chat, "Второе", "rc_h2")
+        assert refused.value.status_code == 409
+        hook.cancel_queued(chat, "rc_h1")
+        assert [item["content"] for item in request_queue.snapshot(chat)["items"]] == ["С компьютера"]
+        # уже начатое убрать нельзя, ошибки наружу нет
+        hook.cancel_queued(chat, "rc_unknown")
+
+
+@pytest.mark.asyncio
+async def test_queue_turn_does_not_take_waiting_command(env, phone_queue):
+    env.control.loop = asyncio.get_running_loop()
+    share(env)
+    env.control.commands[env.chat] = {"id": "rc_plain", "request_uuid": ""}
+    env.control.queue_turns.add(env.chat)
+    env.control.on_run(FakeRun(env.chat, []))
+    assert env.control.commands[env.chat]["id"] == "rc_plain"
+    env.control.queue_turns.discard(env.chat)
+    env.control.on_run(FakeRun(env.chat, []))
+    assert env.chat not in env.control.commands
+    for task in env.control.mirrors.values():
+        task.cancel()
+    await asyncio.gather(*env.control.mirrors.values(), return_exceptions=True)
+
+
+# неделя, режимы и файлы
+def old_chat(days: int, title: str = "Старый") -> int:
+    chat = insert("INSERT INTO chats(title, mode, owner_id) VALUES (?, 'development', '__test__')", title)
+    moment = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    insert("INSERT INTO messages(chat_id, role, content, created_at) VALUES (?, 'user', 'привет', ?)", chat, moment)
+    return chat
+
+
+@pytest.mark.asyncio
+async def test_only_chats_active_this_week_are_shared(env):
+    fresh, stale = old_chat(2, "Свежий"), old_chat(30, "Давний")
+    # переименование двигает updated_at, но работой не считается
+    with storage.db() as conn:
+        conn.execute("UPDATE chats SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (stale,))
+    await env.control.sync_sessions()
+    assert (outbox.session(fresh) or {}).get("session_key")
+    assert outbox.session(stale) is None
+    await deliver(env.control)
+    bodies = [body for method, path, body in env.server.calls if method == "PUT" and "sessions" in path]
+    sent = [body for body in bodies if body and body.get("title") == "Свежий"]
+    assert sent and sent[0]["last_active_at"].startswith((datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d"))
+    assert sent[0]["controls"]["permission"] and sent[0]["controls"]["reasoning"] in {"light", "pro", "max"}
+    # новая работа возвращает чат на телефон, явное «поделиться» - тоже
+    assert env.control.share(stale, reshare=True) is True
+
+
+@pytest.mark.asyncio
+async def test_phone_changes_modes_through_hook(env):
+    seen = []
+
+    async def change_settings(chat_id, payload):
+        seen.append((chat_id, payload))
+        if payload.get("reasoning") == "max":
+            raise HTTPException(409, "Режим можно сменить, когда агент закончит работу")
+
+    calls = []
+    base = hooks(env, calls)
+    env.control.bind(Hooks(base.start_turn, base.cancel_turn, base.respond, base.create_chat, None, None, change_settings))
+    key = share(env)
+    await deliver(env.control)
+    assert await env.control.run_command(command("settings", key, "rc_s1", permission="ask")) == ("done", "")
+    assert seen == [(env.chat, {"permission": "ask"})]
+    await env.control.execute(command("settings", key, "rc_s2", reasoning="max"))
+    acks = [body for method, path, body in env.server.calls if method == "POST" and path[-1] == "rc_s2"]
+    assert acks[-1]["status"] == "rejected" and "закончит" in acks[-1]["error"]
+    # чат не открыт для телефона: команда не применяется
+    assert (await env.control.run_command(command("settings", "чужой", "rc_s3", permission="full")))[0] == "rejected"
+    assert len(seen) == 2
+    # старые привязки без хука отказывают понятно
+    env.control.bind(base)
+    assert (await env.control.run_command(command("settings", key, "rc_s4", permission="ask")))[0] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_phone_files_become_attachments(env, monkeypatch):
+    started = []
+
+    async def start_turn(chat_id, text, attachment_ids=None):
+        started.append((text, attachment_ids))
+
+    async def command_file(host, command_id, index):
+        return b"\x89PNG\r\n\x1a\n" + bytes([index])
+
+    monkeypatch.setattr(api, "command_file", command_file)
+    calls = []
+    base = hooks(env, calls)
+    env.control.bind(Hooks(start_turn, base.cancel_turn, base.respond, base.create_chat))
+    key = share(env)
+    await deliver(env.control)
+    files = [{"index": 0, "name": "a.png"}, {"index": 1, "name": "../b.png"}]
+    status = await env.control.run_command(command("message", key, "rc_f1", text="Посмотри", attachments=files))
+    assert status == ("accepted", "")
+    text, ids = started[0]
+    assert text == "Посмотри" and len(ids) == 2
+    with storage.db() as conn:
+        names = [row["original_name"] for row in conn.execute("SELECT original_name FROM attachments WHERE chat_id=? ORDER BY id", (env.chat,))]
+    assert names == ["a.png", "b.png"]
+    # неподдерживаемый тип и сбой сети: ход не начинается, причина уходит на телефон
+    started.clear()
+    status = await env.control.run_command(command("message", key, "rc_f2", text="т", attachments=[{"index": 0, "name": "a.exe"}]))
+    assert status[0] == "rejected" and started == []
+
+    async def broken(host, command_id, index):
+        raise RemoteFailure(502, "upstream_unavailable", "Нет связи")
+
+    monkeypatch.setattr(api, "command_file", broken)
+    status = await env.control.run_command(command("message", key, "rc_f3", text="т", attachments=[{"index": 0, "name": "a.png"}]))
+    assert status[0] == "rejected" and "a.png" in status[1] and started == []
+
+    # обрыв на втором файле: первый не остаётся в чате без сообщения
+    async def second_breaks(host, command_id, index):
+        if index:
+            raise RemoteFailure(502, "upstream_unavailable", "Нет связи")
+        return b"\x89PNG\r\n\x1a\n"
+
+    monkeypatch.setattr(api, "command_file", second_breaks)
+    with storage.db() as conn:
+        before = conn.execute("SELECT count(*) FROM attachments").fetchone()[0]
+    status = await env.control.run_command(command("message", key, "rc_f4", text="т", attachments=files))
+    with storage.db() as conn:
+        assert status[0] == "rejected" and conn.execute("SELECT count(*) FROM attachments").fetchone()[0] == before
+
+
+@pytest.mark.asyncio
+async def test_window_files_go_to_phone_once_and_big_ones_stay(env, monkeypatch, tmp_path):
+    sent = []
+
+    async def message_file(host, key, client_id, fields, content):
+        sent.append((client_id, fields, content))
+        return {}
+
+    monkeypatch.setattr(api, "message_file", message_file)
+    def stored(name, data, size=None):
+        path = tmp_path / name
+        path.write_bytes(data)
+        return insert(
+            "INSERT INTO attachments(chat_id, original_name, stored_path, media_type, size_bytes, sha256, created_at, owner_id) "
+            "VALUES (?, ?, ?, 'image/png', ?, 'x', CURRENT_TIMESTAMP, '__test__')",
+            env.chat, name, str(path), size if size is not None else len(data))
+
+    small, big, secret, foreign = stored("a.png", b"png"), stored("b.png", b"big", 50 * 1024 * 1024), stored(".env", b"KEY=1"), stored("c.png", b"c")
+    message = insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'user', 'смотри', ?)",
+                     env.chat, json.dumps({"attachment_ids": [small, big, secret, 999999, "x"]}))
+    phone = insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'user', 'с телефона', ?)",
+                   env.chat, json.dumps({"attachment_ids": [foreign], "origin": "remote"}))
+    key = share(env)
+    await deliver(env.control)
+    assert [(item[0], item[1]["attachment_id"], item[2]) for item in sent] == [(f"m{message}", f"a{small}", b"png"), (f"m{message}", f"a{big}", None)]
+    # повторная сверка файлы не перечитывает; сообщение с телефона сервер уже хранит
+    env.control.upload_attachments(env.chat, key)
+    env.control.share(env.chat)
+    await deliver(env.control)
+    assert len(sent) == 2 and phone
+
+
+@pytest.mark.asyncio
+async def test_window_file_survives_lost_session_and_skips_lost_message(env, monkeypatch, tmp_path):
+    answers = [RemoteFailure(404, "session_not_found", "Нет сессии"), {}]
+    sent = []
+
+    async def message_file(host, key, client_id, fields, content):
+        sent.append(client_id)
+        answer = answers.pop(0)
+        if isinstance(answer, RemoteFailure):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(api, "message_file", message_file)
+    path = tmp_path / "a.png"
+    path.write_bytes(b"png")
+    attachment = insert(
+        "INSERT INTO attachments(chat_id, original_name, stored_path, media_type, size_bytes, sha256, created_at, owner_id) "
+        "VALUES (?, 'a.png', ?, 'image/png', 3, 'x', CURRENT_TIMESTAMP, '__test__')", env.chat, str(path))
+    insert("INSERT INTO messages(chat_id, role, content, metadata_json) VALUES (?, 'user', 'смотри', ?)",
+           env.chat, json.dumps({"attachment_ids": [attachment]}))
+    key = share(env)
+    # сервер забыл сессию: чат регистрируется заново, файл уходит следующей попыткой
+    await deliver(env.control)
+    await deliver(env.control)
+    assert len(sent) == 2 and not answers
+    # сообщения на сервере нет и не появится: строка снимается, очередь не крутится
+    second = insert(
+        "INSERT INTO attachments(chat_id, original_name, stored_path, media_type, size_bytes, sha256, created_at, owner_id) "
+        "VALUES (?, 'b.png', ?, 'image/png', 3, 'x', CURRENT_TIMESTAMP, '__test__')", env.chat, str(path))
+    answers.append(RemoteFailure(404, "message_not_found", "Нет сообщения"))
+    outbox.put(key, "attachment", {"client_id": "m999", "attachment": second, "name": "b.png", "media_type": "image/png", "size": 3})
+    await deliver(env.control)
+    await deliver(env.control)
+    assert len(sent) == 3
+
+
+@pytest.mark.asyncio
+async def test_controls_follow_changes_on_computer(env):
+    key = share(env)
+    await deliver(env.control)
+    env.server.calls.clear()
+    env.control.publish_controls()
+    await deliver(env.control)
+    puts = [body for method, path, body in env.server.calls if method == "PUT" and key in path]
+    assert puts and set(puts[-1]) == {"controls"}
+    # выключенный доступ ничего не отправляет
+    env.control._enabled = False
+    env.server.calls.clear()
+    env.control.publish_controls(env.chat)
+    env.control._enabled = True
+    await deliver(env.control)
+    assert not [1 for method, path, body in env.server.calls if method == "PUT" and key in path]
+
+
+def test_window_hook_changes_modes_with_same_checks(tmp_path, monkeypatch):
+    """Команда с телефона проходит те же проверки, что выбор в поле ввода."""
+    monkeypatch.setenv("KODDI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KODDI_INTERNAL_TEST", "1")
+    from koddi.agents.runs import agent_runs
+    from koddi.api.app import create_app
+    from koddi.policy.grants import permission_profile
+    from koddi.remote_control import remote_control
+
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "koddi.sqlite3")
+    with TestClient(create_app()) as client:
+        chat = client.post("/api/chats", json={"title": "Телефон"}).json()["id"]
+        change = remote_control.hooks.change_settings
+        asyncio.run(change(chat, {"permission": "trusted"}))
+        assert permission_profile() == "trusted"
+        with pytest.raises(HTTPException) as refused:
+            asyncio.run(change(chat, {"permission": "full"}))
+        assert refused.value.status_code == 422 and permission_profile() == "trusted"
+        monkeypatch.setattr(agent_runs, "active", lambda chat_id: True)
+        with pytest.raises(HTTPException) as busy:
+            asyncio.run(change(chat, {"reasoning": "max"}))
+        assert busy.value.status_code == 409
+        # «Только чтение» с телефона не снимается
+        monkeypatch.setattr(agent_runs, "active", lambda chat_id: False)
+        client.put("/api/settings", json={"permission_profile": "read-only"}).raise_for_status()
+        with pytest.raises(HTTPException) as locked:
+            asyncio.run(change(chat, {"permission": "trusted"}))
+        assert locked.value.status_code == 409 and permission_profile() == "read-only"
+
+
+@pytest.mark.asyncio
+async def test_phone_sees_question_options_output_and_subagent(env, monkeypatch):
+    key = share(env)
+    monkeypatch.setattr("koddi.remote_control.mirror.OUTPUT_SECONDS", 0)
+    monkeypatch.setattr("koddi.remote_control.mirror.WAIT_STATUS_SECONDS", 0)
+    delegate = {"id": "d1", "name": "task.delegate", "arguments": {"agent": "explore", "title": "где вход", "task": "Найди"}}
+    command_call = {"id": "c1", "name": "shell.run", "arguments": {"command": "npm test"}}
+    turn = turn_rows(env.chat)
+    items = [
+        ("turn.started", {"turn_id": turn[0]}),
+        ("agent.input_required", {"id": 1, "kind": "question", "questions": [{"question": "Какой режим?", "multi_select": True, "options": [
+            {"label": "Разработка", "description": ""}, {"label": "Продакшен", "description": "сжатый код"}]}]}),
+        ("agent.input_required", {"id": 2, "kind": "question", "questions": [
+            {"question": "Первый?", "options": [{"label": "Да"}]}, {"question": "Второй?", "options": []}]}),
+        ("tool.call", delegate),
+        ("task.progress", {"call_id": "d1", "title": "где вход", "agent": "explore", "event": "tool", "name": "file.read", "arguments": {"path": "src/a.ts"}}),
+        ("task.progress", {"call_id": "d1", "title": "где вход", "agent": "explore", "event": "tool", "name": "file.read", "arguments": {"path": "src/b.ts"}}),
+        ("tool.result", {**delegate, "result": {"ok": True, "summary": "Вход в src/main.ts"}}),
+        ("tool.call", command_call),
+        ("tool.output", {"id": "c1", "text": "тест 1 прошёл\n"}),
+        ("tool.result", {**command_call, "result": {"ok": True, "stdout": "всё прошло"}}),
+        ("message.delta", {"message_id": 5, "content": "Успел написать"}),
+        ("turn.failed", {"error": "Сбой"}),
+    ]
+    await Mirror(env.control, FakeRun(env.chat, items), key, env.workspace).follow()
+    await deliver(env.control)
+    events = env.server.events[key]
+    questions = [item for item in events if item["kind"] == "question_request"]
+    assert [option["label"] for option in questions[0]["data"]["options"]] == ["Разработка", "Продакшен"] and questions[0]["data"]["multiple"] is True
+    assert "1. Первый? (варианты: Да)" in questions[1]["text"] and "2. Второй?" in questions[1]["text"]
+    cards = [item["data"] for item in events if item["kind"] == "action"]
+    assert any(card["tool"] == "task.delegate" and card.get("target") == "explore · где вход" and card["state"] == "running" for card in cards)
+    assert any(card["tool"] == "task.delegate" and card.get("preview") == "Вход в src/main.ts" for card in cards)
+    assert any(card["tool"] == "shell.run" and card["state"] == "running" and "тест 1" in card.get("preview", "") for card in cards)
+    statuses = [item["text"] for item in events if item["kind"] == "status"]
+    assert any("где вход" in text and "src/b.ts" in text and "шагов: 2" in text for text in statuses), statuses
+    # при сбое то, что агент успел написать, не теряется
+    assert any(item["content"] == "Успел написать" for item in env.server.messages[key].values())
+
+
+def test_long_message_is_marked_as_cut(env):
+    from koddi.remote_control.bridge import CUT_NOTE
+    from koddi.remote_control.redact import MESSAGE_CHARS
+
+    key = share(env)
+    assert env.control.upload_message(key, "m9", "user", "ж" * (MESSAGE_CHARS + 50), None)
+    body = [row["body"] for row in outbox.pending() if row["kind"] == "message" and row["body"]["client_id"] == "m9"][0]
+    assert body["content"].endswith(CUT_NOTE) and len(body["content"]) <= MESSAGE_CHARS
+
+
+@pytest.mark.asyncio
+async def test_account_change_forgets_running_work(env):
+    control = env.control
+    control.commands[env.chat] = {"id": "rc_old"}
+    control._reads["sess"] = 5
+    task = asyncio.create_task(asyncio.sleep(60))
+    control.mirrors[env.chat] = task
+    control.adopt_account("другой")
+    await asyncio.sleep(0)
+    assert task.cancelled() and not control.commands and not control.mirrors and not control._reads
+    # новому аккаунту файлы и отметки прошлого не мешают
+    insert("INSERT INTO remote_attachments_sent(attachment_id) VALUES (1)")
+    control._read_sent["sess"] = 1
+    control.adopt_account("третий")
+    with storage.db() as conn:
+        assert conn.execute("SELECT count(*) FROM remote_attachments_sent").fetchone()[0] == 0
+    assert not control._read_sent

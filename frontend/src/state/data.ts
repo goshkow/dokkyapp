@@ -12,6 +12,10 @@ import { applyAppearance, ui, type Scope } from './ui';
 
 export interface DataState {
   booted: boolean;
+  /** Локальный сервер не ответил при запуске: на экране причина и «Повторить». */
+  bootFailed: string;
+  /** Почему человек снова на экране входа: сессия закончилась, вход не завершился. */
+  authNotice: string;
   account: Account | null;
   settings: AppSettings;
   projects: Project[];
@@ -32,6 +36,8 @@ const SCOPE_KEY = 'koddi-product-scope';
 
 export const data = createStore<DataState>({
   booted: false,
+  bootFailed: '',
+  authNotice: '',
   account: null,
   settings: defaultSettings,
   projects: [],
@@ -163,7 +169,8 @@ export const storedScope = (): Scope | null => {
 };
 
 /* вход и выход */
-export function revoke(): void {
+export function revoke(notice = 'Сессия закончилась. Войдите снова.'): void {
+  const signedIn = data.get().account?.authenticated === true;
   resetLimits();
   cacheClear();
   setCacheOwner('');
@@ -173,6 +180,7 @@ export function revoke(): void {
     cloudChats: [],
     cloudNext: null,
     loginBusy: false,
+    authNotice: signedIn ? notice : '',
   });
 }
 setUnauthorizedHandler(() => revoke());
@@ -187,18 +195,19 @@ let loginAttempt = 0;
  * Одна попытка входа живёт 10 минут: сервер выдаёт короткую ссылку, приложение ждёт ответа браузера.
  * Под кнопкой статуса нет: истёкшая попытка просто возвращает «Войти», настоящая ошибка приходит уведомлением.
  */
+const LOGIN_EXPIRED = 'Время входа вышло. Нажмите «Войти» ещё раз.';
+
 export async function login(): Promise<void> {
   const attempt = ++loginAttempt;
   clearTimeout(loginTimer);
-  data.set({ loginBusy: true });
+  data.set({ loginBusy: true, authNotice: '' });
   let flow: { authorize_url: string; expires_in?: number };
   try {
     flow = await post<{ authorize_url: string; expires_in?: number }>('/api/dokky/auth/start');
   } catch (error) {
     // ошибка выдачи ссылки: браузер не открывается
     if (attempt === loginAttempt) {
-      data.set({ loginBusy: false });
-      notify((error as Error).message || 'Не удалось начать вход', true);
+      data.set({ loginBusy: false, authNotice: (error as Error).message || 'Не удалось начать вход' });
     }
     return;
   }
@@ -209,8 +218,7 @@ export async function login(): Promise<void> {
   const deadline = Date.now() + (flow.expires_in || LOGIN_SECONDS) * 1000 + 5000;
   const finish = (error = ''): void => {
     if (attempt !== loginAttempt) return;
-    data.set({ loginBusy: false });
-    if (error) notify(error, true);
+    data.set({ loginBusy: false, authNotice: error });
   };
   const poll = async (): Promise<void> => {
     if (attempt !== loginAttempt) return;
@@ -224,11 +232,12 @@ export async function login(): Promise<void> {
         finish();
         return;
       }
-      if (value.status === 'expired' || value.status === 'invalid' || value.status === 'idle') return finish();
+      if (value.status === 'idle') return finish();
+      if (value.status === 'expired' || value.status === 'invalid') return finish(LOGIN_EXPIRED);
       if (value.status === 'denied' || value.status === 'error') return finish(value.message || 'Не удалось войти');
       if (Date.now() > deadline) {
         await post('/api/dokky/auth/cancel').catch(() => undefined);
-        return finish();
+        return finish(LOGIN_EXPIRED);
       }
       loginTimer = window.setTimeout(() => void poll(), 1000);
     } catch (error) {
@@ -248,7 +257,7 @@ export async function cancelLogin(): Promise<void> {
 
 export async function logout(): Promise<void> {
   await post('/api/dokky/logout');
-  revoke();
+  revoke('');
 }
 
 /** Перечитывает bootstrap и сессию: когда план сменился, вместе с ним меняются модели и возможности аккаунта. */
@@ -258,24 +267,37 @@ export async function refreshAccount(): Promise<void> {
   data.set({ account: await api<Account>('/api/dokky/session') });
 }
 
-/** Первичная загрузка: сессия, режим, настройки и списки. */
+const failureText = (error: unknown): string => (error as Error)?.message || 'Не удалось загрузить данные';
+
+/** Первичная загрузка: сессия, режим, настройки и списки. Сама не падает: экран всегда показывает, что делать дальше. */
 export async function bootApp(): Promise<void> {
-  const account = await api<Account>('/api/dokky/session');
-  data.set({ account });
-  const scope: Scope = storedScope() ?? (account.internal_test ? 'development' : 'chat');
-  setScope(scope);
-  let current = account;
-  if (account.authenticated) {
-    await post('/api/dokky/bootstrap');
-    current = await api<Account>('/api/dokky/session');
-    data.set({ account: current });
-  }
-  if (isReady(current)) {
-    await loadLocal();
-    applySettings(data.get().settings, !data.get().booted);
-    if (scope !== 'development' && current.authenticated) await loadCloud();
+  data.set({ bootFailed: '' });
+  try {
+    const account = await api<Account>('/api/dokky/session');
+    data.set({ account });
+    const scope: Scope = storedScope() ?? (account.internal_test ? 'development' : 'chat');
+    setScope(scope);
+    let current = account;
+    if (account.authenticated) {
+      try {
+        await post('/api/dokky/bootstrap');
+        current = await api<Account>('/api/dokky/session');
+        data.set({ account: current });
+      } catch (error) {
+        // сайт недоступен: локальные чаты и режим кода работают и без него. Отказ в сессии (401) уже закрыл вход
+        current = data.get().account ?? account;
+        if (current.authenticated) notify(failureText(error), true);
+      }
+    }
+    if (isReady(current)) {
+      await loadLocal();
+      applySettings(data.get().settings, !data.get().booted);
+      if (scope !== 'development' && current.authenticated) await loadCloud().catch((error: unknown) => notify(failureText(error), true));
+    }
+    // лимиты ждут в меню аккаунта заранее, а не грузятся после открытия
+    if (data.get().account?.authenticated) void loadLimits();
+  } catch (error) {
+    data.set({ bootFailed: failureText(error) });
   }
   data.set({ booted: true });
-  // лимиты ждут в меню аккаунта заранее, а не грузятся после открытия
-  if (current.authenticated) void loadLimits();
 }

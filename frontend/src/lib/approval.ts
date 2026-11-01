@@ -11,7 +11,7 @@ const labels: Record<string, string> = {
   'file.move': 'Переместить файл', 'file.copy': 'Скопировать файл', 'file.restore': 'Восстановить файлы',
   'patch.apply': 'Применить изменения к файлам', 'patch.preview': 'Проверить изменения файлов',
   'workspace.open': 'Открыть рабочую папку', 'workspace.create': 'Создать рабочую папку',
-  'workspace.snapshot': 'Сохранить резервную копию проекта', 'mcp.tools_list': 'Подключить внешние инструменты',
+  'agent.continue': 'продолжить работу', 'workspace.snapshot': 'Сохранить резервную копию проекта', 'mcp.tools_list': 'Подключить внешние инструменты',
   'mcp.tool_call': 'Выполнить действие внешнего инструмента', 'process.kill': 'Остановить процесс',
   'git.commit': 'Создать коммит', 'git.add': 'Подготовить файлы к коммиту', 'git.checkout': 'Переключить ветку',
   'git.restore_file': 'Восстановить файл из Git', 'git.create_branch': 'Создать ветку',

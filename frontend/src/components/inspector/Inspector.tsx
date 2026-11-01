@@ -1,11 +1,11 @@
 import {
-  ChevronDown, ChevronRight, Eye, FileCode2, Folder, FolderGit2, Files, Gauge, GitCompare, Globe, History, ListChecks, Code2, Network, ShieldCheck, Save, Undo2, X, type LucideIcon,
+  ChevronDown, ChevronRight, ExternalLink, Eye, FileCode2, Folder, FolderGit2, Files, Gauge, GitCompare, Globe, History, ListChecks, Code2, Network, ShieldCheck, Save, Undo2, X, type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { changeDiffModel, diffStats, pruneDiffCache, type DiffFile } from '../../lib/diff';
 import { compactPath } from '../../lib/format';
 import { permissionLabel } from '../../lib/permissions';
-import { restoreTurn, rollbackChange, selectChange } from '../../state/remote';
+import { restoreTurn, rollbackChange, rollbackHunk, selectChange } from '../../state/remote';
 import { useChat } from '../../state/chatCore';
 import { data, useData } from '../../state/data';
 import { guarded } from '../../state/overlay';
@@ -13,9 +13,11 @@ import { setPanel } from '../../state/panels';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
 import {
-  collapseFocus, editFile, loadFiles, openFile, previewFile, saveFile, selectInspector, showAllFiles, toggleOverview, useWorkspace, type Focus,
+  collapseFocus, editFile, loadFiles, openFile, openInEditor, previewFile, saveFile, selectInspector, showAllFiles, toggleOverview, useWorkspace, type Focus,
 } from '../../state/workspace';
 import { DiffView } from '../chat/DiffView';
+import { GitCommit } from './GitCommit';
+import { MissingFolder, useFolderMissing } from './MissingFolder';
 import { Markdown } from '../chat/Markdown';
 import { PlanList } from '../chat/Plan';
 import { currentReasoningMode } from '../../state/codingSession';
@@ -88,11 +90,14 @@ function Changes() {
     if (!next.delete(key)) next.add(key);
     return next;
   });
-  if (!entries.length) return <section id="turn"><div id="change-summary" className="change-summary">Изменений пока нет</div></section>;
+  if (!entries.length) return <section id="turn"><div id="change-summary" className="change-summary">Изменений пока нет</div><GitCommit /></section>;
   const current = entries.find((entry) => entry.key === selection) ?? (entries[0] as (typeof entries)[number]);
   const rolled = current.change.status === 'rolled_back';
   const turnId = current.change.turn_id ?? null;
   const turnSets = turnId == null ? 0 : changes.filter((change) => change.turn_id === turnId && change.status !== 'rolled_back').length;
+  // редактор открывается на первой изменённой строке; удалённый файл открыть нельзя
+  const firstLine = current.file.hunks.flatMap((hunk) => hunk.rows).find((row) => row.kind === 'added')?.fresh ?? null;
+  const editable = current.file.hunks.length > 0 && current.file.newPath !== '/dev/null';
   return (
     <section id="turn">
       <div id="change-summary" className="change-summary">
@@ -120,7 +125,7 @@ function Changes() {
                 <small className="positive">+{entry.file.added}</small>
                 <small className="danger">−{entry.file.removed}</small>
               </button>
-              {open && <DiffView files={[entry.file]} id={entry.key} bare />}
+              {open && <DiffView files={[entry.file]} id={entry.key} bare onRevert={entry.change.status === 'rolled_back' ? undefined : guarded((file: DiffFile, hunk: string) => rollbackHunk(entry.change.id, file.path, hunk))} />}
             </div>
           );
         })}
@@ -146,19 +151,28 @@ function Changes() {
             <History aria-hidden="true" /><span>Откатить весь ход</span>
           </button>
         )}
+        {editable && !rolled && (
+          <button type="button" className="secondary" title={`Открыть ${current.file.path} в редакторе`} onClick={guarded(() => openInEditor(current.file.path, firstLine))}>
+            <ExternalLink aria-hidden="true" /><span>В редакторе</span>
+          </button>
+        )}
       </div>
+      <GitCommit />
     </section>
   );
 }
 
 function FilesCard() {
   const project = useView((s) => s.project);
+  const missing = useFolderMissing(project);
   const tree = useWorkspace((s) => s.tree);
   const editor = useWorkspace((s) => s.editor);
   const folder = useWorkspace((s) => s.folder);
   const files = folder ? tree.files.filter((path) => path.startsWith(`${folder}/`)) : tree.files;
   const body = !project ? (
     <div className="empty-list"><FolderGit2 size={24} aria-hidden="true" /><h3>Проект не выбран</h3></div>
+  ) : missing ? (
+    <MissingFolder project={project} />
   ) : tree.state === 'loading' ? (
     <div className="skeleton file-skeleton" />
   ) : tree.state === 'failed' ? (
@@ -194,6 +208,7 @@ function FilesCard() {
                 <button type="button" className="icon-button" title="Предпросмотр" aria-label="Предпросмотр" aria-pressed={editor.preview} onClick={() => previewFile(true)}><Eye aria-hidden="true" /></button>
               </div>
             )}
+            <button type="button" className="icon-button" title="Открыть в редакторе" aria-label="Открыть в редакторе" onClick={guarded(() => openInEditor(editor.path))}><ExternalLink aria-hidden="true" /></button>
             <button type="button" className="icon-button" title="Сохранить файл" aria-label="Сохранить файл" disabled={editor.readOnly || editor.saving} onClick={guarded(saveFile)}><Save aria-hidden="true" /></button>
           </div>
           <textarea className="file-editor" spellCheck={false} aria-label="Содержимое файла" value={editor.content} readOnly={editor.readOnly} hidden={editor.preview} onChange={(event) => editFile(event.target.value)} />

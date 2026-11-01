@@ -6,17 +6,23 @@ import os
 from koddi.storage.db import db
 
 
-def retrieve_memory(project_id: int | None, query: str = "", limit: int = 12) -> list[dict]:
+def retrieve_memory(project_id: int | None, query: str = "", limit: int = 12, *, whole: bool = False) -> list[dict]:
     """Память изолирована по владельцу и проекту; глобальные заметки принадлежат тому же владельцу."""
     limit = max(1, min(50, limit))
     terms = list(dict.fromkeys(re.findall(r"[^\W_]{3,}", query.casefold())))[:12]
+    from koddi.agents.profile_memory import enabled
     from koddi.policy.account import local_owner
 
     owner = local_owner()
+    if not enabled(owner):
+        return []
     legacy = "" if os.getenv("KODDI_INTERNAL_TEST") == "1" else owner
     with db() as conn:
         # сведения о пользователе и проекте идут в контекст целиком (memory_context), поиск - только по заметкам
-        scope = "(m.project_id=? OR m.project_id IS NULL) AND m.owner_id IN (?,?) AND m.kind NOT IN ('user','project')"
+        # а memory.get ищет по всей памяти: в контекст попадают не все пункты, если их много
+        scope = "(m.project_id=? OR m.project_id IS NULL) AND m.owner_id IN (?,?)"
+        if not whole:
+            scope += " AND m.kind NOT IN ('user','project')"
         rows = []
         if terms:
             match = " OR ".join('"' + term + '"' for term in terms)

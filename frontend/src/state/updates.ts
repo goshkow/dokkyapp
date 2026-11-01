@@ -58,8 +58,21 @@ export function updateNotice(state: UpdateState | null): UpdateNotice | null {
   }
 }
 
+let follow: ReturnType<typeof setInterval> | null = null;
+/** Пока качается и готовится, состояние ещё и перечитывается: событие шины может потеряться, а проценты должны идти. */
+function watch(status: UpdateStatus): void {
+  const busy = status === 'downloading' || status === 'preparing';
+  if (busy && follow === null) follow = setInterval(() => { void loadUpdates().catch(() => undefined); }, 1000);
+  if (!busy && follow !== null) {
+    clearInterval(follow);
+    follow = null;
+  }
+}
+
 export function applyUpdateState(value: unknown): void {
-  if (value && typeof value === 'object' && 'status' in value) updates.set({ value: value as UpdateState });
+  if (!value || typeof value !== 'object' || !('status' in value)) return;
+  updates.set({ value: value as UpdateState });
+  watch((value as UpdateState).status);
 }
 
 export async function loadUpdates(): Promise<void> {

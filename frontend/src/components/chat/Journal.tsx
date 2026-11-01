@@ -5,11 +5,15 @@ import {
   actionText, conciseStatus, duration, journalDuration, journalLiveLabel, journalSegments, journalSummary, journalTime, orderedJournalEntries,
   type ActionEvent, type JournalBlock, type JournalEntry, type Message, type MessageMeta,
 } from '../../lib/journal';
-import { useChat } from '../../state/chatCore';
+import { ApiError, post } from '../../lib/api';
+import { currentChatId, useChat } from '../../state/chatCore';
+import { terminalTail, useCommandOutput } from '../../state/commandOutput';
+import { useSubagentRun } from '../../state/subagents';
+import { Markdown } from './Markdown';
 import { Disclosure } from '../ui/Disclosure';
 import { openFile } from '../../state/workspaceRemote';
 import { useView } from '../../state/view';
-import { guarded } from '../../state/overlay';
+import { guarded, notify } from '../../state/overlay';
 import { AssistantBody } from './MessageBody';
 import { changeDiffModel } from '../../lib/diff';
 import { DiffView } from './DiffView';
@@ -32,6 +36,58 @@ function useElapsed(startedAt: number, active: boolean): string {
   return peak.current >= 0 ? duration(peak.current) : '';
 }
 
+// команды, вывод которых идёт в ленту вживую (все они исполняются через shell.run)
+const COMMAND_TOOLS = new Set(['shell.run', 'test.run', 'build.run', 'lint.run', 'format.run']);
+
+/** Идущая команда: хвост вывода, как в терминале, и остановка только её - ход агента продолжается. */
+export function CommandLive({ id }: { id: string }) {
+  const output = useCommandOutput(id);
+  const live = useChat((state) => state.running && !state.turnEnded);
+  const [stopping, setStopping] = useState(false);
+  const screen = useRef<HTMLPreElement>(null);
+  const tail = useMemo(() => terminalTail(output), [output]);
+  useLayoutEffect(() => {
+    const node = screen.current;
+    // прокрутка вниз только если человек не листает вывод выше
+    if (node && node.scrollHeight - node.scrollTop - node.clientHeight < 48) node.scrollTop = node.scrollHeight;
+  }, [tail]);
+  const stop = async () => {
+    setStopping(true);
+    try {
+      await post(`/api/chats/${currentChatId()}/tools/${encodeURIComponent(id)}/stop`);
+    } catch (error) {
+      // 404 - команда закончилась сама, пока человек нажимал
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setStopping(false);
+        notify((error as Error).message || 'Не удалось остановить команду', true);
+      }
+    }
+  };
+  if (!live) return null;
+  return (
+    <div className="command-live">
+      {tail && <pre ref={screen} className="command-screen" aria-live="off">{tail}</pre>}
+      <button type="button" className="command-stop" disabled={stopping} onClick={() => void stop()} title="Остановить эту команду, агент продолжит работу">
+        <span className="command-stop-mark" aria-hidden="true" />{stopping ? 'Останавливаю…' : 'Остановить'}
+      </button>
+    </div>
+  );
+}
+
+/** Идущий сабагент: его текущее действие одной тихой строкой, как у Claude Code. Свои шаги он ведёт в своём контексте. */
+export function SubagentLive({ id }: { id: string }) {
+  const run = useSubagentRun(id);
+  const live = useChat((state) => state.running && !state.turnEnded);
+  if (!live) return null;
+  const steps = run?.actions ?? 0;
+  return (
+    <p className="subagent-live">
+      {run?.last || 'Начинаю'}
+      {steps > 0 && <span> · шагов: {steps}</span>}
+    </p>
+  );
+}
+
 function ActionRow({ entry, canOpen }: { entry: JournalEntry; canOpen: boolean }) {
   const event = entry.event as ActionEvent;
   const result = event.data?.result;
@@ -42,6 +98,10 @@ function ActionRow({ entry, canOpen }: { entry: JournalEntry; canOpen: boolean }
   const pending = event.event === 'tool.call';
   const openable = Boolean(path && canOpen);
   const open = () => guarded(() => openFile(path as string))();
+  const command = COMMAND_TOOLS.has(String(event.data?.name ?? ''));
+  const delegated = event.data?.name === 'task.delegate';
+  const report = delegated && !pending && typeof result?.summary === 'string' ? result.summary.trim() : '';
+  const printed = command && !pending ? terminalTail([result?.stdout, result?.stderr].filter((part) => typeof part === 'string' && part.trim()).join('\n'), 400) : '';
   return (
     <div className="journal-action">
     <div
@@ -55,6 +115,16 @@ function ActionRow({ entry, canOpen }: { entry: JournalEntry; canOpen: boolean }
       <span>{actionText(event)}</span>
       {(result?.error || result?.reason) && <p className="error-detail">{result.error || result.reason}</p>}
     </div>
+    {command && pending && <CommandLive id={String(event.data?.id ?? '')} />}
+    {delegated && pending && <SubagentLive id={String(event.data?.id ?? '')} />}
+    {report && <details className="command-result">
+      <summary><ChevronRight size={14} aria-hidden="true" /><span>Отчёт агента</span></summary>
+      <Markdown text={report} className="message-body subagent-report" highlight={false} />
+    </details>}
+    {printed && <details className="command-result">
+      <summary><ChevronRight size={14} aria-hidden="true" /><span>Вывод команды</span></summary>
+      <pre className="command-screen">{printed}</pre>
+    </details>}
     {change && changed.length > 0 && <details className="journal-change" open={expanded} onToggle={(toggle) => setExpanded(toggle.currentTarget.open)}>
       <summary><ChevronRight size={14} aria-hidden="true" /><FileCode2 size={15} aria-hidden="true" /><span>{changed.length === 1 ? changed[0]?.path : `Изменено файлов: ${changed.length}`}</span><b className="positive">+{changed.reduce((sum, file) => sum + file.added, 0)}</b><b className="danger">−{changed.reduce((sum, file) => sum + file.removed, 0)}</b></summary>
       {expanded && <div className="journal-change-body"><DiffView files={changed} id={`change-${change.id}`} inline /></div>}

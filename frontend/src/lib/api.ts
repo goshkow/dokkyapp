@@ -13,6 +13,8 @@ export class ApiError extends Error {
   }
 }
 
+export const LOCAL_FAILURE = 'Докки не отвечает. Перезапустите приложение, если повтор не поможет.';
+
 let onUnauthorized: () => void = () => undefined;
 export const setUnauthorizedHandler = (handler: () => void) => { onUnauthorized = handler; };
 
@@ -26,14 +28,21 @@ const message = (detail: unknown, status: number): string => {
     const value = (detail as { message?: unknown }).message;
     if (typeof value === 'string') return value;
   }
-  return `Запрос не выполнен: ${status}`;
+  return status >= 500 ? 'Что-то пошло не так. Попробуйте ещё раз.' : 'Запрос не выполнен. Попробуйте ещё раз.';
 };
 
 /** JSON-запрос к локальному серверу приложения. */
 export async function api<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  const response = await fetch(path, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetch(path, { ...options, headers });
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    // до сайта запрос не дошёл бы и без интернета: не отвечает программа на этом компьютере
+    throw new ApiError(LOCAL_FAILURE, 0, 'local_unavailable');
+  }
   if (!response.ok) {
     if (response.status === 401) onUnauthorized();
     let detail: unknown;
@@ -50,7 +59,7 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}):
         retryAfter = typeof fields.retry_after_seconds === 'number' ? fields.retry_after_seconds : undefined;
       }
     } catch {
-      detail = `Ошибка HTTP ${response.status}`;
+      detail = undefined;
     }
     const failure = new ApiError(message(detail, response.status), response.status, code, { reason, retryAfter });
     if (code === 'plan_required') planRequiredHandler(failure);

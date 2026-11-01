@@ -10,6 +10,9 @@ import { useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { VoiceWave } from './VoiceWave';
 import { appendPastedText, pastedTextFile } from '../../lib/pastedText';
+import { promptHistory, rememberPrompt, stepHistory, type PromptScope } from '../../lib/promptHistory';
+import { findToken } from '../../lib/suggestToken';
+import { suggestActions } from '../../state/suggest';
 import { notify } from '../../state/overlay';
 
 const levelsFromMeter = (count: number): number[] => voiceMeter.get().levels.slice(0, count);
@@ -45,6 +48,11 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
   const transcribing = useField((s) => s.transcribing);
   const focus = useField((s) => s.focus);
   const menu = useFieldHost((s) => s.menu);
+  const suggestShown = useFieldHost((s) => s.suggest !== null);
+  const suggesting = useFieldHost((s) => s.suggest !== null && s.suggestCount > 0);
+  const suggestClosed = useFieldHost((s) => s.suggest === null);
+  const place = useFieldHost((s) => s.place);
+  const placeAt = useFieldHost((s) => s.placeAt);
   const prompt = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [text, setLocal] = useState(mirrored);
@@ -135,6 +143,36 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
     if (inflight.current.length > 64) inflight.current.shift();
     void fieldActions.setText(value);
   };
+  // номер запроса истории, который сейчас в поле; любой ввод с клавиатуры выходит из истории
+  const recall = useRef<number | null>(null);
+  const historyScope: PromptScope = site ? 'chat' : search ? 'search' : 'development';
+  // в историю идёт только то, что действительно уходит: пустое поле или закрытая страница сайта ничего не отправят
+  const remember = () => { recall.current = null; if (ready) rememberPrompt(historyScope, prompt.current?.value ?? text); };
+
+  // «/» и «@»: поле только сообщает набираемый токен, список и вставку ведёт главный вид (state/suggest.ts)
+  const announced = useRef('');
+  const dismissed = useRef('');
+  const announce = (value: string, caret: number | null) => {
+    const token = development && caret !== null ? findToken(value, caret) : null;
+    const key = token ? `${token.kind}${token.start}` : '';
+    // закрытое по Esc меню не открывается снова, пока человек не начнёт другой токен
+    if (dismissed.current !== key) dismissed.current = '';
+    const shown = token && !dismissed.current ? token : null;
+    const signature = shown ? JSON.stringify(shown) : '';
+    if (signature === announced.current) return;
+    announced.current = signature;
+    void suggestActions.set(shown);
+  };
+  useEffect(() => { if (suggestClosed) announced.current = ''; }, [suggestClosed]);
+  // после вставки из списка курсор встаёт сразу за вставленным, а не в конец поля
+  const placed = useRef(0);
+  useEffect(() => {
+    const field = prompt.current;
+    if (!place || place === placed.current || !field) return;
+    placed.current = place;
+    const at = Math.min(placeAt, field.value.length);
+    requestAnimationFrame(() => field.setSelectionRange(at, at));
+  }, [place, placeAt, text]);
 
   return (
     <div className="composer-field" data-field="live" data-multiline={String(multiline)}>
@@ -173,7 +211,8 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         data-auto-attach-paste={!search ? 'true' : undefined}
         value={text}
         disabled={transcribing}
-        onChange={(event) => change(event.target.value)}
+        onChange={(event) => { recall.current = null; change(event.target.value); announce(event.target.value, event.target.selectionStart); }}
+        onSelect={(event) => announce(event.currentTarget.value, event.currentTarget.selectionStart)}
         onPaste={(event) => {
           const pasted = [...event.clipboardData.files];
           if (pasted.length) { event.preventDefault(); void uploadFromField(pasted, !development); return; }
@@ -189,10 +228,57 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
           }
         }}
         onKeyDown={(event) => {
+          // открытый список подсказок забирает стрелки, Enter, Tab и Esc
+          if (suggestShown && !event.nativeEvent.isComposing && !event.altKey && !event.ctrlKey && !event.metaKey) {
+            if (suggesting && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+              event.preventDefault();
+              return void suggestActions.move(event.key === 'ArrowDown' ? 1 : -1);
+            }
+            if (suggesting && ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab')) {
+              event.preventDefault();
+              if (!event.repeat) void suggestActions.pick();
+              return;
+            }
+            if (event.key === 'Escape' && !event.shiftKey) {
+              event.preventDefault();
+              const token = findToken(event.currentTarget.value, event.currentTarget.selectionStart);
+              dismissed.current = token ? `${token.kind}${token.start}` : '';
+              announced.current = '';
+              return void suggestActions.set(null);
+            }
+          }
+          // как в Claude Code: Esc останавливает работу агента или запись; без них - прежний уход в меню (keyNav)
+          if (event.key === 'Escape' && !menu && !event.nativeEvent.isComposing && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+            if (recording) {
+              event.preventDefault();
+              return void fieldActions.cancelVoice();
+            }
+            if (showStop) {
+              event.preventDefault();
+              // удержание Esc не шлёт остановку десятки раз; сама остановка в главном виде ничего не отправит
+              if (!event.repeat && !stopping) void fieldActions.stop();
+              return;
+            }
+          }
+          // стрелка вверх в пустом поле - прошлые запросы, вниз - обратно; внутри многострочного текста стрелки двигают курсор
+          if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
+            const field = event.currentTarget;
+            const up = event.key === 'ArrowUp';
+            const edge = up ? !field.value.slice(0, field.selectionStart).includes('\n') : !field.value.slice(field.selectionEnd).includes('\n');
+            const step = edge && (field.value === '' || recall.current !== null) ? stepHistory(promptHistory(historyScope), recall.current, up ? -1 : 1) : null;
+            if (step) {
+              event.preventDefault();
+              change(step.text);
+              recall.current = step.index;
+              requestAnimationFrame(() => field.setSelectionRange(step.text.length, step.text.length));
+              return;
+            }
+          }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && (settings.enter_sends !== false || event.ctrlKey || event.metaKey)) {
             event.preventDefault();
             if (event.repeat) return;
             if (recording) return void fieldActions.stopVoice();
+            remember();
             // пока агент работает: Enter ставит запрос в очередь, Ctrl+Enter прерывает работу и отправляет сразу
             if (queueable && (event.ctrlKey || event.metaKey) && (settings.enter_sends !== false || event.shiftKey)) return void fieldActions.interrupt();
             void fieldActions.send();
@@ -209,10 +295,10 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
       <button id="voice" type="button" className={`composer-icon${recording ? ' recording' : ''}`} hidden={transcribing} title={recording ? 'Завершить запись и распознать' : 'Голосовой ввод'} aria-label={recording ? 'Завершить запись и распознать' : 'Голосовой ввод'} onClick={() => void fieldActions.toggleVoice()}>
         {recording ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
       </button>
-      <button id="interrupt-send" type="button" className="composer-icon" title={`Прервать работу и отправить сейчас (${mod()}Enter)`} aria-label="Прервать работу и отправить сейчас" hidden={!queueable} onClick={() => void fieldActions.interrupt()}>
+      <button id="interrupt-send" type="button" className="composer-icon" title={`Прервать работу и отправить сейчас (${mod()}Enter)`} aria-label="Прервать работу и отправить сейчас" hidden={!queueable} onClick={() => { remember(); void fieldActions.interrupt(); }}>
         <Zap aria-hidden="true" />
       </button>
-      <button id="queue-draft" type="button" className="composer-icon" title="Добавить в очередь (Enter)" aria-label="Добавить в очередь" hidden={!queueable} onClick={() => void fieldActions.queue()}>
+      <button id="queue-draft" type="button" className="composer-icon" title="Добавить в очередь (Enter)" aria-label="Добавить в очередь" hidden={!queueable} onClick={() => { remember(); void fieldActions.queue(); }}>
         <ListPlus aria-hidden="true" />
       </button>
       <button
@@ -220,10 +306,10 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         type="button"
         className={`composer-icon${ready ? ' ready' : ''}${showStop ? ' is-running' : ''}`}
         data-icon={showStop ? 'stop' : 'send'}
-        title={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? (site ? 'Остановить генерацию' : 'Остановить выполнение') : 'Отправить'}
+        title={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? (site ? 'Остановить генерацию (Esc)' : 'Остановить выполнение (Esc)') : 'Отправить'}
         aria-label={stopping ? 'Останавливаю…' : recording ? 'Распознать и отправить' : showStop ? (site ? 'Остановить генерацию' : 'Остановить выполнение') : 'Отправить'}
         disabled={stopping || transcribing || (site && siteClosed && !recording)}
-        onClick={() => void (recording ? fieldActions.stopVoice() : fieldActions.sendOrStop())}
+        onClick={() => { if (recording) return void fieldActions.stopVoice(); if (!showStop) remember(); void fieldActions.sendOrStop(); }}
       >
         {showStop && !recording ? <Square aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
       </button>

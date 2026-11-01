@@ -241,8 +241,7 @@ async function localRecording(stream: MediaStream, draft: string): Promise<void>
         const form = new FormData();
         form.append('file', new Blob(chunks, { type: recorder.mimeType }), 'voice.webm');
         setStatus('Распознаю речь…');
-        const saved = await api<{ stored_path: string }>('/api/attachments', { method: 'POST', body: form });
-        const result = await post<{ text?: string; error?: string }>('/api/speech/transcribe', { path: saved.stored_path });
+        const result = await api<{ text?: string; error?: string }>('/api/speech/recording', { method: 'POST', body: form });
         if (!result.text) throw new Error(result.error || 'Речь не распознана');
         composer.set({ text: [draft.trim(), result.text].filter(Boolean).join(' ') });
         setStatus('Запись распознана');

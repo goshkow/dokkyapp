@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { exposeActions, exposeStore, isMirror, remote } from '../lib/mirror';
 import { createStore, useStore } from '../lib/store';
 import type { Attachment } from './chatTypes';
-import { send, sendOrStop } from './chat';
+import { send, sendOrStop, stopRun } from './chat';
 import { recordCodingActivity } from './codingSession';
 import { composer, setText, uploadPath, upload } from './composer';
 import { guarded, notify } from './overlay';
@@ -28,8 +28,15 @@ export interface FieldMirror {
 export const fieldMirror = createStore<FieldMirror>({ text: '', hasFiles: false, recording: false, transcribing: false, dragging: false, focus: 0 });
 export const useField = <S,>(selector: (state: FieldMirror) => S): S => useStore(fieldMirror, selector);
 
-/** Что поле сообщает главному виду (высота и раскрытость) и что главный вид сообщает полю (открыто ли меню «Добавить»). */
-export const fieldHost = createStore({ menu: false, height: 0, expanded: false });
+/** Набираемая подсказка: «/команда» в начале поля или «@файл»; позиции - в тексте поля. */
+export interface SuggestToken { kind: '/' | '@'; query: string; start: number; end: number }
+
+/** Что поле сообщает главному виду (высота, раскрытость, набираемая подсказка) и что главный вид сообщает полю
+    (открыто ли меню «Добавить», сколько подсказок и какая выбрана, куда поставить курсор после вставки). */
+export const fieldHost = createStore({
+  menu: false, height: 0, expanded: false,
+  suggest: null as SuggestToken | null, suggestIndex: 0, suggestCount: 0, place: 0, placeAt: 0,
+});
 export const useFieldHost = <S,>(selector: (state: ReturnType<typeof fieldHost.get>) => S): S => useStore(fieldHost, selector);
 
 export const voiceMeter = createStore<{ levels: number[] }>({ levels: [] });
@@ -127,6 +134,7 @@ const table = {
   fieldSetText: (text: string) => { recordCodingActivity(); setText(text); },
   fieldSend: () => guarded(send)(),
   fieldSendOrStop: () => guarded(sendOrStop)(),
+  fieldStop: () => guarded(stopRun)(),
   fieldInterrupt: () => guarded(interruptAndSend)(),
   fieldQueue: () => guarded(enqueueDraft)(),
   fieldToggleVoice: () => guarded(toggleVoice)(),
@@ -145,6 +153,7 @@ export const fieldActions = {
   setText: remote('fieldSetText', table.fieldSetText),
   send: remote('fieldSend', table.fieldSend),
   sendOrStop: remote('fieldSendOrStop', table.fieldSendOrStop),
+  stop: remote('fieldStop', table.fieldStop),
   interrupt: remote('fieldInterrupt', table.fieldInterrupt),
   queue: remote('fieldQueue', table.fieldQueue),
   toggleVoice: remote('fieldToggleVoice', table.fieldToggleVoice),

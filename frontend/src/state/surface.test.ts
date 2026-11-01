@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsUi } from './settingsUi';
-import { bindFrame, chatModeChats, command, otherComputerChats, parseField, parseGlass, parseState, startChat, surface } from './surface';
+import { connection } from './connection';
+import { data } from './data';
+import { bindFrame, checkSurface, chatModeChats, command, otherComputerChats, parseField, parseGlass, parseState, startChat, surface } from './surface';
 import { ui } from './ui';
 import { view } from './view';
 
@@ -57,6 +59,9 @@ describe('состояние страницы сайта', () => {
     });
     expect(chatModeChats(chats).map((item) => item.id)).toEqual([1]);
     expect(otherComputerChats(chats, 'me').map((item) => item.id)).toEqual([3]);
+    // прежняя запись этого же компьютера после переустановки: то же имя, не в сети
+    const stale = (id: number, online: boolean) => ({ ...chats[0]!, id, remote: { host_id: `old${id}`, host_name: 'Мой', online, revoked: false } });
+    expect(otherComputerChats([stale(7, false), stale(8, true)], 'me', 'Мой').map((item) => item.id)).toEqual([8]);
   });
 });
 
@@ -195,5 +200,33 @@ describe('связь с фреймом', () => {
     const target = vi.spyOn(frame.contentWindow!, 'postMessage');
     startChat();
     expect(target).toHaveBeenCalledWith(expect.anything(), ORIGIN);
+  });
+});
+
+describe('страница сайта без связи', () => {
+  beforeEach(() => {
+    data.set({ account: { authenticated: true, user: { id: 'offline' } } as never });
+    surface.set({ status: 'off' });
+  });
+  afterEach(() => {
+    connection.set({ online: true });
+    vi.unstubAllGlobals();
+  });
+
+  it('нет сети: сразу экран ошибки, а когда связь вернулась, страница открывается сама', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ available: true, url: `${ORIGIN}/app-surface`, origin: ORIGIN }), { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    connection.set({ online: false });
+    await checkSurface(true);
+    expect(surface.get().status).toBe('failed');
+    expect(fetcher).not.toHaveBeenCalled();
+    connection.set({ online: true });
+    await vi.waitFor(() => expect(surface.get().status).toBe('loading'));
+  });
+
+  it('сервер не ответил при первом запуске: тоже экран ошибки, а не пустой чат', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'нет' }), { status: 503 })));
+    await checkSurface(true);
+    expect(surface.get().status).toBe('failed');
   });
 });

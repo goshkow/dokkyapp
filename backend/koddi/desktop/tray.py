@@ -180,6 +180,8 @@ class QtTray:
         self.icon.setToolTip(APP_NAME)
         self.icon.setContextMenu(self.menu)
         self.icon.activated.connect(self._activated)
+        self._notice_click: Callable[[], None] | None = None
+        self.icon.messageClicked.connect(self._message_clicked)
         self.render()
         self.icon.show()
 
@@ -190,6 +192,15 @@ class QtTray:
     def update(self, state: TrayState) -> None:
         self.state = state
         self.render()
+
+    def notify(self, title: str, body: str, on_click: Callable[[], None]) -> None:
+        """Всплывающее уведомление Windows от значка в трее; щелчок по нему открывает чат."""
+        self._notice_click = on_click
+        self.icon.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, 8000)
+
+    def _message_clicked(self) -> None:
+        if self._notice_click is not None:
+            self._notice_click()
 
     def _widget_action(self, widget: QWidget) -> QWidgetAction:
         action = QWidgetAction(self.menu)

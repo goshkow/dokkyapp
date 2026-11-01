@@ -41,8 +41,8 @@ class Api:
     def __init__(self, scope="development"):
         self.scope = scope
         self.projects = [
-            {"id": 1, "name": "zaprethub.new", "path": "C:/Users/User/Desktop/zaprethub.new"},
-            {"id": 2, "name": "addhead", "path": "C:/Users/User/Desktop/addhead"},
+            {"id": 1, "name": "demo-app", "path": "C:/Users/User/Desktop/demo-app"},
+            {"id": 2, "name": "notes-app", "path": "C:/Users/User/Desktop/notes-app"},
         ]
         self.local_chats = [
             {"id": 1, "title": "Фризы при возврате из фона", "mode": "development", "model": "dokky-code", "project_id": 1, "updated_at": "2026-10-16T09:00:00+00:00"},
@@ -79,10 +79,10 @@ class Api:
             for index, item in enumerate(BUILTIN)
         ]
         self.runs = [
-            {"id": "q:1", "chat_id": 1, "chat_title": "Фризы при возврате из фона", "project_id": 1, "project_name": "zaprethub.new", "status": "queued", "request": "Добавь тест на таймер", "started_at": "2026-10-19 09:40:00", "finished_at": None, "error": ""},
-            {"id": "t:5", "chat_id": 1, "chat_title": "Фризы при возврате из фона", "project_id": 1, "project_name": "zaprethub.new", "status": "running", "request": "Почини фризы при возврате из фона", "started_at": "2026-10-19 09:30:00", "finished_at": None, "error": ""},
-            {"id": "t:4", "chat_id": 2, "chat_title": "Фризы приложения после сворачивания", "project_id": 1, "project_name": "zaprethub.new", "status": "completed", "request": "Найди причину задержки при сворачивании окна", "started_at": "2026-10-18 12:00:00", "finished_at": "2026-10-18 12:07:00", "error": ""},
-            {"id": "t:3", "chat_id": 3, "chat_title": "Поиск документации", "project_id": 2, "project_name": "addhead", "status": "failed", "request": "Обнови документацию API", "started_at": "2026-10-17 10:00:00", "finished_at": "2026-10-17 10:01:00", "error": "plan_required", "summary": "Нужен Plus"},
+            {"id": "q:1", "chat_id": 1, "chat_title": "Фризы при возврате из фона", "project_id": 1, "project_name": "demo-app", "status": "queued", "request": "Добавь тест на таймер", "started_at": "2026-10-19 09:40:00", "finished_at": None, "error": ""},
+            {"id": "t:5", "chat_id": 1, "chat_title": "Фризы при возврате из фона", "project_id": 1, "project_name": "demo-app", "status": "running", "request": "Почини фризы при возврате из фона", "started_at": "2026-10-19 09:30:00", "finished_at": None, "error": ""},
+            {"id": "t:4", "chat_id": 2, "chat_title": "Фризы приложения после сворачивания", "project_id": 1, "project_name": "demo-app", "status": "completed", "request": "Найди причину задержки при сворачивании окна", "started_at": "2026-10-18 12:00:00", "finished_at": "2026-10-18 12:07:00", "error": ""},
+            {"id": "t:3", "chat_id": 3, "chat_title": "Поиск документации", "project_id": 2, "project_name": "notes-app", "status": "failed", "request": "Обнови документацию API", "started_at": "2026-10-17 10:00:00", "finished_at": "2026-10-17 10:01:00", "error": "plan_required", "summary": "Нужен Plus"},
         ]
         self.automations = [
             {"id": 1, "name": "Утренний обзор", "schedule": "weekdays@09:00", "schedule_text": "По будням в 09:00", "enabled": True, "status": "completed", "last_result": "Агент запущен: ход работы в чате",
@@ -134,6 +134,9 @@ class Api:
         # открытие проекта запускает сборку карты на сервере; ответ окну не нужен
         if method == "GET" and path.startswith("/api/projects/") and path.endswith("/map/state"):
             return {"status": "ready", "version": 1, "files": 0, "truncated": False, "built_at": None, "watch": None}
+        # проект без git: шапка и «Изменения» просто не показывают его блоки
+        if method == "GET" and path.startswith("/api/projects/") and path.endswith("/git"):
+            return {"repo": False}
         if path == "/api/settings":
             if method == "PUT" and isinstance(body, dict):
                 self.settings.update({k: v for k, v in body.items() if k in self.settings})
@@ -157,8 +160,10 @@ class Api:
             return {"build_number": "test"}
         if path == "/api/updates/status":
             return {"status": "disabled", "reason": "dev", "current": "0.2.1", "platform": None, "kind": None, "method": "dev", "auto_download": True, "error": "", "available": None, "progress": None}
+        if path == "/api/local-data" and method == "GET":
+            return {"ask": False, "chats": 0}
         if path == "/api/remote-control" and method == "GET":
-            return {"enabled": False, "state": "off", "message": "", "name": "Компьютер", "prevent_sleep": "working", "prevent_sleep_active": False,
+            return {"enabled": False, "asked": True, "state": "off", "message": "", "name": "Компьютер", "prevent_sleep": "working", "prevent_sleep_active": False,
                     "power": "ac", "pending": 0, "new_session_project_id": None, "shared": {}, "site": "https://dokky.goshkow.com"}
         if path == "/api/dokky/cloud/chats":
             return {"items": self.cloud_chats, "next_cursor": None}

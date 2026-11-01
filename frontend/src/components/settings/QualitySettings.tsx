@@ -6,11 +6,23 @@ import { Block, Pick, Row, Section, type Say } from './parts';
 
 type ReviewMode = 'auto' | 'always' | 'off';
 interface QaCommand { kind: 'lint' | 'typecheck' | 'test' | 'build'; command: string; cwd: string }
-interface ProjectSkill { path: string; name: string; description: string; sha256: string; status: 'pending' | 'trusted' | 'rejected'; instructions: string }
+interface ProjectSkill { path: string; kind: 'skill' | 'command' | 'agent' | 'hooks'; name: string; description: string; sha256: string; status: 'pending' | 'trusted' | 'rejected'; instructions: string }
 interface Knowledge { location: 'app' | 'workspace' | 'off'; folder: string | null; notes: unknown[] }
 
 const KINDS = new Set(['lint', 'typecheck', 'test', 'build']);
 const STATUS = { pending: 'Ждёт решения', trusted: 'Подтверждён', rejected: 'Отклонён' } as const;
+const KIND = { skill: 'навык', command: 'команда', agent: 'агент', hooks: 'хуки' } as const;
+
+/** Вопрос перед доверием: хуки - это команды, которые сами запустятся на компьютере, о них прямо. */
+function trustQuestion(item: ProjectSkill): [string, string, string] {
+  if (item.kind === 'hooks') {
+    // команды показываются целиком: опасная часть не должна прятаться за обрезкой
+    return ['Разрешить хуки проекта?', `${item.path}\n\nЭти команды будут сами запускаться на вашем компьютере при действиях агента:\n\n${item.instructions}\n\nПравка настроек или названных скриптов снова потребует подтверждения. Программы, которые скрипты подгружают сами, не проверяются - разрешайте, только если доверяете этому репозиторию.`, 'Разрешить'];
+  }
+  const text = item.instructions.slice(0, 1500);
+  const title = { skill: `Доверять навыку «${item.name}»?`, command: `Доверять команде /${item.name}?`, agent: `Доверять агенту «${item.name}»?` }[item.kind];
+  return [title, `${item.path}\n\n${text}`, 'Доверять'];
+}
 
 /** «вид: команда» или «вид @папка: команда» построчно. */
 export function parseCommands(text: string): QaCommand[] {
@@ -88,7 +100,7 @@ export function QualitySettings({ project, say }: { project: Project | null; say
     return () => { current = false; };
   }, [project, attempt]);
   const decide = (skill: ProjectSkill, trust: boolean) => guarded(async () => {
-    if (trust && !(await confirmDialog(`Доверять навыку «${skill.name}»?`, `${skill.path}\n\n${skill.instructions.slice(0, 1500)}`, 'Доверять'))) return;
+    if (trust && !(await confirmDialog(...trustQuestion(skill)))) return;
     await post(`/api/projects/${project?.id}/skills/decision`, { path: skill.path, sha256: skill.sha256, trust });
     setAttempt((value) => value + 1);
   });
@@ -228,9 +240,9 @@ export function QualitySettings({ project, say }: { project: Project | null; say
         </Section>
       )}
       {project && skills && skills.length > 0 && (
-        <Section title="Навыки проекта" hint="Файлы SKILL.md из папок .dokky, .claude и .agents проекта. Агент использует навык только после вашего подтверждения именно этой версии файла.">
+        <Section title="Файлы проекта для агента" hint="Навыки, команды, агенты и хуки из папок .dokky и .claude проекта. Каждый файл действует только после вашего подтверждения именно этой версии - после правки файла снова спросим.">
           {skills.map((skill) => (
-            <Row key={skill.path} title={`${skill.name} · ${STATUS[skill.status]}`} detail={`${skill.path}${skill.description ? ` - ${skill.description}` : ''}`}>
+            <Row key={skill.path} title={`${skill.kind === 'command' ? `/${skill.name}` : skill.name} · ${KIND[skill.kind]} · ${STATUS[skill.status]}`} detail={`${skill.path}${skill.description ? ` - ${skill.description}` : ''}`}>
               {skill.status !== 'trusted' && <button type="button" className="pref-button" onClick={decide(skill, true)}>Доверять</button>}
               {skill.status !== 'rejected' && <button type="button" className="pref-button" onClick={decide(skill, false)}>{skill.status === 'trusted' ? 'Отозвать' : 'Отклонить'}</button>}
             </Row>

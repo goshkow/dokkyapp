@@ -1,5 +1,5 @@
 /* Правая панель: выбранная карточка, дерево файлов проекта и редактор файла. */
-import { api } from '../lib/api';
+import { api, post } from '../lib/api';
 import { createStore, useStore } from '../lib/store';
 import { chat, stale } from './chatCore';
 import { confirmDialog, notify } from './overlay';
@@ -115,6 +115,13 @@ export function toggleOverview(name: 'environment' | 'context'): void {
   workspace.set({ overview: { ...overview, [name]: !overview[name] } });
 }
 
+/** Файл проекта в редакторе человека (VS Code, Cursor или текстовый редактор системы), сразу на нужной строке. */
+export async function openInEditor(path: string, line?: number | null): Promise<void> {
+  const project = view.get().project;
+  if (!project) return;
+  await post(`/api/projects/${project.id}/open-in-editor`, line ? { path, line } : { path });
+}
+
 export async function openFile(path: string): Promise<void> {
   const project = view.get().project;
   if (!project) return;
@@ -158,6 +165,9 @@ export function previewFile(preview: boolean): void {
   if (editor) workspace.set({ editor: { ...editor, preview } });
 }
 
+/** Файл сохранён человеком: блок коммита обновляет список незакоммиченного. */
+export const FILE_SAVED = 'koddi:file-saved';
+
 export async function saveFile(): Promise<void> {
   const editor = workspace.get().editor;
   if (!editor || editor.saving || editor.readOnly) return;
@@ -173,6 +183,7 @@ export async function saveFile(): Promise<void> {
       if (now.content === content) drafts.delete(key);
       else drafts.set(key, { content: now.content, hash: result.hash });
       notify('Файл сохранён');
+      window.dispatchEvent(new Event(FILE_SAVED));
     } else {
       const draft = drafts.get(key);
       if (draft?.hash === hash) {

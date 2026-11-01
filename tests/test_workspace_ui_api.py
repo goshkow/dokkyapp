@@ -86,3 +86,71 @@ def test_ui_assets_are_not_cached():
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+def test_open_in_editor_only_opens_project_files(tmp_path, monkeypatch):
+    import importlib
+
+    # koddi.api.app - и модуль, и объект приложения: берём модуль
+    api_app = importlib.import_module("koddi.api.app")
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "main.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "Tool.app").mkdir()
+    (tmp_path / "secret.txt").write_text("s", encoding="utf-8")
+    (root / "link.txt").symlink_to(tmp_path / "secret.txt")
+    opened = []
+    monkeypatch.setattr(api_app, "open_file", lambda path, line=None: opened.append((path, line)) or {"ok": True})
+    client = TestClient(create_app())
+    project = client.post("/api/projects", json={"path": str(root)}).json()
+    url = f"/api/projects/{project['id']}/open-in-editor"
+    assert client.post(url, json={"path": "src/main.py", "line": 3}).json() == {"ok": True}
+    assert opened == [(str((root / "src" / "main.py").resolve()), 3)]
+    for bad in ({"path": "../secret.txt"}, {"path": "link.txt"}, {"path": "Tool.app"}, {"path": str(tmp_path / "secret.txt")}):
+        assert client.post(url, json=bad).status_code == 404
+    for bad in ({}, {"path": ""}, {"path": "src/main.py\0"}, {"path": "src/main.py", "line": 0}, {"path": "src/main.py", "line": True}):
+        assert client.post(url, json=bad).status_code == 422
+    assert len(opened) == 1
+    monkeypatch.setattr(api_app, "open_file", lambda path, line=None: {"ok": False, "errors": ["нет"]})
+    assert client.post(url, json={"path": "src/main.py"}).status_code == 409
+
+
+def test_editor_fallback_never_launches_the_file(monkeypatch, tmp_path):
+    from koddi.integrations import service
+
+    monkeypatch.setattr(service.sys, "platform", "darwin")
+    commands = service._file_commands(tmp_path / "run.command", None)
+    assert commands[-1] == ["open", "-t", str(tmp_path / "run.command")]
+    assert all(command[:2] != ["open", str(tmp_path / "run.command")] for command in commands)
+    assert service.open_file(str(tmp_path / "missing.txt")) == {"ok": False, "errors": ["файл не найден"]}
+
+
+def test_voice_recording_is_transcribed_and_deleted_and_paths_are_confined(tmp_path, monkeypatch):
+    import importlib
+
+    from koddi.storage.db import runtime_path
+
+    api_app = importlib.import_module("koddi.api.app")
+    heard = []
+
+    def transcribe(path):
+        heard.append(Path(path))
+        assert Path(path).read_bytes() == b"webm-bytes"
+        return {"ok": True, "text": "привет"}
+
+    monkeypatch.setattr(api_app, "transcribe_audio", transcribe)
+    client = TestClient(create_app(), base_url="http://127.0.0.1:8765")
+    answer = client.post("/api/speech/recording", files={"file": ("voice.webm", b"webm-bytes", "audio/webm")})
+    assert answer.json()["text"] == "привет"
+    # запись не остаётся на диске и не попадает во вложения
+    assert not heard[0].exists() and heard[0].parent.name == "speech"
+    assert client.post("/api/speech/recording", files={"file": ("voice.exe", b"x", "audio/webm")}).status_code == 422
+    # старый путь распознаёт только файлы вложений
+    inside = runtime_path("attachments", "voice.wav")
+    inside.write_bytes(b"webm-bytes")
+    assert client.post("/api/speech/transcribe", json={"path": str(inside)}).json()["text"] == "привет"
+    outside = tmp_path / "private.wav"
+    outside.write_bytes(b"x")
+    for bad in ({"path": str(outside)}, {"path": ""}, {}, {"path": 5}, {"path": str(inside) + "\0"}, {"path": str(inside) + "/../../../etc/hosts"}):
+        assert client.post("/api/speech/transcribe", json=bad).status_code == 422
+    assert len(heard) == 2

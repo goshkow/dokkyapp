@@ -341,7 +341,7 @@ async def test_subagent_runs_real_child_loop(chat, tmp_path):
             elif history[-1].get("role") == "tool":
                 assert json.loads(history[-1]["content"])["ok"]
                 yield {"content": "Проверка завершена"}
-            elif history[-1]["content"] == "Проверь папку":
+            elif history[-1]["content"].endswith("Task:\nПроверь папку"):
                 yield {"tool_call": {"id": "inspect", "name": "directory.list", "arguments": "{}"}}
             else:
                 yield {
@@ -437,3 +437,37 @@ async def test_server_progress_names_the_action_before_the_call_is_complete():
     assert chunks[-1]["tool_call"]["name"] == "file.edit"
     assert progress_text(early) == "Правлю файл · templates/landing.html"
     assert progress_text({"name": ""}) == "Подготавливаю действие…"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answer", "ending"), [(True, "turn.completed"), (False, "turn.failed")])
+async def test_long_turn_stops_and_asks_whether_to_continue(chat, tmp_path, monkeypatch, answer, ending):
+    monkeypatch.setattr("koddi.agents.orchestrator.STEP_CHECKPOINT", 3)
+
+    class Client:
+        count = 0
+
+        async def stream(self, **kwargs):
+            self.count += 1
+            if self.count >= 6:
+                yield {"content": "Готово"}
+                return
+            yield {"tool_call": {"id": f"c{self.count}", "name": "file.read", "arguments": json.dumps({"path": f"{self.count}.txt"})}}
+
+    client = Client()
+    seen, asked = [], []
+    async for event in AgentOrchestrator(client).run(
+        chat_id=chat, project_id=None, workspace=tmp_path, user_message="Работай", model="test"
+    ):
+        seen.append(event)
+        if "event: agent.input_required" in event:
+            data = json.loads(event.split("data: ", 1)[1])
+            asked.append(data)
+            before = client.count
+            with storage.db() as conn:
+                conn.execute("UPDATE agent_requests SET response_json=? WHERE id=?", (json.dumps({"approved": answer}), data["id"]))
+        await asyncio.sleep(0)
+    assert [item["name"] for item in asked] == ["agent.continue"]
+    assert ending in seen[-1]
+    assert client.count > before if answer else client.count == before
+

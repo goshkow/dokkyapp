@@ -23,7 +23,7 @@ dialog.media-viewer[open] {
   gap: 12px;
   animation: mv-in 220ms var(--ease) both;
 }
-dialog.media-viewer::backdrop { background: #000b; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+dialog.media-viewer::backdrop { background: #000b; }
 dialog.media-viewer.is-closing { animation: mv-out 160ms ease-in both; }
 @keyframes mv-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mv-out { to { opacity: 0; } }

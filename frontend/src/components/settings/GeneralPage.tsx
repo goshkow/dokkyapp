@@ -3,6 +3,7 @@ import type { AppSettings } from '../../lib/types';
 import hljs from 'highlight.js/lib/common';
 import { Pick, Row, Section, Segmented, Toggle, type Say } from './parts';
 import { glassActive, glassCapable, setGlassEnabled } from '../../lib/glass';
+import { hasWindowBridge } from '../../lib/bridge';
 import { isMac, osName } from '../../lib/platform';
 import { codeFontStack, installedCodeFonts, SYSTEM_CODE_FONT } from '../../lib/codeFonts';
 
@@ -69,6 +70,17 @@ export function GeneralPage({ say }: { say: Say }) {
           say={say}
         />
       </Section>
+      {hasWindowBridge() && (
+        <Section title="Уведомления">
+          <Toggle
+            title="Когда агент закончил или спрашивает"
+            detail={isMac() ? 'Уведомление macOS и число на значке в Dock, пока окно Докки в фоне.' : 'Уведомление Windows и мигание на панели задач, пока окно Докки в фоне.'}
+            checked={settings.agent_notifications !== false}
+            save={saveKey('agent_notifications')}
+            say={say}
+          />
+        </Section>
+      )}
     </>
   );
 }

@@ -31,7 +31,9 @@ export const payment = createStore<PaymentState>(idle);
 export const usePayment = <S,>(selector: (state: PaymentState) => S): S => useStore(payment, selector);
 
 const POLL_MS = 2500;
+// ссылка живёт дольше: человек может оплатить и через час, поэтому потом опрос просто идёт реже, пока сервер не скажет её судьбу
 const WAIT_MS = 15 * 60 * 1000;
+const LATE_POLL_MS = 30_000;
 let attempt = 0;
 let timer = 0;
 let link: { id: string; url: string; deadline: number } | null = null;
@@ -132,12 +134,7 @@ async function check(token: number): Promise<void> {
     }
   }
   if (token !== attempt || !link) return;
-  if (Date.now() > link.deadline) {
-    stop();
-    payment.set({ stage: 'expired', title: 'Ожидание закончилось', text: 'Если вы уже оплатили, подписка обновится сама через пару минут. Иначе запросите новую ссылку.', offerPlans: false });
-    return;
-  }
-  timer = window.setTimeout(() => void poll(token), POLL_MS);
+  timer = window.setTimeout(() => void poll(token), Date.now() > link.deadline ? LATE_POLL_MS : POLL_MS);
 }
 
 /** Опрос идёт, пока окно активно; при возврате из браузера статус проверяется сразу. */

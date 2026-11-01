@@ -36,4 +36,5 @@ import { role } from './lib/mirror';
 
 // главный вид - всё приложение; вид плитки (sidebar) - только зеркало левого меню внутри нативного стекла
 if (role === 'main') void import('./bootMain');
+else if (role === 'popup') void import('./bootPopup');
 else void import('./bootTile');

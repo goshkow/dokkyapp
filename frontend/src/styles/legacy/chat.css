@@ -407,7 +407,8 @@ main:not(.chat-page) #segmented-mode {
   min-height: 58px;
   border: 1px solid var(--line);
   border-radius: 30px;
-  background: var(--panel);
+  /* как плитки меню и блоки правой панели, но непрозрачно: под полем идёт лента */
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
   padding: 8px 9px;
 }
 #composer.expanded .composer-field {

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { markShellReady } from './state/panels';
 import { initOverlayScroll } from './lib/overlayScroll';
 import './state/hooks';
@@ -19,6 +20,7 @@ import './state/remote';
 import { nav, view } from './state/view';
 import { updates } from './state/updates';
 import { chat } from './state/chatCore';
+import { git } from './state/git';
 import { startFieldMirror } from './state/field';
 import { startSiteField } from './state/siteField';
 import { applyAppearance, ui } from './state/ui';
@@ -27,6 +29,7 @@ import { initKeyNav } from './state/keyNav';
 // плитки Liquid Glass (виды sidebar) показывают зеркало этого состояния
 for (const [name, store] of [['data', data], ['view', view], ['ui', ui], ['limits', limitsStore], ['plans', plansStore], ['nav', nav], ['updates', updates]] as const) exposeStore(name, store as never);
 // правой панели из состояния чата нужны план, изменения, выбранное изменение, сессия и расход
+exposeStore('git', git);
 exposeStore('chat', chat, ['plan', 'changes', 'changeSelection', 'coding', 'usage', 'running', 'stopping']);
 startFieldMirror();
 startSiteField();
@@ -52,7 +55,7 @@ matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { i
 // навигация с клавиатуры и кольцо фокуса только при работе с клавиатуры
 initKeyNav();
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><ErrorBoundary fatal title="Не удалось показать окно Докки"><App /></ErrorBoundary></StrictMode>);
 document.body.classList.remove('booting');
 initOverlayScroll();
 setTimeout(markShellReady, 700);

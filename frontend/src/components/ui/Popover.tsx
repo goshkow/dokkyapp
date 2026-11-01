@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { moveMenuFocus } from '../../lib/menuKeys';
 import { OUTSIDE_POINTER } from '../../lib/mirror';
+import { nativePopupPossible, openNativePopup } from '../../lib/nativePopup';
 
 export interface PopoverProps {
   open: boolean;
@@ -16,13 +18,43 @@ export interface PopoverProps {
   minWidth?: number | 'anchor';
   children: ReactNode;
   id?: string;
+  /** Пункт работает с полем под меню (вставка, копирование): клавиатура возвращается к нему до действия. */
+  refocusFirst?: boolean;
 }
 
 /** Плавающая панель: появляется и исчезает плавно, закрывается по Esc и по щелчку мимо, не выходит за окно. */
-export function Popover({ open, anchor, onClose, className = '', role = 'menu', label, side = 'below', align = 'start', minWidth, children, id }: PopoverProps) {
+export function Popover({ open, anchor, onClose, className = '', role = 'menu', label, side = 'below', align = 'start', minWidth, children, id, refocusFirst = false }: PopoverProps) {
   const [mounted, setMounted] = useState(open);
   const [state, setState] = useState<'open' | 'closed'>(open ? 'open' : 'closed');
   const node = useRef<HTMLDivElement>(null);
+  // подсказка не забирает клавиатуру и остаётся на странице; остальное - отдельным окном, если приложение его умеет
+  const [windowed, setWindowed] = useState(() => role !== 'tooltip' && nativePopupPossible());
+  const anchorKey = anchor && !('current' in anchor) ? `${anchor.x}:${anchor.y}` : '';
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (!windowed || !open || !mounted || !node.current) return undefined;
+    const trigger = anchor && 'current' in anchor ? anchor.current : null;
+    const box = trigger?.getBoundingClientRect();
+    const point = anchor && !('current' in anchor) ? anchor : null;
+    if (!box && !point) return undefined;
+    return openNativePopup({
+      panel: node.current,
+      rect: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : { x: point!.x, y: point!.y, w: 0, h: 0 },
+      side,
+      align,
+      minWidth: minWidth === 'anchor' ? Math.round(box?.width ?? 0) : minWidth ?? 0,
+      className,
+      role,
+      label,
+      trigger,
+      closeFirst: refocusFirst,
+      onClose: () => closeRef.current(),
+      onUnavailable: () => setWindowed(false),
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowed, open, mounted, anchorKey, side, align, minWidth, className, role, label, refocusFirst]);
 
   useEffect(() => {
     if (open) {
@@ -38,7 +70,7 @@ export function Popover({ open, anchor, onClose, className = '', role = 'menu', 
 
   useLayoutEffect(() => {
     const panel = node.current;
-    if (!mounted || !panel) return;
+    if (windowed || !mounted || !panel) return;
     // верхний слой: список виден поверх модальных окон (настройки), не прячется под ними и не обрезается
     try {
       if (!panel.matches(':popover-open')) panel.showPopover();
@@ -76,10 +108,10 @@ export function Popover({ open, anchor, onClose, className = '', role = 'menu', 
     const composer = document.getElementById('composer');
     if (composer) resize.observe(composer);
     return () => resize.disconnect();
-  }, [mounted, anchor, side, align, minWidth, children]);
+  }, [windowed, mounted, anchor, side, align, minWidth, children]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (windowed || !open) return undefined;
     const trigger = anchor && 'current' in anchor ? anchor.current : null;
     const pointer = (event: PointerEvent) => {
       const target = event.target as Node;
@@ -105,28 +137,16 @@ export function Popover({ open, anchor, onClose, className = '', role = 'menu', 
       document.removeEventListener('keydown', key, true);
       window.removeEventListener('resize', onClose);
     };
-  }, [open, anchor, onClose]);
+  }, [windowed, open, anchor, onClose]);
 
   // фокус внутрь при открытии
   useEffect(() => {
-    if (open && node.current) node.current.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), [role="option"][aria-selected="true"], [role="option"]:not(:disabled)')?.focus({ preventScroll: true });
-  }, [open, mounted]);
+    if (!windowed && open && node.current) node.current.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), [role="option"][aria-selected="true"], [role="option"]:not(:disabled)')?.focus({ preventScroll: true });
+  }, [windowed, open, mounted]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = [...(node.current?.querySelectorAll<HTMLElement>('[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"]') ?? [])].filter((item) => !item.hasAttribute('disabled'));
-    const index = items.indexOf(document.activeElement as HTMLElement);
-    let next: HTMLElement | undefined;
-    if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
-    else if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
-    else if (event.key === 'Home') next = items[0];
-    else if (event.key === 'End') next = items.at(-1);
-    else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && event.key !== ' ') {
-      next = items.find((item) => item.textContent?.trim().toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()));
-    } else if (event.key === 'Tab') onClose();
-    if (next) {
-      event.preventDefault();
-      next.focus({ preventScroll: true });
-    }
+    if (event.key === 'Tab') onClose();
+    else moveMenuFocus(event, node.current);
   };
 
   if (!mounted) return null;

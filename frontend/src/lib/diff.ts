@@ -116,7 +116,7 @@ export function pruneDiffCache(alive: Set<Change['id']>): void {
 
 export type FlatRow =
   | { kind: 'file'; file: DiffFile }
-  | { kind: 'hunk'; text: string }
+  | { kind: 'hunk'; text: string; file: DiffFile }
   | { kind: 'marker'; text: string }
   | (DiffRow & { path: string });
 
@@ -125,7 +125,7 @@ export function diffRows(files: DiffFile[]): FlatRow[] {
   for (const file of files) {
     rows.push({ kind: 'file', file });
     for (const hunk of file.hunks) {
-      rows.push({ kind: 'hunk', text: hunk.header });
+      rows.push({ kind: 'hunk', text: hunk.header, file });
       for (const row of hunk.rows) rows.push({ ...row, path: file.path });
     }
     if (!file.hunks.length) {

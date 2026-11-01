@@ -50,6 +50,15 @@ def turn_hints(project_id: int | None, workspace: Path | None, user_message: str
             languages = {SUFFIX_LANGUAGES[Path(path).suffix.lower()] for path in changed_files(workspace, limit=40)
                          if Path(path).suffix.lower() in SUFFIX_LANGUAGES}
             suggested = suggest(text, project_id=project_id, owner=owner, root=workspace, languages=languages)
+            from koddi.skills.selector import available
+
+            listed = available(project_id, owner, workspace)
+            if listed:
+                hints["available_skills"] = {
+                    "skills": listed,
+                    "note": "Installed skills. Load a fitting one yourself with skill.load; needs_user_ok - a plugin skill, "
+                            "loading it asks the user, so offer it only when it clearly helps.",
+                }
             if suggested:
                 hints["skill_suggestions"] = {
                     "skills": suggested,
@@ -71,6 +80,18 @@ def turn_hints(project_id: int | None, workspace: Path | None, user_message: str
                 }
         except Exception as exc:
             audit_event("WARNING", "hints.knowledge", str(exc)[:300], {"project_id": project_id})
+    if "task.delegate" in tool_names:
+        try:
+            from koddi.agents.subagents import project_agents
+
+            agents = project_agents(project_id, owner, workspace)
+            if agents:
+                hints["project_agents"] = {
+                    "agents": [{"name": item["name"], "description": item["description"][:200]} for item in agents[:20]],
+                    "note": "Project subagents the user trusted: task.delegate(agent=name).",
+                }
+        except Exception as exc:
+            audit_event("WARNING", "hints.project_agents", type(exc).__name__, {"project_id": project_id})
     try:
         from koddi.plugins.hooks import turn_context
 

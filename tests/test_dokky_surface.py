@@ -39,7 +39,7 @@ def test_surface_is_offered_only_when_the_site_supports_it(proxy):
         conn.execute("UPDATE remote_control SET host_id='host-1' WHERE id=1")
     state["answer"] = httpx.Response(200, json={"protocol": 1, "path": "/app-surface", "release": "r1"})
     assert client.get("/api/dokky/surface").json() == {
-        "available": True, "url": ORIGIN + "/app-surface", "origin": ORIGIN, "release": "r1", "host_id": "host-1",
+        "available": True, "url": ORIGIN + "/app-surface", "origin": ORIGIN, "release": "r1", "host_id": "host-1", "host_name": "",
     }
     assert sent == [("GET", "/app/surface")]
     # сервер без поддержки или с другим протоколом - приложение остаётся на своём чате

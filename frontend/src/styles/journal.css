@@ -49,11 +49,12 @@
 .local-work .activity > summary > svg { transform: translateY(-1px); }
 .local-work .activity[open] > summary > svg { transform: translateY(-1px) rotate(180deg); }
 
-/* лента открывается одним плавным появлением: вложенные анимации появления в это время отключены */
-#feed[data-opening] *, #feed[data-opening] *::before, #feed[data-opening] *::after { animation: none !important; }
-
-/* пока открывающаяся лента проявляется целиком, отдельные блоки внутри не анимируются второй раз */
-#feed[data-opening] * { animation: none !important; }
+/* лента открывается одним плавным появлением: вложенные анимации появления в это время доигрываются мгновенно.
+   Не animation: none - после снятия data-opening браузер запустил бы их с нуля, и ответы проявлялись бы второй раз */
+#feed[data-opening] *, #feed[data-opening] *::before, #feed[data-opening] *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+}
 
 /* сообщение отправлено с телефона */
 .message-origin { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin: 0 2px 6px; font-size: var(--fs-12, 12px); color: var(--muted); }

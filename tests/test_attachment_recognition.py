@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 
 import pytest
 from PIL import Image
@@ -107,7 +108,7 @@ def test_failed_recognition_and_unsupported_types_do_not_break_the_turn():
     pdf = upload(own, "отчёт.pdf", b"%PDF-1.4 test")
     block = run(recognize.attachment_context(Vision(fail=True), "m", own, [shot["id"], pdf["id"]]))
     assert "[ВЛОЖЕНИЕ: shot.png]\nНе удалось прочитать" in block
-    assert "[ВЛОЖЕНИЕ: отчёт.pdf]\nСодержимое файлов этого типа не извлекается" in block
+    assert "[ВЛОЖЕНИЕ: отчёт.pdf] attachment_id=" in block
     assert recognize.recognized_text(attachments.require_attachment(shot["id"])) is None
 
 
@@ -175,3 +176,16 @@ def test_turn_sends_recognized_attachments_to_the_model_but_shows_the_plain_mess
     assert "кнопка «Отмена» пропала" in user and "base64" not in user
     with storage.db() as conn:
         assert conn.execute("SELECT content FROM messages WHERE role='user'").fetchone()[0] == "почини отмену"
+
+
+def test_check_image_reports_result_without_content(tmp_path, capsys):
+    good = tmp_path / "icon.png"
+    Image.new("RGB", (40, 40), (10, 20, 30)).save(good)
+    assert recognize.check_image(str(good)) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is True and report["chars"] > 0
+    broken = tmp_path / "photo.heic"
+    broken.write_bytes(b"not an image")
+    assert recognize.check_image(str(broken)) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+    assert recognize.check_image(str(tmp_path / "missing.png")) == 1

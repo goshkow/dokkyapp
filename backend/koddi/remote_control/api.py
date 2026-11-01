@@ -81,3 +81,29 @@ async def message(host_id: str, key: str, body: dict) -> dict:
 
 async def events(host_id: str, key: str, items: list[dict]) -> dict:
     return await call("POST", "hosts", host_id, "sessions", key, "events", json={"events": items})
+
+
+async def command_file(host_id: str, command_id: str, index: int) -> bytes:
+    """Файл сообщения с телефона."""
+    try:
+        response = await dokky.request("GET", _path("hosts", host_id, "commands", command_id, "attachments", str(index)))
+    except DokkyError as exc:
+        raise RemoteFailure(exc.status, exc.code, str(exc), float(exc.retry_after or 0)) from exc
+    return response.content
+
+
+async def message_file(host_id: str, key: str, client_id: str, fields: dict, content: bytes | None) -> dict:
+    """Вложение сообщения для показа на телефоне; без `content` - только карточка."""
+    files = {"file": (fields["name"], content, "application/octet-stream")} if content is not None else None
+    try:
+        response = await dokky.request(
+            "POST", _path("hosts", host_id, "sessions", key, "messages", client_id, "attachments"), data=fields, files=files
+        )
+    except DokkyError as exc:
+        raise RemoteFailure(exc.status, exc.code, str(exc), float(exc.retry_after or 0)) from exc
+    value = response.json()
+    return value if isinstance(value, dict) else {}
+
+
+async def read(host_id: str, key: str, client_id: str) -> None:
+    await call("POST", "hosts", host_id, "sessions", key, "read", json={"client_id": client_id})

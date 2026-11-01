@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 DELTA_SECONDS = 0.12
 WAIT_STATUS_SECONDS = 2.0
+OUTPUT_SECONDS = 4.0
 
 # заголовок карточки в настоящем времени, как строка журнала в окне
 TITLES = {
@@ -151,6 +152,9 @@ def target(name: str, args: dict, workspace: Path | None, display: str = "") -> 
         return f"{clean_path(args.get('source'), workspace)} → {clean_path(args.get('destination'), workspace)}"[:TARGET_CHARS]
     if name == "mcp.tool_call":
         return clean_text(f"{args.get('server', '')} / {args.get('name', '')}", workspace, TARGET_CHARS)
+    if name == "task.delegate":
+        # как в окне: какой агент и над чем работает
+        return clean_text(" · ".join(str(args[key]) for key in ("agent", "title") if args.get(key)), workspace, TARGET_CHARS)
     for key in ("path", "source", "file", "directory"):
         if args.get(key):
             return clean_path(args[key], workspace)
@@ -167,6 +171,7 @@ class Mirror:
         self.command = command
         self.run = run
         self.chat_id = run.chat_id
+        self.subagent_steps: dict[str, int] = {}
         self.key = key
         self.workspace = workspace
         self.turn_id: int | None = None
@@ -233,7 +238,7 @@ class Mirror:
         elif kind == "agent.warning":
             self.status(payload.get("error"))
         elif kind == "task.progress":
-            self.status(f"Подзадача: {payload.get('title') or 'агент работает'}", throttle="task")
+            self.subagent(payload)
         elif kind == "message.delta":
             self.delta(payload)
         elif kind == "message.reset":
@@ -247,6 +252,8 @@ class Mirror:
             self.tool_call(payload)
         elif kind == "tool.result":
             self.tool_result(payload)
+        elif kind == "tool.output":
+            self.output(payload)
         elif kind == "plan.updated":
             self.plan(payload)
         elif kind == "agent.input_required":
@@ -329,6 +336,7 @@ class Mirror:
             client_id = f"m{row['id']}"
             if self.bridge.upload_message(self.key, client_id, "user", row["content"], row["created_at"], self.workspace):
                 data["user_client_id"] = client_id
+                self.bridge.upload_attachments(self.chat_id, self.key)
         self.event("turn_start", data=data)
 
     def updated(self, payload: dict) -> None:
@@ -401,11 +409,28 @@ class Mirror:
             card["error"] = "Запрещено" if state == "denied" else "Не выполнено"
         self.event("action", entry["title"], fit(card))
 
+    def subagent(self, payload: dict) -> None:
+        """Ход сабагента: на телефоне видно то же, что в окне, - текущее действие и число шагов."""
+        who = str(payload.get("title") or payload.get("agent") or "агент работает")
+        if payload.get("event") != "tool":
+            self.status(f"Подзадача: {who}", throttle="task")
+            return
+        key = str(payload.get("call_id") or who)
+        self.subagent_steps[key] = self.subagent_steps.get(key, 0) + 1
+        name = str(payload.get("name") or "")
+        args = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        doing = " ".join(part for part in (title(name), target(name, args, self.workspace)) if part)
+        self.status(f"Подзадача: {who}. {doing} · шагов: {self.subagent_steps[key]}", throttle="task")
+
     def attach_result(self, card: dict, name: str, result: dict) -> None:
         if result.get("cancelled"):
             card["error"] = "Остановлено"
         elif result.get("error"):
             card["error"] = clean_text(result["error"], self.workspace, ERROR_CHARS)
+        if name == "task.delegate" and str(result.get("summary") or "").strip():
+            card["preview"] = clean_text(str(result["summary"]).strip(), self.workspace, PREVIEW_CHARS)
+            card["preview_kind"] = "output"
+            return
         if isinstance(result.get("change_set_id"), int):
             for key, value in (("added", result.get("lines_added")), ("removed", result.get("lines_removed"))):
                 if isinstance(value, int) and value >= 0:
@@ -469,8 +494,7 @@ class Mirror:
         request_id = f"ar-{request}"
         if payload.get("kind") == "question":
             self.requests[request] = "question"
-            question = clean_text(payload.get("question") or "Агент задал вопрос", self.workspace, TEXT_CHARS)
-            self.event("question_request", question, {"request_id": request_id, "options": [], "allow_text": True})
+            self.question(request_id, payload)
             return
         self.requests[request] = "approval"
         action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
@@ -491,6 +515,52 @@ class Mirror:
             "can_remember": False,
         }
         self.event("approval_request", clean_text(heading, self.workspace, 300), data)
+
+    def question(self, request_id: str, payload: dict) -> None:
+        """Один вопрос идёт с вариантами. Несколько сайт одной карточкой не покажет, поэтому варианты пишем в текст:
+        на такой вопрос отвечают текстом."""
+        asked = [item for item in payload.get("questions") or [] if isinstance(item, dict)]
+        options: list[dict] = []
+        multiple = False
+        if len(asked) == 1:
+            question = str(asked[0].get("question") or "")
+            multiple = bool(asked[0].get("multi_select"))
+            options = [
+                {"label": clean_text(item.get("label"), self.workspace, 120), "description": clean_text(item.get("description") or "", self.workspace, 300)}
+                for item in asked[0].get("options") or [] if isinstance(item, dict)
+            ]
+        elif asked:
+            lines = []
+            for number, item in enumerate(asked, 1):
+                labels = ", ".join(str(option.get("label")) for option in item.get("options") or [] if isinstance(option, dict))
+                lines.append(f"{number}. {item.get('question')}" + (f" (варианты: {labels})" if labels else ""))
+            question = "\n".join(lines)
+        else:
+            question = str(payload.get("question") or "")
+        text = clean_text(question or "Агент задал вопрос", self.workspace, TEXT_CHARS)
+        self.event("question_request", text, {"request_id": request_id, "options": options, "allow_text": True, **({"multiple": True} if multiple else {})})
+
+    def output(self, payload: dict) -> None:
+        """Вывод идущей команды: не чаще раза в несколько секунд, иначе долгая сборка съест предел событий хода."""
+        call_id = str(payload.get("id") or "")
+        entry = self.cards.get(call_id)
+        if not entry or not isinstance(payload.get("text"), str):
+            return
+        entry["output"] = tail(str(entry.get("output") or "") + payload["text"], PREVIEW_CHARS * 8)
+        now = monotonic()
+        if now - entry.get("output_at", 0) < OUTPUT_SECONDS:
+            return
+        entry["output_at"] = now
+        card = {**entry["card"], "preview": tail(clean_text(entry["output"], self.workspace, PREVIEW_CHARS * 8), PREVIEW_CHARS), "preview_kind": "output"}
+        self.event("action", entry["title"], fit(card))
+
+    def partial_answer(self) -> str | None:
+        """Что агент успел написать: уходит и при остановке, и при сбое, иначе ответ на телефоне пропадёт."""
+        partial = next(((key, text) for key, text in sorted(self.texts.items(), reverse=True) if text.strip()), None)
+        if not partial:
+            return None
+        client_id = f"m{partial[0]}"
+        return client_id if self.bridge.upload_message(self.key, client_id, "assistant", clean_text(partial[1], self.workspace, MESSAGE_CHARS), None) else None
 
     def settle_requests(self) -> None:
         """Запросы, оставшиеся без ответа к концу хода: веб не должен держать активные кнопки."""
@@ -542,11 +612,9 @@ class Mirror:
         self.close_cards("error", "Остановлено")
         self.settle_requests()
         data: dict[str, Any] = {"stopped": True}
-        partial = next(((key, text) for key, text in sorted(self.texts.items(), reverse=True) if text.strip()), None)
-        if partial:
-            client_id = f"m{partial[0]}"
-            if self.bridge.upload_message(self.key, client_id, "assistant", clean_text(partial[1], self.workspace, MESSAGE_CHARS), None):
-                data["message_client_id"] = client_id
+        client_id = self.partial_answer()
+        if client_id:
+            data["message_client_id"] = client_id
         self.event("turn_end", data=data)
         self.ended = True
 
@@ -554,6 +622,7 @@ class Mirror:
         self.flush()
         self.close_cards("error", "Прервано")
         self.settle_requests()
+        self.partial_answer()
         reason = clean_text(payload.get("error") or "", self.workspace, 1000).strip()
         self.event("error", f"Агент на компьютере остановился с ошибкой: {reason}" if reason else "Агент на компьютере остановился с ошибкой.")
         self.ended = True

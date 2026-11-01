@@ -18,14 +18,17 @@ import threading
 from pathlib import Path
 
 from koddi.attachments.service import _read_attachment_bytes, require_attachment
+from koddi.documents.pdf_worker import PdfUnreadable
 from koddi.documents.service import READABLE_SUFFIXES
 from koddi.storage.db import db
 
 logger = logging.getLogger(__name__)
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".icns", ".avif", ".heic", ".heif"}
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_PIXELS = 50_000_000
+# мелкую иконку модель почти не различает, поэтому она увеличивается хотя бы до этого размера
+MIN_IMAGE_SIDE = 256
 # сервер Докки оценивает запрос по символам (около 3 на токен), base64 картинки входит в оценку целиком:
 # ~230 тыс. символов - это ~77 тыс. токенов, запрос помещается в окно любого режима
 IMAGE_CHARS = 230_000
@@ -92,20 +95,64 @@ def _remember(item: dict, text: str) -> None:
         )
 
 
+def _opaque(frame):
+    """RGBA без прозрачности. Фон контрастный: белая иконка на белом стала бы пустым квадратом."""
+    from PIL import Image, ImageStat
+
+    alpha = frame.getchannel("A")
+    light = False
+    if alpha.getextrema()[0] < 255 and alpha.getextrema()[1] > 0:
+        light = ImageStat.Stat(frame.convert("L"), alpha).mean[0] > 170
+    image = Image.new("RGB", frame.size, (40, 40, 40) if light else (255, 255, 255))
+    image.paste(frame, mask=alpha)
+    return image
+
+
+def _eight_bit(source):
+    """16-битные PNG и TIFF при обычной конвертации становятся белыми, поэтому яркость растягивается."""
+    if not source.mode.startswith("I"):
+        return source
+    low, high = source.getextrema()
+    scale = 255 / (high - low) if high > low else 0
+    return source.convert("I").point(lambda value: value * scale - low * scale).convert("L")
+
+
 def image_url(item: dict) -> str:
     """Картинка как JPEG data URL в пределах IMAGE_CHARS: крупные уменьшаются, прозрачность ложится на белый."""
-    from PIL import Image
+    return _data_url(_read_attachment_bytes(item, MAX_IMAGE_BYTES), _suffix(item))
 
-    raw = _read_attachment_bytes(item, MAX_IMAGE_BYTES)
+
+def check_image(path: str) -> int:
+    """Проверка собранного приложения из командной строки: печатает только итог, не содержимое."""
+    try:
+        chars = len(_data_url(Path(path).read_bytes(), Path(path).suffix.lower()))
+    except Exception as exc:  # noqa: BLE001 - итог нужен при любой ошибке
+        print(json.dumps({"ok": False, "error": type(exc).__name__}))
+        return 1
+    print(json.dumps({"ok": True, "chars": chars}))
+    return 0
+
+
+def _data_url(raw: bytes, suffix: str) -> str:
+    from PIL import Image, ImageOps
+
+    if suffix in {".heic", ".heif"}:
+        # только для них: остальные картинки не зависят от этой библиотеки
+        import pi_heif
+
+        pi_heif.register_heif_opener()
     with Image.open(io.BytesIO(raw)) as source:
         # размер берётся из заголовка до распаковки пикселей: защита от картинок-бомб
         if source.width * source.height > MAX_IMAGE_PIXELS:
             raise ValueError("Изображение слишком большое")
         source.seek(0)
         source.draft("RGB", (2048, 2048))
-        frame = source.convert("RGBA")
-    image = Image.new("RGB", frame.size, (255, 255, 255))
-    image.paste(frame, mask=frame.getchannel("A"))
+        # фото с телефона хранит поворот отдельно: без этого текст уйдёт модели на боку
+        frame = _eight_bit(ImageOps.exif_transpose(source)).convert("RGBA")
+    image = _opaque(frame)
+    if max(image.size) < MIN_IMAGE_SIDE:
+        times = -(-MIN_IMAGE_SIDE // max(image.size))
+        image = image.resize((image.width * times, image.height * times), Image.Resampling.LANCZOS)
     for side, quality in ((1568, 80), (1568, 65), (1280, 65), (1024, 60), (800, 55), (640, 50), (512, 45)):
         copy = image.copy()
         copy.thumbnail((side, side), Image.Resampling.LANCZOS)
@@ -118,9 +165,9 @@ def image_url(item: dict) -> str:
 
 
 def document_text(item: dict) -> str:
-    from koddi.documents.service import MAX_DOCUMENT_BYTES, extract_text
+    from koddi.documents.service import document_limit, extract_text
 
-    data = _read_attachment_bytes(item, MAX_DOCUMENT_BYTES)
+    data = _read_attachment_bytes(item, document_limit(item["original_name"]))
     text, _outline = extract_text(Path(item["original_name"]), DOCUMENT_CHARS + 1, source_bytes=data)
     text = text.strip()
     return text[:DOCUMENT_CHARS] + ("\n[текст обрезан]" if len(text) > DOCUMENT_CHARS else "")
@@ -184,6 +231,8 @@ async def attachment_context(client, model: str, chat_id: int, identifiers: list
                 return f"[АНАЛИЗ И ОРИГИНАЛЬНЫЙ ТЕКСТ ИЗОБРАЖЕНИЯ: {name}]\n{text}"
         except asyncio.CancelledError:
             raise
+        except PdfUnreadable as exc:
+            return f"[ВЛОЖЕНИЕ: {name}]\n{exc} Скажи пользователю об этом."
         except Exception:  # noqa: BLE001 - сбой одного файла не мешает остальным и самому запросу
             logger.warning("attachment %s was not recognized", item["id"], exc_info=True)
             return f"[ВЛОЖЕНИЕ: {name}]\nНе удалось прочитать содержимое этого файла. Скажи пользователю об этом."

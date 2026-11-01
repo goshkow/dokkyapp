@@ -18,6 +18,12 @@ class RequestQueue:
         self.workers: dict[int, asyncio.Task] = {}
         # чаты, где пользователь сам прервал задачу ради запроса из очереди: остановка не ставит очередь на паузу
         self.interrupted: set[int] = set()
+        # доступ с телефона: запрос с него не должен молча лежать в остановленной очереди
+        self.listeners: list = []
+
+    def _changed(self) -> None:
+        for listener in self.listeners:
+            listener()
 
     def snapshot(self, chat_id: int) -> dict:
         require_chat(chat_id)
@@ -77,6 +83,8 @@ class RequestQueue:
                 payload = json.loads(row["payload_json"])
                 payload["content"] = content
                 conn.execute("UPDATE queued_requests SET payload_json=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (json.dumps(payload, ensure_ascii=False, sort_keys=True), key))
+        if content is None:
+            self._changed()
         return self.snapshot(chat_id)
 
     def promote(self, chat_id: int, key: str, version: int) -> dict:
@@ -100,6 +108,7 @@ class RequestQueue:
     def pause(self, chat_id: int) -> None:
         with db() as conn:
             conn.execute("INSERT INTO queue_state(chat_id,paused) VALUES (?,1) ON CONFLICT(chat_id) DO UPDATE SET paused=1", (chat_id,))
+        self._changed()
 
     def resume(self, chat_id: int) -> dict:
         require_chat(chat_id)
@@ -165,6 +174,7 @@ class RequestQueue:
                 if claimed:
                     conn.execute("UPDATE queued_requests SET status='failed',error='Не удалось подтвердить результат' WHERE id=? AND status='running'",(claimed,))
                 conn.execute('UPDATE queue_state SET paused=1 WHERE chat_id=?',(chat_id,))
+            self._changed()
 
     async def shutdown(self) -> None:
         tasks = list(self.workers.values())

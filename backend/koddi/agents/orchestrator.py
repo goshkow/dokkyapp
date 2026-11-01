@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 import threading
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from koddi.agents.prompts import (
     compose_coding_context,
     compose_coding_system_prompt,
     compose_system_prompt,
+    SMALL_WINDOW_TOKENS,
 )
 from koddi.agents.mcp_tools import discover_agent_tools
 from koddi.agents.memory import retrieve_memory
@@ -44,9 +46,69 @@ from koddi.tools.output_store import save_tool_output
 from koddi.tools.runner import tool_output_excerpt
 from koddi.quality.contract import compact
 
+# сколько запросов к модели ход делает, прежде чем спросить человека, продолжать ли
+STEP_CHECKPOINT = 150
+
 
 def sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+# чтения без побочных эффектов: подряд идущие в одном шаге выполняются одновременно, как в Claude Code.
+# git сюда не входит - параллельные git status спорят за index.lock
+PARALLEL_READS = frozenset({
+    "file.read", "file.read_many", "file.read_range", "file.read_chunk", "file.metadata",
+    "directory.list", "directory.tree", "search.text", "search.files", "symbol.search",
+    "code.outline", "code.references", "code.definition", "attachment.read", "tool.output_read",
+    "project.instructions", "ignore.rules_read", "web.fetch", "web.search",
+})
+PARALLEL_LIMIT = 8
+# живой вывод команды уходит в ленту не чаще раза в 0,4 с и не больше 8000 знаков за раз
+OUTPUT_EVERY = 0.4
+OUTPUT_EVENT_LIMIT = 8000
+
+# команда, которая идёт в чате сейчас: человек может остановить её одну, не отменяя ход
+_running_tools: dict[int, tuple[str, Any]] = {}
+_running_lock = threading.Lock()
+
+
+def stop_tool_call(chat_id: int, call_id: str) -> bool:
+    with _running_lock:
+        current = _running_tools.get(chat_id)
+    if current is None or current[0] != call_id:
+        return False
+    current[1].stop_command()
+    return True
+
+
+def _begin_command(chat_id: int, call_id: str, runner: Any) -> queue.SimpleQueue:
+    """Вывод следующего вызова идёт в ленту, а «Остановить» в окне попадает именно в него."""
+    output: queue.SimpleQueue = queue.SimpleQueue()
+    runner.output_listener = output.put
+    if hasattr(runner, "reset_command"):
+        runner.reset_command()
+    with _running_lock:
+        _running_tools[chat_id] = (call_id, runner)
+    return output
+
+
+def _forget_running(chat_id: int, runner: Any) -> None:
+    with _running_lock:
+        if _running_tools.get(chat_id, (None, None))[1] is runner:
+            del _running_tools[chat_id]
+
+
+def _drain_output(output: queue.SimpleQueue | None) -> str:
+    if output is None:
+        return ""
+    parts = []
+    while True:
+        try:
+            parts.append(output.get_nowait())
+        except queue.Empty:
+            break
+    text = "".join(parts)
+    return text if len(text) <= OUTPUT_EVENT_LIMIT else "…" + text[-OUTPUT_EVENT_LIMIT:]
 
 
 async def responsive_stream(iterator, cancel_event: threading.Event | None = None):
@@ -94,21 +156,120 @@ async def execute_tool(runner, name, args, cancel_event, *, approved=False):
     return result
 
 
-async def execute_tool_events(runner, name, args, cancel_event, *, approved=False):
+async def execute_tool_events(runner, name, args, cancel_event, *, approved=False, output=None):
     pending = asyncio.create_task(execute_tool(runner, name, args, cancel_event, approved=approved))
     started = monotonic()
-    last_heartbeat = started
+    last_heartbeat = last_output = started
+    buffered = ""
     try:
         while not pending.done():
             await asyncio.wait({pending}, timeout=0.2)
+            buffered = (buffered + _drain_output(output))[-OUTPUT_EVENT_LIMIT:]
+            if buffered and monotonic() - last_output >= OUTPUT_EVERY:
+                last_output = monotonic()
+                yield {"output": buffered}
+                buffered = ""
             if not pending.done() and monotonic() - last_heartbeat >= 1:
                 last_heartbeat = monotonic()
                 yield {"waiting_seconds": round(monotonic() - started)}
+        buffered = (buffered + _drain_output(output))[-OUTPUT_EVENT_LIMIT:]
+        if buffered:
+            yield {"output": buffered}
         yield {"result": pending.result()}
     finally:
         if not pending.done():
             pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+async def prefetch_reads(calls, runner, cancel_event, *, usable, hook) -> dict[str, asyncio.Task]:
+    """Подряд идущие чтения в начале шага запускаются сразу и одновременно; цикл шага забирает готовые результаты
+    по порядку. После первого пишущего вызова ничего не предзагружается: чтение должно видеть правку."""
+    candidates, seen = [], set()
+    for call in calls:
+        if call["name"] not in PARALLEL_READS:
+            break
+        try:
+            args = json.loads(call["arguments"])
+        except (ValueError, TypeError):
+            continue
+        key = (call["name"], call["arguments"])
+        # повтор того же чтения в шаге идёт обычным порядком: у неудачных повторов свой учёт
+        if not isinstance(args, dict) or key in seen or not usable(call["name"], args):
+            continue
+        seen.add(key)
+        candidates.append((call, args))
+    if len(candidates) < 2:
+        return {}
+    limit = asyncio.Semaphore(PARALLEL_LIMIT)
+
+    async def run(name, args):
+        async with limit:
+            blocked = await hook(name, args)
+            if blocked:
+                return {"hook_block": blocked}, 0.0
+            started = monotonic()
+            result = await execute_tool(runner, name, args, cancel_event)
+            return {"result": result}, monotonic() - started
+
+    tasks = {}
+    for call, args in candidates:
+        task = asyncio.create_task(run(call["name"], args))
+        # брошенный при отмене хода результат не должен шуметь в журнале «exception was never retrieved»
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        tasks[call["id"]] = task
+    return tasks
+
+
+def _call_arguments(call: dict) -> dict | None:
+    try:
+        args = json.loads(call["arguments"])
+    except (ValueError, TypeError):
+        return None
+    return args if isinstance(args, dict) else None
+
+
+def _owner_or_empty() -> str:
+    from fastapi import HTTPException
+
+    from koddi.policy.account import local_owner
+
+    try:
+        return local_owner()
+    except HTTPException:
+        return ""
+
+
+def _brief_arguments(args: object) -> dict:
+    """Что делает сабагент - для строки в ленте: путь, запрос или команда, без содержимого файлов."""
+    if not isinstance(args, dict):
+        return {}
+    return {key: str(args[key])[:200] for key in ("path", "query", "pattern", "command", "url", "symbol") if key in args}
+
+
+async def _read_only_delegations(rest: list[dict], project_id: int | None, workspace: Path | None, *,
+                                 first: dict) -> list[tuple[str, dict]]:
+    """Следующие подряд читающие поручения, если и первое читающее: их можно запустить вместе с ним."""
+    from koddi.agents.subagents import resolve
+
+    def read_only(args: dict | None) -> bool:
+        # группа запускается до того, как цикл дойдёт до каждого вызова: аргументы проверяются здесь же
+        if (not args or not isinstance(args.get("title"), str) or not isinstance(args.get("task"), str)
+                or not args["task"].strip() or not isinstance(args.get("agent", ""), str)
+                or ("mode" in args and args["mode"] not in {"development", "debug", "plan", "review"})
+                or set(args) - {"title", "task", "agent", "mode"}):
+            return False
+        return resolve(args.get("agent"), project_id, _owner_or_empty(), workspace).get("read_only") is True
+
+    if not await asyncio.to_thread(read_only, first):
+        return []
+    group = []
+    for call in rest:
+        args = _call_arguments(call)
+        if call["name"] != "task.delegate" or not await asyncio.to_thread(read_only, args):
+            break
+        group.append((call["id"], args))
+    return group
 
 
 async def plugin_hook(function: str, *args):
@@ -241,6 +402,11 @@ CONTROL_TOOLS = [
                 "type": "string",
                 "description": "Final report in Markdown for the user's language: one outcome sentence, then short ## sections (what changed, checks, what remains) with lists, `code` for paths and commands, **bold** for key facts. No walls of text.",
             },
+            "commit_message": {
+                "type": "string",
+                "maxLength": 100,
+                "description": "If files changed: one-line commit subject in the project's style, offered to the user.",
+            },
             "evidence": {
                 "type": "array",
                 "description": "One item per acceptance criterion of the contract: met / not_met / unverified, with the "
@@ -271,12 +437,18 @@ CONTROL_TOOLS = [
     ),
     control_tool(
         "task.delegate",
-        "Delegate a self-contained subtask to another agent. Wait for its verified result. Child actions are serial to avoid conflicting workspace writes.",
+        "Delegate a self-contained subtask to a subagent with its own context; you get back only its final report, so "
+        "your context stays small. agent: 'explore' - read-only research (find code, read files, answer a question); "
+        "several explore calls in one step run in parallel. 'general' (default) - can change files and run commands, "
+        "one at a time. Project agents (listed in the request when the user trusted them) are called by name. The "
+        "subagent does not see this conversation: put everything it needs into task.",
         {
             "title": {"type": "string"},
             "task": {"type": "string"},
+            "agent": {"type": "string"},
             "mode": {"type": "string", "enum": ["plan", "development", "debug", "review"]},
         },
+        required=["title", "task"],
     ),
 ]
 
@@ -356,6 +528,7 @@ class AgentOrchestrator:
         config = remote_config() | getattr(self.client, "config", {})
         options = dict(options or {})
         options.pop("_context_checkpoint", None)
+        agent_tools = options.pop("_agent_tools", None)
         if config.get("provider") == "dokky":
             options["_chat_id"] = chat_id
         client = self.client or RemoteAIClient(config)
@@ -422,7 +595,11 @@ class AgentOrchestrator:
             # поток хода могут не читать (очередь, переподключение окна): окно узнаёт о запросе из общей шины
             from koddi.events import event_bus
 
-            await event_bus.publish("agent.request.created", {"chat_id": chat_id, "request_id": request_id, "kind": kind})
+            # вопрос сабагента показывается в чате родителя: своего чата в списке у сабагента нет
+            with db() as conn:
+                parent = conn.execute("SELECT parent_chat_id FROM chats WHERE id=?", (chat_id,)).fetchone()
+            shown_chat = parent[0] if parent and parent[0] else chat_id
+            await event_bus.publish("agent.request.created", {"chat_id": shown_chat, "request_id": request_id, "kind": kind})
             while True:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
@@ -437,10 +614,144 @@ class AgentOrchestrator:
                     if not isinstance(answer, dict):
                         raise ValueError("Ответ пользователя должен быть объектом")
                     # меню чатов снимает метку вопроса
-                    await event_bus.publish("agent.request.resolved", {"chat_id": chat_id, "request_id": request_id})
+                    await event_bus.publish("agent.request.resolved", {"chat_id": shown_chat, "request_id": request_id})
                     yield answer
                     return
                 await asyncio.sleep(0.2)
+
+        async def delegate(call_id: str, args: dict):
+            """Сабагент в своём чате: события прогресса для ленты, последним - результат для модели (dict)."""
+            from koddi.agent_runtime import create_task, update_task_status
+            from koddi.agents import subagents
+
+            spec = await asyncio.to_thread(subagents.resolve, args.get("agent"), project_id, _owner_or_empty(), workspace)
+            if "error" in spec:
+                yield {"ok": False, **spec}
+                return
+            title = str(args.get("title") or "Подзадача").strip()[:120] or "Подзадача"
+            child_mode = args.get("mode") or "development"
+            with db() as conn:
+                child_chat = int(conn.execute(
+                    "INSERT INTO chats(project_id,title,mode,model,owner_id,parent_chat_id) "
+                    "SELECT ?,?,?,?,owner_id,? FROM chats WHERE id=?",
+                    (project_id, title, child_mode, selected, chat_id, chat_id),
+                ).lastrowid)
+            child_task = create_task(title=title, project_id=project_id, chat_id=child_chat, mode=child_mode,
+                                     role="researcher" if spec["read_only"] else "coder")
+            update_task_status(child_task["id"], "running")
+            if not spec["read_only"]:
+                from koddi.changes.writer import release as release_writer
+
+                # родитель ждёт пишущего ребёнка и сам не пишет: замок папки переходит к нему
+                release_writer(turn_id)
+            child_options = dict(options)
+            if spec["tools"] is not None:
+                child_options["_agent_tools"] = spec["tools"]
+            # своя отмена: лимит времени останавливает только сабагента, а отмена хода - и его.
+            # время, пока сабагент ждёт ответа человека, в лимит не входит
+            child_cancel = threading.Event()
+            clock = {"deadline": monotonic() + subagents.TIMEOUT_SECONDS, "paused": None}
+
+            def expired() -> bool:
+                return clock["paused"] is None and monotonic() > clock["deadline"]
+
+            async def watch():
+                while not child_cancel.is_set():
+                    if cancel_event.is_set() or expired():
+                        child_cancel.set()
+                        return
+                    await asyncio.sleep(0.2)
+
+            watcher = asyncio.create_task(watch())
+            child_stream = AgentOrchestrator(client.client, _depth=self._depth + 1).run(
+                chat_id=child_chat, project_id=project_id, workspace=workspace,
+                user_message=f"{spec['role']}\n\nTask:\n{args['task']}", display_message=args["task"],
+                mode=child_mode, model=selected, options=child_options, cancel_event=child_cancel,
+            )
+            progress = {"call_id": call_id, "task_id": child_task["id"], "chat_id": child_chat, "title": title,
+                        "agent": spec["name"]}
+            timed_out = False
+            try:
+                yield sse("task.progress", {**progress, "event": "started"})
+                async for event in child_stream:
+                    kind, _, body = event.partition("\ndata: ")
+                    kind = kind.removeprefix("event: ")
+                    if clock["paused"] is not None and kind != "agent.input_required":
+                        clock["deadline"] += monotonic() - clock["paused"]
+                        clock["paused"] = None
+                    if kind == "agent.input_required":
+                        clock["paused"] = clock["paused"] or monotonic()
+                        yield event  # вопрос или подтверждение сабагента задаёт окно родителя
+                    elif kind == "tool.call":
+                        try:
+                            called = json.loads(body)
+                        except ValueError:
+                            continue
+                        yield sse("task.progress", {**progress, "event": "tool", "name": called.get("name"),
+                                                    "arguments": _brief_arguments(called.get("arguments"))})
+            except asyncio.CancelledError:
+                if cancel_event.is_set() or not expired():
+                    update_task_status(child_task["id"], "cancelled")
+                    raise
+                timed_out = True
+            except GeneratorExit:
+                update_task_status(child_task["id"], "cancelled")
+                raise
+            finally:
+                watcher.cancel()
+                await child_stream.aclose()
+            with db() as conn:
+                row = conn.execute("SELECT status FROM turns WHERE chat_id=? ORDER BY id DESC LIMIT 1", (child_chat,)).fetchone()
+                content = conn.execute(
+                    "SELECT content FROM messages WHERE chat_id=? AND role='assistant' AND content<>'' ORDER BY id DESC LIMIT 1",
+                    (child_chat,),
+                ).fetchone()
+            child_status = row[0] if row else "failed"
+            result = {"ok": child_status == "completed", "agent": spec["name"], "task_id": child_task["id"],
+                      "chat_id": child_chat, "summary": content[0] if content else "",
+                      "status": "timeout" if timed_out else child_status}
+            if timed_out:
+                result["error"] = (f"Сабагент не уложился в {subagents.TIMEOUT_SECONDS // 60} минут и остановлен; "
+                                   "summary - то, что он успел сообщить.")
+            update_task_status(child_task["id"], child_status, progress=result)
+            yield sse("task.progress", {**progress, "event": "finished", "status": result["status"]})
+            yield result
+
+        async def delegate_together(group: list[tuple[str, dict]], results: dict[str, dict]):
+            """Читающие сабагенты одного шага - одновременно (не больше PARALLEL_LIMIT); события идут по мере прихода."""
+            from koddi.agents.subagents import PARALLEL_LIMIT as AGENTS_AT_ONCE
+
+            stream: asyncio.Queue = asyncio.Queue()
+            limit = asyncio.Semaphore(AGENTS_AT_ONCE)
+
+            async def one(call_id: str, args: dict):
+                results[call_id] = {"ok": False, "error": "Сабагент не запустился."}
+                try:
+                    async with limit:
+                        async for item in delegate(call_id, args):
+                            if isinstance(item, str):
+                                await stream.put(item)
+                            else:
+                                results[call_id] = item
+                except Exception as exc:
+                    audit_event("WARNING", "agents.subagent_failed", type(exc).__name__, {"chat_id": chat_id})
+                    results[call_id] = {"ok": False, "error": f"Сабагент завершился с ошибкой: {type(exc).__name__}"}
+                finally:
+                    await stream.put(None)
+
+            workers = [asyncio.create_task(one(call_id, args)) for call_id, args in group]
+            finished = 0
+            try:
+                while finished < len(workers):
+                    item = await stream.get()
+                    if item is None:
+                        finished += 1
+                    else:
+                        yield item
+            finally:
+                for worker in workers:
+                    worker.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
 
         try:
             if cancel_event.is_set():
@@ -513,12 +824,14 @@ class AgentOrchestrator:
                     if t["function"]["name"] != "task.delegate"
                     or (
                         (config.get("provider") == "dokky" or mode in {"development", "debug"})
-                        and self._depth < 4
+                        # вложенных сабагентов нет, как в Claude Code: поручение не расползается деревом
+                        and self._depth == 0
                     )
                 ]
                 tools = [t for t in tools if t["function"]["name"] != "task.ask_user"] + controls
             mcp_bindings = {}
-            if workspace and (
+            # сабагенту со своим набором MCP не передаётся: не поднимаем серверы и не спрашиваем о них зря
+            if workspace and agent_tools is None and (
                 mode in {"development", "debug"}
                 or (config.get("provider") == "dokky" and mode in {"plan", "review"})
             ):
@@ -585,14 +898,28 @@ class AgentOrchestrator:
                     if not discovery.done():
                         discovery.cancel()
                     await asyncio.gather(discovery, return_exceptions=True)
+            if agent_tools is not None:
+                from koddi.agents.subagents import CHILD_CONTROLS
+
+                # сабагент видит только свой набор: роль из файла проекта может сузить права, но не расширить
+                keep = set(agent_tools) | CHILD_CONTROLS
+                tools = [item for item in tools if item["function"]["name"] in keep]
+                allowed_names &= keep
             if config.get("provider") == "dokky":
                 from koddi.dokky.coding import load, compatible_tools
 
                 tools.sort(key=lambda item: item["function"]["name"])
-            memory = await asyncio.to_thread(retrieve_memory, project_id, user_message)
-            from koddi.agents.profile_memory import memory_context
+            from koddi.agents.profile_memory import forget_everything, memory_context
 
+            # только просьба человека: поручение вложенному агенту пишет модель
+            erased = None
+            if self._depth == 0:
+                request = display_message if display_message is not None else user_message
+                erased = await asyncio.to_thread(forget_everything, request)
+            memory = await asyncio.to_thread(retrieve_memory, project_id, user_message)
             profile = await asyncio.to_thread(memory_context, project_id)
+            if erased is not None:
+                profile["memory_erased"] = erased
             project_map = None
             if workspace is not None and mode != "chat":
                 from koddi.policy.account import local_owner as map_owner
@@ -604,7 +931,7 @@ class AgentOrchestrator:
                 except Exception as exc:
                     audit_event("WARNING", "project_map.snapshot", str(exc)[:300], {"project_id": project_id})
             hints = None
-            if workspace is not None and mode != "chat" and config.get("provider") == "dokky":
+            if workspace is not None and mode != "chat":
                 from koddi.agents.hints import turn_hints
 
                 hints = await asyncio.to_thread(
@@ -632,9 +959,12 @@ class AgentOrchestrator:
                     tool_schemas=tools,
                     memory=memory,
                     profile=profile,
+                    hints=hints,
+                    small_window=context_limit(config) < SMALL_WINDOW_TOKENS,
                 )
             messages = [{"role": "system", "content": system}, *repaired, user]
             pending_followup = None
+            completion_reminded = False
             if config.get("provider") == "dokky":
                 from koddi.dokky.coding import (
                     ensure, recover, pending, unconfirmed_tail, journal_since_recovery,
@@ -805,9 +1135,25 @@ class AgentOrchestrator:
             force_compaction = False
             rejected_context_limit = None
             compacted_baseline = None
+            next_checkpoint = STEP_CHECKPOINT
             while not complete:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
+                if step >= next_checkpoint:
+                    # ход без присмотра не должен тратить деньги бесконечно: режим подтверждений тут ни при чём
+                    next_checkpoint = step + STEP_CHECKPOINT
+                    answer = {}
+                    async for value in wait_input("approval", {
+                        "name": "agent.continue",
+                        "arguments": {},
+                        "question": f"Докки уже сделал {step} шагов в этом ходе. Продолжить работу?",
+                    }):
+                        if isinstance(value, str):
+                            yield value
+                        else:
+                            answer = value
+                    if answer.get("approved") is not True:
+                        raise ValueError(f"Работа остановлена после {step} шагов: продолжение не подтверждено.")
                 active_config = config | getattr(client, "config", {})
                 if rejected_context_limit is not None:
                     active_config["context_tokens_limit"] = rejected_context_limit
@@ -1041,10 +1387,22 @@ class AgentOrchestrator:
                 if not calls and mode in {"development", "debug", "build"} and getattr(runner, "completion_diagnostics", lambda: [])():
                     raise RemoteAIError("В изменённых файлах остались ошибки синтаксиса; результат и диагностика сохранены", code="verification_failed")
                 context_checkpoint = False
+                # правки надо сдать через task.complete: там гейт качества. Напоминаем один раз, упрямая модель хода не зациклит
+                remind_complete = False
+                if (
+                    not calls and reason != "length" and not completion_reminded and self._depth == 0
+                    and mode in {"development", "debug", "build"} and workspace is not None
+                    and not any(item.get("status") in {"pending", "running"} for item in plan)
+                    and "task.complete" in allowed_names
+                ):
+                    from koddi.quality import gate
+
+                    remind_complete = bool(await asyncio.to_thread(gate.turn_changes, turn_id))
                 channel = (
                     "commentary"
                     if calls
                     or reason == "length"
+                    or remind_complete
                     or (
                         mode != "plan"
                         and any(item.get("status") in {"pending", "running"} for item in plan)
@@ -1095,6 +1453,16 @@ class AgentOrchestrator:
                         }
                         messages.append(continuation)
                         await durable_write(journal, chat_id, continuation)
+                    elif remind_complete:
+                        completion_reminded = True
+                        reminder = {
+                            "role": "user",
+                            "content": "Files were changed in this turn: finish by calling task.complete with the summary "
+                                       "for the user, it runs the checks. Do not repeat the report as plain text.",
+                        }
+                        messages.append(reminder)
+                        await durable_write(journal, chat_id, reminder)
+                        continue
                     elif mode != "plan" and any(
                         item.get("status") in {"pending", "running"} for item in plan
                     ):
@@ -1125,31 +1493,44 @@ class AgentOrchestrator:
                 created_ids.append(activity_id)
                 events = []
                 completion_summary = None
-                for call in calls:
-                    if cancel_event.is_set():
-                        raise asyncio.CancelledError
-                    name = call["name"]
-                    try:
-                        args = json.loads(call["arguments"])
-                        if not isinstance(args, dict):
-                            raise ValueError("arguments must be an object")
-                    except (ValueError, TypeError):
-                        args = None
+                tool_names_now = {t["function"]["name"] for t in tools}
+                prefetched = {} if pending_followup else await prefetch_reads(
+                    calls, runner, cancel_event,
+                    usable=lambda name, args: (
+                        name in tool_names_now and name in allowed_names and name not in mcp_bindings
+                        and not self._control_error(name, args) and not failures.needs_approval(name, args)
+                    ),
+                    hook=lambda name, args: plugin_hook("pre_tool", project_id, workspace, chat_id, name, args, None),
+                )
+                announced: dict[str, dict] = {}
+                delegated: dict[str, dict] = {}
+
+                async def announce(call: dict, args: dict | None) -> str:
                     data = {
-                        "name": name,
+                        "name": call["name"],
                         "arguments": args or {},
                         "id": call["id"],
                         "message_id": activity_id,
                         "turn_id": turn_id,
                         "created_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                     }
-                    if name in mcp_bindings:
-                        data["display_name"] = "/".join(mcp_bindings[name])
+                    if call["name"] in mcp_bindings:
+                        data["display_name"] = "/".join(mcp_bindings[call["name"]])
+                    announced[call["id"]] = data
                     events.append({"event": "tool.call", "data": data})
                     await durable_write(
                         save_message, activity_id, "", {"status": "running", "events": events}
                     )
-                    yield sse("tool.call", data)
+                    return sse("tool.call", data)
+
+                for position, call in enumerate(calls):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    name = call["name"]
+                    args = _call_arguments(call)
+                    if call["id"] not in announced:
+                        yield await announce(call, args)
+                    data = announced[call["id"]]
                     tool_elapsed = 0.0
                     if pending_followup:
                         result = {"ok": False, "interrupted": True, "skipped": True,
@@ -1259,6 +1640,11 @@ class AgentOrchestrator:
                                           "before finishing. Address it, then call task.complete again: " + reason}
                         if result is None:
                             result, complete = {"ok": True}, True
+                            suggested_commit = " ".join(str(args.get("commit_message") or "").split())[:100]
+                            if suggested_commit:
+                                from koddi.quality import gate
+
+                                await durable_write(gate.save, turn_id, commit_message=suggested_commit)
                             completion_summary = args["summary"] + (f"\n\n---\n{quality_report}" if quality_report else "")
                             final_id = await durable_write(create_message, chat_id, "text", turn_id)
                             created_ids.append(final_id)
@@ -1277,89 +1663,28 @@ class AgentOrchestrator:
                                 },
                             )
                     elif name == "task.delegate":
-                        if args.get("mode") not in {
-                            "plan",
-                            "development",
-                            "debug",
-                            "review",
-                        } or not args.get("task"):
-                            result = {
-                                "ok": False,
-                                "error": "Нужны задача и поддерживаемый режим.",
-                            }
+                        if call["id"] in delegated:
+                            result = delegated.pop(call["id"])
                         else:
-                            with db() as conn:
-                                child_chat = int(
-                                    conn.execute(
-                                        "INSERT INTO chats(project_id,title,mode,model,owner_id) SELECT ?,?,?,?,owner_id FROM chats WHERE id=?",
-                                        (
-                                            project_id,
-                                            args["title"],
-                                            args["mode"],
-                                            selected,
-                                            chat_id,
-                                        ),
-                                    ).lastrowid
-                                )
-                            from koddi.agent_runtime import create_task, update_task_status
-
-                            child_task = create_task(
-                                title=args["title"],
-                                project_id=project_id,
-                                chat_id=child_chat,
-                                mode=args["mode"],
-                                role="coder",
-                            )
-                            update_task_status(child_task["id"], "running")
-                            from koddi.changes.writer import release as release_writer
-
-                            # родитель ждёт дочерний ход и сам не пишет: замок папки переходит к ребёнку
-                            release_writer(turn_id)
-                            child_stream = AgentOrchestrator(client.client, _depth=self._depth + 1).run(
-                                chat_id=child_chat,
-                                project_id=project_id,
-                                workspace=workspace,
-                                user_message=args["task"],
-                                mode=args["mode"],
-                                model=selected,
-                                options=options,
-                                cancel_event=cancel_event,
-                            )
-                            try:
-                                async for event in child_stream:
-                                    if event.startswith("event: agent.input_required"):
-                                        yield event
+                            group = [(call["id"], args)]
+                            if not pending_followup and not complete:
+                                group += await _read_only_delegations(calls[position + 1:], project_id, workspace,
+                                                                      first=args)
+                            if len(group) > 1:
+                                for other in calls[position + 1: position + len(group)]:
+                                    yield await announce(other, _call_arguments(other))
+                                async for event in delegate_together(group, delegated):
+                                    yield event
+                                if cancel_event.is_set():
+                                    raise asyncio.CancelledError
+                                result = delegated.pop(call["id"])
+                            else:
+                                result = {"ok": False, "error": "Сабагент не запустился."}
+                                async for item in delegate(call["id"], args):
+                                    if isinstance(item, str):
+                                        yield item
                                     else:
-                                        yield sse(
-                                            "task.progress",
-                                            {
-                                                "task_id": child_task["id"],
-                                                "title": args["title"],
-                                                "event": event.splitlines()[0][7:],
-                                            },
-                                        )
-                            except (asyncio.CancelledError, GeneratorExit):
-                                update_task_status(child_task["id"], "cancelled")
-                                raise
-                            finally:
-                                await child_stream.aclose()
-                            with db() as conn:
-                                child_status = conn.execute(
-                                    "SELECT status FROM turns WHERE chat_id=? ORDER BY id DESC LIMIT 1",
-                                    (child_chat,),
-                                ).fetchone()[0]
-                                content = conn.execute(
-                                    "SELECT content FROM messages WHERE chat_id=? AND role='assistant' AND content<>'' ORDER BY id DESC LIMIT 1",
-                                    (child_chat,),
-                                ).fetchone()
-                            result = {
-                                "ok": child_status == "completed",
-                                "task_id": child_task["id"],
-                                "chat_id": child_chat,
-                                "summary": content[0] if content else "",
-                                "status": child_status,
-                            }
-                            update_task_status(child_task["id"], child_status, progress=result)
+                                        result = item
                     else:
                         if failures.needs_approval(name, args) and access_profile(project_id) == "full":
                             # в режиме «Разрешить всё» вопросов нет: повтор той же ошибки просто не выполняется
@@ -1390,23 +1715,41 @@ class AgentOrchestrator:
                                 "arguments": args,
                             }
                         binding = mcp_bindings.get(name)
-                        # хук плагина может только запретить: до вопроса человеку и до исполнения
-                        hook_block = await plugin_hook("pre_tool", project_id, workspace, chat_id, name, args, binding)
+                        early = prefetched.pop(call["id"], None)
+                        if early is not None:
+                            started_wait = monotonic()
+                            while not early.done():
+                                await asyncio.wait({early}, timeout=1)
+                                if not early.done():
+                                    yield sse("tool.waiting", {**data, "seconds": round(monotonic() - started_wait)})
+                            early_outcome, early_elapsed = early.result()
+                            hook_block = early_outcome.get("hook_block")
+                        else:
+                            # хук плагина может только запретить: до вопроса человеку и до исполнения
+                            hook_block = await plugin_hook("pre_tool", project_id, workspace, chat_id, name, args, binding)
                         if hook_block:
                             result = {"ok": False, "error": "A plugin PreToolUse hook the user approved blocked this "
                                       "action: " + hook_block}
                         else:
-                            execution_started = monotonic()
-                            async for update in execute_tool_events(
-                                runner, execution_name, execution_args, cancel_event
-                            ):
-                                if "waiting_seconds" in update:
-                                    yield sse(
-                                        "tool.waiting", {**data, "seconds": update["waiting_seconds"]}
-                                    )
-                                else:
-                                    result = update["result"]
-                            tool_elapsed += monotonic() - execution_started
+                            if early is not None:
+                                result = early_outcome["result"]
+                                tool_elapsed += early_elapsed
+                            else:
+                                command_output = _begin_command(chat_id, call["id"], runner)
+                                execution_started = monotonic()
+                                async for update in execute_tool_events(
+                                    runner, execution_name, execution_args, cancel_event, output=command_output
+                                ):
+                                    if "output" in update:
+                                        yield sse("tool.output", {"id": data["id"], "message_id": activity_id,
+                                                                  "turn_id": turn_id, "text": update["output"]})
+                                    elif "waiting_seconds" in update:
+                                        yield sse(
+                                            "tool.waiting", {**data, "seconds": update["waiting_seconds"]}
+                                        )
+                                    else:
+                                        result = update["result"]
+                                tool_elapsed += monotonic() - execution_started
                             if result.get("approval_required"):
                                 action = describe_action(
                                     execution_name, execution_args,
@@ -1424,16 +1767,19 @@ class AgentOrchestrator:
                                     audit_event("INFO", "tool.review", execution_name, {
                                         key: verdict[key] for key in ("available", "allowed", "necessity", "safety")
                                     })
-                                answer = {"approved": True} if verdict and verdict["allowed"] else {}
+                                # одновременные чтения одного сайта: разрешение первого годится и для остальных
+                                known_site = execution_name == "web.fetch" and runner.fetch_host_approved(execution_args)
+                                answer = {"approved": True} if known_site or (verdict and verdict["allowed"]) else {}
                                 if verdict and verdict["allowed"]:
                                     yield sse("agent.status", {"text": "Докки проверил и разрешил: " + (verdict["reason"] or action["title"].lower())})
-                                else:
+                                elif not known_site:
                                     async for value in wait_input("approval", {**data, "action": action, "review": verdict}):
                                         if isinstance(value, str):
                                             yield value
                                         else:
                                             answer = value
                                 if answer.get("approved") is True:
+                                    command_output = _begin_command(chat_id, call["id"], runner)
                                     execution_started = monotonic()
                                     async for update in execute_tool_events(
                                         runner,
@@ -1441,8 +1787,12 @@ class AgentOrchestrator:
                                         execution_args,
                                         cancel_event,
                                         approved=True,
+                                        output=command_output,
                                     ):
-                                        if "waiting_seconds" in update:
+                                        if "output" in update:
+                                            yield sse("tool.output", {"id": data["id"], "message_id": activity_id,
+                                                                      "turn_id": turn_id, "text": update["output"]})
+                                        elif "waiting_seconds" in update:
                                             yield sse(
                                                 "tool.waiting",
                                                 {**data, "seconds": update["waiting_seconds"]},
@@ -1455,6 +1805,8 @@ class AgentOrchestrator:
                                         "ok": False,
                                         "error": "Пользователь запретил действие. Не повторяйте без нового разрешения.",
                                     }
+                            runner.output_listener = None
+                            _forget_running(chat_id, runner)
                             if result.get("ok") is not False:
                                 notes = await plugin_hook("post_tool", project_id, workspace, chat_id, name, args, result, binding)
                                 if notes:
@@ -1601,6 +1953,8 @@ class AgentOrchestrator:
 
             release(turn_id)
             current_metrics.reset(metric_token)
+            if "runner" in locals():
+                _forget_running(chat_id, runner)
             if "runner" in locals() and getattr(runner, "read_cache", None) is not None:
                 metrics.local_read_cache = runner.read_cache.stats()
             try:
@@ -1750,4 +2104,6 @@ class AgentOrchestrator:
             return None if normalize_questions(args) else "Передайте хотя бы один вопрос"
         if name == "task.complete" and not args["summary"].strip():
             return "Итог не должен быть пустым"
+        if name == "task.delegate" and not args["task"].strip():
+            return "Опишите задачу для сабагента: он не видит этот разговор"
         return None

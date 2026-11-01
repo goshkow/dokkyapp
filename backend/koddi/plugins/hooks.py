@@ -1,5 +1,6 @@
-"""Хуки плагинов, которые человек разрешил для этой версии: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+"""Хуки плагинов и проекта, которые человек разрешил для этой версии: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
 `PostToolUse` и `Stop`, с тем же протоколом, что в Claude Code (JSON на stdin, код выхода 2 или JSON-решение).
+Хуки проекта - `hooks` в `.claude/settings.json` и соседних файлах (skills/project.py), доверие - к версии файла.
 
 Хук может только добавить контекст или запретить действие: разрешить то, что политика Докки не пустила, он не может.
 Неразрешённый или изменённый хук не запускается. В журнал пишется только факт запуска и код выхода.
@@ -139,8 +140,23 @@ def _audit(item: dict, event: str, code: int) -> None:
                 f"{item['name']} {event} exit={code}", {"plugin": item["name"], "event": event, "exit_code": code})
 
 
+def _root(item: dict) -> Path:
+    # у хуков проекта корень - папка проекта, у плагина - его папка в данных Докки
+    return item["root"] if "root" in item else store.plugin_dir_for(item)
+
+
+def project_items(project_id: int | None, workspace: Path | None, owner: str) -> list[dict]:
+    """Подтверждённые файлы хуков проекта в виде плагина: тот же запуск, тот же протокол."""
+    from koddi.skills.project import trusted
+
+    if workspace is None:
+        return []
+    return [{"name": f"проект {item['path']}", "path": item["path"], "exec_digest": item["sha256"], "root": workspace,
+             "manifest": {"hooks": item["hooks"]}} for item in trusted(project_id, owner, workspace, kind="hooks")]
+
+
 def _run(item: dict, event: str, workspace: Path, payload: dict) -> list[str]:
-    root = store.plugin_dir_for(item)
+    root = _root(item)
     outputs = []
     for hook in item["manifest"].get("hooks", []):
         if hook["event"] != event or not hook.get("supported"):
@@ -165,7 +181,7 @@ def turn_context(owner: str, project_id: int | None, workspace: Path, chat_id: i
     if permission_profile(project_id) == "read-only":
         return []
     result = []
-    for item in store.approved(owner):
+    for item in [*store.approved(owner), *project_items(project_id, workspace, owner)]:
         events = {hook["event"] for hook in item["manifest"].get("hooks", []) if hook.get("supported")}
         if not events:
             continue
@@ -184,17 +200,19 @@ def turn_context(owner: str, project_id: int | None, workspace: Path, chat_id: i
 def _session_start(item: dict, workspace: Path, chat_id: int, payload: dict) -> str:
     from koddi.storage.db import db
 
+    # вывод сохраняется на чат и версию: SessionStart в Claude Code идёт один раз, а контекст нужен каждому ходу
+    table, column, key = (("project_hook_outputs", "path", item["path"]) if "root" in item
+                          else ("plugin_hook_outputs", "plugin_id", item["id"]))
     with db() as conn:
-        row = conn.execute("SELECT digest, output FROM plugin_hook_outputs WHERE plugin_id=? AND chat_id=?",
-                           (item["id"], chat_id)).fetchone()
+        row = conn.execute(f"SELECT digest, output FROM {table} WHERE {column}=? AND chat_id=?", (key, chat_id)).fetchone()
     if row is not None and row["digest"] == item["exec_digest"]:
         return row["output"]
     text = "\n\n".join(_run(item, "SessionStart", workspace, payload))[:MAX_OUTPUT]
     with db() as conn:
         conn.execute(
-            "INSERT INTO plugin_hook_outputs(plugin_id, chat_id, digest, output) VALUES (?,?,?,?) "
-            "ON CONFLICT(plugin_id, chat_id) DO UPDATE SET digest=excluded.digest, output=excluded.output",
-            (item["id"], chat_id, item["exec_digest"], text))
+            f"INSERT INTO {table}({column}, chat_id, digest, output) VALUES (?,?,?,?) "
+            f"ON CONFLICT({column}, chat_id) DO UPDATE SET digest=excluded.digest, output=excluded.output",
+            (key, chat_id, item["exec_digest"], text))
     return text
 
 
@@ -220,13 +238,13 @@ def _owner() -> str | None:
         return None
 
 
-def _active(event: str, project_id: int | None) -> list[dict]:
+def _active(event: str, project_id: int | None, workspace: Path | None) -> list[dict]:
     from koddi.policy.grants import permission_profile
 
     owner = _owner()
     if owner is None or permission_profile(project_id) == "read-only":
         return []
-    return [item for item in store.approved(owner)
+    return [item for item in [*store.approved(owner), *project_items(project_id, workspace, owner)]
             if any(hook["event"] == event and hook.get("supported") for hook in item["manifest"].get("hooks", []))]
 
 
@@ -262,8 +280,8 @@ def _fire(event: str, project_id: int | None, workspace: Path, payload: dict, ta
     from koddi.logs.service import redact
 
     reasons, contexts = [], []
-    for item in _active(event, project_id):
-        root = store.plugin_dir_for(item)
+    for item in _active(event, project_id, workspace):
+        root = _root(item)
         for hook in item["manifest"].get("hooks", []):
             if hook["event"] != event or not hook.get("supported"):
                 continue
@@ -295,7 +313,7 @@ def _tool_payload(name: str, args: dict, workspace: Path, chat_id: int | None, m
 def pre_tool(project_id: int | None, workspace: Path | None, chat_id: int | None, name: str, args: dict,
              mcp: tuple[str, str] | None = None) -> str | None:
     """Причина запрета от хуков PreToolUse или None. Хук не может разрешить действие в обход политики."""
-    if workspace is None or not _active("PreToolUse", project_id):
+    if workspace is None or not _active("PreToolUse", project_id, workspace):
         return None
     payload, names = _tool_payload(name, args, workspace, chat_id, mcp)
     reasons, _ = _fire("PreToolUse", project_id, workspace, payload, names=names)
@@ -305,7 +323,7 @@ def pre_tool(project_id: int | None, workspace: Path | None, chat_id: int | None
 def post_tool(project_id: int | None, workspace: Path | None, chat_id: int | None, name: str, args: dict, result: dict,
               mcp: tuple[str, str] | None = None) -> list[str]:
     """Замечания хуков PostToolUse к результату: модель увидит их рядом с результатом инструмента."""
-    if workspace is None or not _active("PostToolUse", project_id):
+    if workspace is None or not _active("PostToolUse", project_id, workspace):
         return []
     payload, names = _tool_payload(name, args, workspace, chat_id, mcp)
     response = json.dumps(result, ensure_ascii=False, default=str)
@@ -316,7 +334,7 @@ def post_tool(project_id: int | None, workspace: Path | None, chat_id: int | Non
 
 def stop(project_id: int | None, workspace: Path | None, chat_id: int | None, blocks: int) -> str | None:
     """Причина продолжить работу от хуков Stop или None. После MAX_STOP_BLOCKS отказов хук больше не держит ход."""
-    if workspace is None or blocks >= MAX_STOP_BLOCKS or not _active("Stop", project_id):
+    if workspace is None or blocks >= MAX_STOP_BLOCKS or not _active("Stop", project_id, workspace):
         return None
     payload = {"session_id": f"dokky-chat-{chat_id}" if chat_id else "", "cwd": str(workspace),
                "stop_hook_active": blocks > 0}

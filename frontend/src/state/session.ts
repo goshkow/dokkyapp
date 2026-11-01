@@ -1,3 +1,4 @@
+import { forgetPrompts } from '../lib/promptHistory';
 import { resetCloudPreferences } from './cloudPrefs';
 import { logout } from './data';
 import { confirmDialog } from './overlay';
@@ -8,4 +9,5 @@ export async function signOut(beforeLogout?: () => void): Promise<void> {
   beforeLogout?.();
   await logout();
   resetCloudPreferences();
+  forgetPrompts();
 }

@@ -8,6 +8,7 @@ export interface Project {
   id: number;
   name: string;
   path: string;
+  exists?: boolean;
 }
 
 export interface Chat {
@@ -81,6 +82,8 @@ export interface AppSettings {
   dev_instructions: string;
   launch_at_login: boolean;
   enter_sends: boolean;
+  /** Системное уведомление, когда агент закончил или ждёт ответа, а окно в фоне. */
+  agent_notifications: boolean;
   permission_profile: PermissionProfile;
   private_network: boolean;
   selected_model: string;
@@ -105,6 +108,7 @@ export const defaultSettings: AppSettings = {
   dev_instructions: '',
   launch_at_login: false,
   enter_sends: true,
+  agent_notifications: true,
   permission_profile: 'trusted',
   private_network: true,
   selected_model: '',

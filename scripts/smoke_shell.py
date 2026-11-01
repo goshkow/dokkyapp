@@ -50,7 +50,7 @@ def main():
         elif path == "/api/dokky/bootstrap":
             value = {}
         elif path == "/api/projects":
-            value = [{"id": 1, "name": "goshcode", "path": "C:/Users/User/Documents/goshcode"}]
+            value = [{"id": 1, "name": "demo-project", "path": "C:/Users/User/Documents/demo-project"}]
         elif path == "/api/chats":
             value = chats
         elif path == "/api/models/options":

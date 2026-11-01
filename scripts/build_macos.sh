@@ -59,6 +59,7 @@ rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_h
   --macos-app-version="$VERSION" \
   --macos-signed-app-name=com.goshkow.dokky \
   --macos-app-protected-resource="NSMicrophoneUsageDescription:Голосовой ввод в чате" \
+  --macos-app-protected-resource="NSCameraUsageDescription:Фото с камеры в чате и в «Еде»" \
   --assume-yes-for-downloads \
   --enable-plugin=pyside6 \
   --jobs="$JOBS" \
@@ -93,6 +94,9 @@ APP="$OUT/Докки.app"
 
 mkdir -p "$APP/Contents/MacOS/koddi/computer_use/native"
 cp backend/koddi/computer_use/native/dokky-computer-helper "$APP/Contents/MacOS/koddi/computer_use/native/"
+
+# служебные файлы профилировщика могут лежать рядом с исходниками, в поставке им делать нечего
+find "$APP" -name '*.profraw' -delete
 
 "$PYTHON" scripts/finalize_macos_app.py "$APP" --identity "${SIGN_IDENTITY:--}" ${ASSETS_CAR:+--assets-car "$ASSETS_CAR"}
 # сборка в папке проекта не должна перехватывать запуск Докки и ссылки koddi:// у установленной копии

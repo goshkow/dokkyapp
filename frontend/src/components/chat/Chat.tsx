@@ -5,6 +5,8 @@ import { guarded } from '../../state/overlay';
 import { useUi } from '../../state/ui';
 import { pageNames, useView } from '../../state/view';
 import { CloudSearch } from '../search/CloudSearch';
+import { BranchPicker } from './BranchPicker';
+import { ChatSearchBar } from './ChatSearchBar';
 import { Composer } from './Composer';
 import { ExpandedEditor } from './ExpandedEditor';
 import { Feed } from './Feed';
@@ -126,10 +128,11 @@ export function Chat() {
       <header className="chat-header">
         <div className="header-start"><Title /></div>
         <ProductPill />
-        <div className="header-end" />
+        <div className="header-end">{scope === 'development' && page === 'chat' && <BranchPicker />}</div>
       </header>
       <div className="chat-edge-fade chat-edge-fade-top" aria-hidden="true" />
       <div className="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true" />
+      <ChatSearchBar />
       <Feed />
       <Composer />
       {page === 'chat' && <MessageRail />}

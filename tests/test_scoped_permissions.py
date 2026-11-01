@@ -49,7 +49,8 @@ def test_grants_do_not_cross_account_or_project(scoped):
     )
     assert permission_profile(project) == "full"
     assert not private_network_allowed(project)
-    assert permission_profile(None) == "full"
+    # полный доступ остался в проекте и на аккаунт не перешёл
+    assert permission_profile(None) == "trusted"
     storage.set_setting("dokky_user", {"id": "b"})
     assert permission_profile(project) == "trusted"
     assert private_network_allowed(project)
@@ -78,3 +79,43 @@ def test_cached_account_does_not_authorize_after_logout(scoped, monkeypatch):
     with pytest.raises(HTTPException) as error:
         local_owner()
     assert error.value.status_code == 401
+
+
+def test_moved_project_folder_can_be_pointed_at_again(tmp_path, monkeypatch) -> None:
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from koddi.api import create_app
+    from koddi.storage import db as storage
+
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "moved.sqlite3")
+    storage.init_db()
+    storage.set_setting("dokky_user", {"id": "a"})
+    old, new, other = tmp_path / "old", tmp_path / "new", tmp_path / "other"
+    old.mkdir()
+    other.mkdir()
+    client = TestClient(create_app())
+    project = client.post("/api/projects", json={"path": str(old)}).json()
+    busy = client.post("/api/projects", json={"path": str(other)}).json()
+    with storage.db() as conn:
+        chat = conn.execute(
+            "INSERT INTO chats(project_id,title,owner_id) VALUES (?,'чат','a')", (project["id"],),
+        ).lastrowid
+    shutil.move(str(old), str(new))
+    listed = {item["id"]: item for item in client.get("/api/projects").json()}
+    assert listed[project["id"]]["exists"] is False
+    # в никуда и в папку другого проекта нельзя
+    assert client.post(f"/api/projects/{project['id']}/relocate", json={"path": str(tmp_path / "нет")}).status_code == 409
+    assert client.post(f"/api/projects/{project['id']}/relocate", json={"path": busy["path"]}).status_code == 409
+    assert client.post("/api/projects/99999/relocate", json={"path": str(new)}).status_code == 404
+    # пока агент работает, папку не меняем
+    with storage.db() as conn:
+        turn = conn.execute("INSERT INTO turns(chat_id,status) VALUES (?,'running')", (chat,)).lastrowid
+    assert client.post(f"/api/projects/{project['id']}/relocate", json={"path": str(new)}).status_code == 409
+    with storage.db() as conn:
+        conn.execute("UPDATE turns SET status='completed' WHERE id=?", (turn,))
+    moved = client.post(f"/api/projects/{project['id']}/relocate", json={"path": str(new)}).json()
+    assert moved["id"] == project["id"] and moved["path"] == str(new.resolve()) and moved["exists"] is True
+    with storage.db() as conn:
+        assert conn.execute("SELECT project_id FROM chats WHERE id=?", (chat,)).fetchone()[0] == project["id"]

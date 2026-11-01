@@ -28,7 +28,8 @@ STORE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "https://dokky.goshkow.com/webkit-stor
 # методы моста, которые страница может вызвать; всё остальное отбрасывается
 BRIDGE_METHODS = (
     "relay", "regions", "appearance", "overlay", "panels", "copyText", "copyImage",
-    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer", "focusView", "tray", "popupMenu",
+    "pageAction", "requestState", "setGlass", "adjustWidth", "command", "focusComposer", "focusView", "tray", "popupMenu", "agentNotice",
+    "popupOpen", "popupResize", "popupClose",
 )
 
 SHIM = """
@@ -188,10 +189,11 @@ def _objc_classes():
         ):
             from koddi.desktop.web_host import trusted_origin
 
-            # микрофон нужен только голосовому вводу своей страницы и сайта в режиме чата; остальное запрещено
+            # микрофон и камера (голосовой ввод, фото в «Еде») - только своей странице и сайту в режиме чата
             port = int(origin.port())
             url = QUrl(f"{origin.protocol()}://{origin.host()}" + (f":{port}" if port else ""))
-            handler(1 if trusted_origin(url, self.owner.host.api_base) and int(kind) == 1 else 2)  # Grant / Deny; 1 - микрофон
+            # WKMediaCaptureType: 0 - камера, 1 - микрофон, 2 - оба; ответ 1 - Grant, 2 - Deny
+            handler(1 if trusted_origin(url, self.owner.host.api_base) and int(kind) in (0, 1, 2) else 2)
 
         def webView_runJavaScriptAlertPanelWithMessage_initiatedByFrame_completionHandler_(  # noqa: N802
             self, web, message, frame, handler

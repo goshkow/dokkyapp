@@ -5,11 +5,11 @@
  */
 import type { Store } from './store';
 
-export type Role = 'main' | 'sidebar' | 'inspector' | 'composer' | 'product';
+export type Role = 'main' | 'sidebar' | 'inspector' | 'composer' | 'product' | 'pill' | 'popup';
 
 export const role: Role = (() => {
   const value = new URLSearchParams(location.search).get('role');
-  return value === 'sidebar' || value === 'inspector' || value === 'composer' || value === 'product' ? value : 'main';
+  return value === 'sidebar' || value === 'inspector' || value === 'composer' || value === 'product' || value === 'pill' || value === 'popup' ? value : 'main';
 })();
 /** Вид плитки: состояния не владеет, действия отправляет главному виду. */
 export const isMirror = role !== 'main';
@@ -93,10 +93,14 @@ export function exposeActions(table: Record<string, (...args: never[]) => unknow
   for (const [name, fn] of Object.entries(table)) handlers.set(name, fn);
 }
 
+const isDomEvent = (value: unknown): boolean =>
+  value instanceof Event || Boolean(value && typeof value === 'object' && 'nativeEvent' in value);
+
 /** Действие плитки: в главном виде выполняется на месте, в плитке - у главного вида. */
 export function remote<A extends unknown[], R>(name: string, local: (...args: A) => R): (...args: A) => Promise<Awaited<R>> | R {
   if (!isMirror) return local;
-  return ((...args: A) => call('main', name, args)) as (...args: A) => Promise<Awaited<R>>;
+  // onClick={действие} передаёт событие браузера: оно циклическое, JSON.stringify на нём падает, да и не нужно главному виду
+  return ((...args: A) => call('main', name, args.filter((arg) => !isDomEvent(arg)))) as (...args: A) => Promise<Awaited<R>>;
 }
 
 /** Главный вид отправляет действие плитке своей роли (когда боковая панель - плитка), иначе выполняет на месте. */

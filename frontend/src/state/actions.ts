@@ -101,6 +101,18 @@ export async function openFolder(): Promise<void> {
   newChat(project);
 }
 
+/** Папку проекта перенесли или переименовали: чаты остаются у проекта. */
+export async function relocateProject(project: Project): Promise<void> {
+  if (window.koddiDesktop || navigator.userAgent.includes('QtWebEngine')) {
+    window.location.href = `koddi://open-folder?relocate=${project.id}`;
+    return;
+  }
+  const value = await inputDialog(`Где теперь папка «${project.name}»?`, [{ name: 'path', label: 'Путь к папке' }]);
+  if (!value) return;
+  await post<Project>(`/api/projects/${project.id}/relocate`, value);
+  await loadLocal(false);
+}
+
 /** Хост вызывает это после выбора папки в системном окне. */
 export function bindHostCallbacks(): void {
   (window as unknown as Record<string, unknown>).koddiProjectOpened = (project: Project) => {

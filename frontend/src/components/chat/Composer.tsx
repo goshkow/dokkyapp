@@ -17,6 +17,7 @@ import { useView } from '../../state/view';
 import { Select } from '../ui/Select';
 import { cloudModels, selectedCloudModel } from '../../state/models';
 import { AttachMenu, AttachmentStrip, QueuePanel, RequestPanel, SkillChips } from './ComposerParts';
+import { SuggestMenu } from './SuggestMenu';
 import { useDeveloperAccess } from '../../state/access';
 import { LockedComposer } from './DevGate';
 import { UsageNotice } from './UsageNotice';
@@ -176,6 +177,7 @@ export function Composer() {
         </button>
       )}
       <AttachMenu trigger={native ? slot : attach} open={menu} onClose={() => fieldHost.set({ menu: false })} fileInput={files} />
+      {development && <SuggestMenu />}
     </section>
   );
 }

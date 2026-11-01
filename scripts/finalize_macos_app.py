@@ -16,6 +16,7 @@ ENTITLEMENTS = {
     "com.apple.security.cs.allow-unsigned-executable-memory": True,
     "com.apple.security.cs.disable-library-validation": True,
     "com.apple.security.device.audio-input": True,
+    "com.apple.security.device.camera": True,
 }
 
 
@@ -38,7 +39,8 @@ def patch_info(bundle: Path) -> None:
         "CFBundleName": "Докки",
         "CFBundleDevelopmentRegion": "ru",
         "CFBundleLocalizations": ["ru"],
-        "LSMinimumSystemVersion": "12.0",
+        # Qt в сборке требует 14.4; как проверять - docs/MACOS_DISTRIBUTION.md
+        "LSMinimumSystemVersion": "14.4",
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.developer-tools",
         # ссылки koddi:// возвращают человека в программу после оплаты и входа на сайте

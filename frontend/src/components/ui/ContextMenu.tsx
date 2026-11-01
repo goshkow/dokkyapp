@@ -128,7 +128,7 @@ export function ContextMenu() {
   const close = useCallback(() => setOpen(false), []);
   const shown = state ?? last.current;
   return (
-    <Popover open={open && Boolean(state)} anchor={shown ? { x: shown.x, y: shown.y } : null} onClose={close} label="Действия" minWidth={210} className="context-menu">
+    <Popover open={open && Boolean(state)} anchor={shown ? { x: shown.x, y: shown.y } : null} onClose={close} refocusFirst label="Действия" minWidth={210} className="context-menu">
       {shown?.entries.map((entry, index) =>
         entry.separator ? (
           <div key={index} className="menu-separator" role="separator" />

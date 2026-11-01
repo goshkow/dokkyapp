@@ -10,6 +10,7 @@ from typing import Any
 MAX_DETAIL = 1200
 
 TITLES = {
+    "skill.load": "Подключить навык из плагина",
     "file.read": "Прочитать файл",
     "file.read_many": "Прочитать файлы",
     "file.read_range": "Прочитать часть файла",
@@ -50,6 +51,7 @@ TITLES = {
     "browser.network": "Прочитать сетевые запросы страницы",
     "devserver.start": "Запустить сервер разработки",
     "devserver.stop": "Остановить сервер разработки",
+    "devserver.output": "Посмотреть вывод фоновой команды",
     "terminal.open": "Открыть терминал в папке проекта",
     "ide.open_file": "Открыть файл в редакторе",
     "ide.open_diff": "Показать изменения в редакторе",
@@ -93,6 +95,14 @@ def describe_action(name: str, args: dict[str, Any] | None, *, external: list[st
         kind = "command"
         detail = str(args.get("command", ""))
         target = str(args.get("cwd", "")) or ""
+    elif name == "web.fetch":
+        kind = "network"
+        title = "Открыть страницу в интернете"
+        target = str(args.get("url", ""))
+        detail = "Адрес уйдёт этому сайту. Если разрешить, сайт больше не будет спрашиваться в этом чате."
+    elif name == "skill.load":
+        target = str(args.get("name", ""))
+        detail = "Агент предлагает навык из установленного вами плагина. Навык добавляет способ работы, но не права."
     elif name == "qa.run":
         kind = "command"
         detail = "lint, типы и тесты проекта" + (" (весь проект)" if args.get("scope") == "full" else " для изменённых файлов")

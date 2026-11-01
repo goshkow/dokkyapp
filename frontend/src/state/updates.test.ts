@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { updateNotice, type UpdateState } from './updates';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const network = vi.hoisted(() => ({ api: vi.fn() }));
+vi.mock('../lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../lib/api')>()), api: network.api }));
+
+import { applyUpdateState, updateNotice, updates, type UpdateState } from './updates';
 
 const base: UpdateState = {
   status: 'available', current: '0.2.2', platform: 'macos-arm64', kind: 'dmg', method: 'bundle', auto_download: false,
@@ -31,5 +35,23 @@ describe('updateNotice', () => {
     expect(updateNotice({ ...base, status: 'ready' })).toMatchObject({ action: 'restart', hint: 'Перезапустить' });
     expect(updateNotice({ ...base, status: 'error', error: 'нет сети' })).toMatchObject({ action: 'download', tone: 'danger' });
     expect(updateNotice({ ...base, status: 'installing' })?.action).toBeNull();
+  });
+});
+
+describe('загрузка обновления', () => {
+  afterEach(() => { applyUpdateState({ ...base, status: 'idle' }); vi.useRealTimers(); network.api.mockReset(); });
+
+  it('пока качается, состояние перечитывается, даже если события шины не приходят', async () => {
+    vi.useFakeTimers();
+    network.api.mockResolvedValue({ ...base, status: 'downloading', progress: { done: 40, total: 100 } });
+    applyUpdateState({ ...base, status: 'downloading', progress: { done: 0, total: 100 } });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(network.api).toHaveBeenCalledWith('/api/updates/status');
+    expect(updateNotice(updates.get().value)?.hint).toBe('40%');
+    network.api.mockResolvedValue({ ...base, status: 'ready' });
+    await vi.advanceTimersByTimeAsync(1000);
+    const calls = network.api.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(network.api.mock.calls.length).toBe(calls);
   });
 });

@@ -14,7 +14,7 @@ React/TypeScript живёт в окне PySide6. Код общий для Window
 
 ## Запуск
 
-Нужны Windows или macOS 12+, Python 3.11+ и аккаунт Докки.
+Нужны Windows или macOS 14.4+, Python 3.11+ и аккаунт Докки.
 
 ```powershell
 python -m venv .venv
@@ -96,12 +96,12 @@ python scripts/smoke_package.py dist_koddi_test/web_host.dist/DokkyApp.exe
 
 ```powershell
 python scripts/build_installer.py --dist dist_koddi_test/web_host.dist --out dist_release
-python scripts/smoke_installer.py dist_release/Dokky-0.2.1-Windows-x64-Setup.exe
+python scripts/smoke_installer.py dist_release/Dokky-1.0.0-Windows-x64-Setup.exe
 ```
 
-Получатся `Dokky-0.2.1-Windows-x64-Setup.exe` и `Dokky-0.2.1-Windows-x64-portable.zip`.
+Получатся `Dokky-1.0.0-Windows-x64-Setup.exe` и `Dokky-1.0.0-Windows-x64-portable.zip`.
 Внутри обоих одна и та же раскладка: маленький `Dokky.exe`, который запускает текущую версию
-из папки `app-0.2.1`, - так приложение потом сможет обновляться без прав администратора.
+из папки `app-1.0.0`, - так приложение потом сможет обновляться без прав администратора.
 
 macOS:
 
@@ -120,7 +120,7 @@ DMG из готового `.app`:
 python3 -m venv build_dmg_tools/venv
 build_dmg_tools/venv/bin/python -m pip install -r requirements-dmg.txt
 build_dmg_tools/venv/bin/python scripts/build_macos_dmg.py \
-  'dist_macos/Докки.app' --output dist_dmg/Dokky-0.2.1-macOS-arm64.dmg
+  'dist_macos/Докки.app' --output dist_dmg/Dokky-1.0.0-macOS-arm64.dmg
 ```
 
 Макет и перерисовка фона - в [assets/dmg](assets/dmg/README.md). Приложение в образ кладётся
@@ -129,18 +129,17 @@ build_dmg_tools/venv/bin/python scripts/build_macos_dmg.py \
 ## Релиз
 
 Версия задаётся в одном месте - `pyproject.toml`. Чтобы выпустить релиз, поднимите её,
-допишите [CHANGELOG.md](CHANGELOG.md), дождитесь зелёных «Проверок» на main и запушьте тег:
+допишите [CHANGELOG.md](CHANGELOG.md), дождитесь зелёных «Проверок» на main и соберите файлы:
+локально по разделу выше или руками из Actions («Release Windows» и «Release macOS»).
+Сам тег сборку не запускает.
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Тег запускает «Release Windows» и «Release macOS». Тесты там уже не гоняются, это работа
-«Проверок». Релизные сборки собирают установщик, переносную версию и DMG под arm64 и x86_64,
-проверяют установщик и кладут всё в один пре-релиз с текстом из
-CHANGELOG. Тег, который не совпадает с версией, сборку остановит. Оба workflow можно
-запустить и руками из Actions - тогда по умолчанию получится черновик.
+Файлы релиза называются строго `Dokky-<версия>-macOS-arm64.dmg`, `Dokky-<версия>-Windows-x64-Setup.exe`
+и так далее: зеркало обновлений берёт их по шаблону. Релиз публикуется не черновиком и не пре-релизом.
 
 Если в секретах репозитория есть `WINDOWS_SIGNING_CERT` (PFX в base64) и
 `WINDOWS_SIGNING_PASSWORD`, exe подписываются. Без них всё собирается без подписи.

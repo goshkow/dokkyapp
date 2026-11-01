@@ -1,9 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { Cloud, Monitor } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { appColor, glassActive, useNativeTiles } from '../../lib/glass';
+import { appColor, glassActive, nextFade, useNativeTiles, type GlassFade } from '../../lib/glass';
 import { useFieldHost } from '../../state/field';
 import { siteFieldHeight } from '../../state/siteField';
-import { bindFrame, command, reloadSurface, sendLayout, setLayoutProvider, setSurfaceProduct, surface, useSurface } from '../../state/surface';
+import { useConnection } from '../../state/connection';
+import { bindFrame, command, openSurfaceWorkspace, reloadSurface, sendLayout, setLayoutProvider, setSurfaceProduct, surface, useSurface, type SurfaceBox } from '../../state/surface';
+
+/** Загрузка затянулась: заставка держится 8 с, поэтому подпись появляется чуть раньше, чем станет видна. */
+function useSlow(loading: boolean): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!loading) return;
+    const timer = window.setTimeout(() => setSlow(true), 6000);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
+  return slow;
+}
 
 /** Цвет фона приложения для страницы сайта: у чата приложения свой фон, а не фон сайта.
  * Под стеклом страница прозрачная, а цвет нужен её затуханиям у краёв: это тот же тон, что даёт стекло под окном. */
@@ -55,6 +69,58 @@ function OverlayScrim({ host, closing }: { host: HTMLElement; closing: boolean }
   );
 }
 
+/** Столько же длится угасание переключателя на самой странице сайта. */
+const SLOT_FADE_MS = 240;
+const SLOT_FADE_CURVE = [0.25, 0.1, 0.25, 1];
+/** Запас, пока рамка с угасанием доходит до хоста: снять блок раньше конца значит оборвать угасание. */
+const SLOT_FADE_SETTLE_MS = 60;
+
+/**
+ * Подложка плитки, которая появляется и пропадает плавно. Свой блок страницы под плиткой невидим, и её
+ * переход нативное стекло не видит, поэтому угасание задаёт приложение, а проигрывает хост. Рамка держится
+ * на последнем месте, пока плитка не погасла.
+ */
+export function FadingSlot({ id, box }: { id: string; box: SurfaceBox | null }) {
+  const [held, setHeld] = useState(box);
+  if (box && box !== held) setHeld(box);
+  const shown = box !== null;
+  const [fade, setFade] = useState<GlassFade | null>(null);
+  const [gone, setGone] = useState(!shown);
+  const running = useRef<GlassFade | null>(null);
+  const before = useRef(shown);
+  useLayoutEffect(() => {
+    if (before.current === shown) return;
+    before.current = shown;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      running.current = null;
+      setFade(null);
+      setGone(!shown);
+      return;
+    }
+    const next = nextFade(running.current, shown, Date.now(), SLOT_FADE_MS, SLOT_FADE_CURVE);
+    running.current = next;
+    setFade(next);
+    setGone(false);
+    const timer = window.setTimeout(() => {
+      running.current = null;
+      setFade(null);
+      setGone(!shown);
+    }, next.ms + SLOT_FADE_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [shown]);
+  const place = box ?? held;
+  if (!place || (gone && !shown)) return null;
+  return (
+    <div
+      className="site-field-slot"
+      data-glass={id}
+      data-glass-fade={fade ? JSON.stringify(fade) : undefined}
+      aria-hidden="true"
+      style={{ left: place.x, top: place.y, width: place.w, height: place.h, borderRadius: place.r }}
+    />
+  );
+}
+
 /** Подложки поля ввода и «Чат / Поиск» на месте невидимых блоков страницы сайта: по их рамкам хост ставит нативное
  * стекло над лентой, а в стекло - вид поля и вид переключателя приложения (как поле режима кода). Высоту поля задаёт
  * приложение, страница подстраивает под неё отступы ленты. */
@@ -65,6 +131,7 @@ function SiteFieldSlots() {
   useEffect(() => siteFieldHeight(height), [height]);
   const field = site?.composer && site.composer.o > 0.5 ? site.composer : null;
   const product = site?.product && site.product.o > 0.5 ? site.product : null;
+  const pill = site?.pill && site.pill.o > 0.5 && site.workspace ? site.pill : null;
   const fieldHeight = height || field?.h || 0;
   return (
     <>
@@ -77,7 +144,8 @@ function SiteFieldSlots() {
           style={{ left: field.x, top: field.y + field.h - fieldHeight, width: field.w, height: fieldHeight, borderRadius: expanded ? 23 : field.r }}
         />
       )}
-      {product && <div className="site-field-slot" data-glass="product" aria-hidden="true" style={{ left: product.x, top: product.y, width: product.w, height: product.h, borderRadius: product.r }} />}
+      <FadingSlot id="pill" box={pill} />
+      <FadingSlot id="product" box={product} />
     </>
   );
 }
@@ -98,16 +166,38 @@ export function TileProduct() {
   );
 }
 
+/** Вид плитки пилюли: компьютер или облачный проект чата внутри нативного стекла, как «Чат / Поиск». */
+export function TilePill() {
+  const current = useSurface((state) => state.siteField?.workspace ?? null);
+  // пока плитка гаснет, в ней остаётся то, что было
+  const [workspace, setWorkspace] = useState(current);
+  if (current && current !== workspace) setWorkspace(current);
+  if (!workspace) return null;
+  const remote = workspace.kind === 'remote';
+  const Icon = remote ? Monitor : Cloud;
+  const label = remote ? `Компьютер «${workspace.name}»${workspace.online ? '' : ', не в сети'}` : `Открыть проект «${workspace.name}» в облаке`;
+  return (
+    <button type="button" className="tile-pill" data-offline={(remote && !workspace.online) || undefined} aria-label={label} onClick={() => void openSurfaceWorkspace()}>
+      <Icon aria-hidden="true" />
+      <span className="tile-pill-name">{workspace.name}</span>
+      {remote && <i className="tile-pill-dot" aria-hidden="true" />}
+    </button>
+  );
+}
+
 /**
  * Режим чата: страница сайта Докки во фрейме. Фрейм живёт всё время входа (и в режиме кода, скрытым):
  * так работают ответы в фоне, список чатов в меню и чаты других компьютеров.
  */
 export function SiteSurface({ shown }: { shown: boolean }) {
   const status = useSurface((state) => state.status);
+  const online = useConnection();
+  const slow = useSlow(status === 'loading');
   const url = useSurface((state) => state.url);
   const epoch = useSurface((state) => state.epoch);
   const overlay = useSurface((state) => state.overlay);
   const capable = useSurface((state) => state.features.includes('field'));
+  const pillCapable = useSurface((state) => state.features.includes('pill'));
   const tiles = useNativeTiles();
   // поле и переключатель - нативные, когда есть плитки стекла и страница умеет отдавать своё поле
   const field = tiles && capable && shown && status === 'ready';
@@ -128,10 +218,12 @@ export function SiteSurface({ shown }: { shown: boolean }) {
     return () => bindFrame(null);
   }, [epoch, url]);
 
+  const ownPill = useRef(false);
+  ownPill.current = field && pillCapable;
   useEffect(() => {
     surface.set({ field });
     relayout.current();
-  }, [field]);
+  }, [field, pillCapable]);
 
   useEffect(() => {
     const main = document.getElementById('main');
@@ -145,10 +237,10 @@ export function SiteSurface({ shown }: { shown: boolean }) {
       const glass = glassActive();
       const color = background(glass);
       const { field: own } = surface.get();
-      const key = `${left}:${right}:${color}:${glass}:${own}`;
+      const key = `${left}:${right}:${color}:${glass}:${own}:${ownPill.current}`;
       if (!force && key === last) return;
       last = key;
-      sendLayout(left, right, color, glass, own);
+      sendLayout(left, right, color, glass, own, ownPill.current);
     };
     const schedule = () => { if (!frameId) frameId = requestAnimationFrame(() => measure()); };
     relayout.current = schedule;
@@ -184,15 +276,20 @@ export function SiteSurface({ shown }: { shown: boolean }) {
           title="Докки"
           // страница сайта не может увести окно приложения: без allow-top-navigation
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
-          allow="microphone; clipboard-write; fullscreen"
+          allow="microphone; camera; clipboard-write; fullscreen"
           referrerPolicy="strict-origin"
         />
       )}
-      {status === 'loading' && <div className="site-surface-state" role="status"><span className="spinner" aria-label="Загрузка" /></div>}
+      {status === 'loading' && (
+        <div className="site-surface-state" role="status">
+          <span className="spinner" aria-label="Загрузка" />
+          {slow && <p>Докки отвечает дольше обычного…</p>}
+        </div>
+      )}
       {status === 'failed' && (
         <div className="site-surface-state" role="alert">
-          <b>Не удалось открыть Докки</b>
-          <p>Проверьте подключение к интернету и попробуйте ещё раз.</p>
+          <b>{online ? 'Докки сейчас недоступен' : 'Нет подключения к интернету'}</b>
+          <p>{online ? 'Проверьте подключение к интернету или попробуйте чуть позже.' : 'Докки откроется сам, когда связь вернётся.'}</p>
           <button type="button" className="btn" onClick={reloadSurface}>Повторить</button>
         </div>
       )}

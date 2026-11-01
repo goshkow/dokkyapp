@@ -56,6 +56,23 @@ def add_project(path: str, name: str | None = None) -> dict:
         return dict(cur.fetchone())
 
 
+def relocate_project(project_id: int, path: str) -> dict:
+    """Папку проекта перенесли: чаты и настройки остаются у того же проекта."""
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError("Такой папки нет")
+    with db() as conn:
+        if conn.execute("SELECT 1 FROM projects WHERE path=? AND id<>?", (str(root), project_id)).fetchone():
+            raise ValueError("Эта папка уже открыта как другой проект")
+        row = conn.execute(
+            "UPDATE projects SET path=?, last_opened_at=CURRENT_TIMESTAMP WHERE id=? AND hidden=0 RETURNING *",
+            (str(root), project_id),
+        ).fetchone()
+    if row is None:
+        raise LookupError("Проект не найден")
+    return {**dict(row), "exists": True}
+
+
 def list_projects(*, include_status: bool = True) -> list[dict]:
     with db() as conn:
         rows = conn.execute(

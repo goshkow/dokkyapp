@@ -102,6 +102,25 @@ const near = (a: Box, b: Box): boolean => Math.abs(a.x - b.x) < 1.5 && Math.abs(
 /** Угасание блока, которое хост проигрывает сам: прозрачность from -> to за ms по кривой c, начало - at (Date.now). */
 export interface GlassFade { from: number; to: number; ms: number; c: number[]; at: number }
 export type GlassBlock = Box & { id: string; r: number; o?: number; fade?: GlassFade };
+
+/** Прозрачность по той же кривой, по которой её ведёт хост. */
+function fadeAt(fade: GlassFade, now: number): number {
+  const part = Math.min(1, Math.max(0, (now - fade.at) / fade.ms));
+  const [x1, y1, x2, y2] = fade.c as [number, number, number, number];
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 24; step += 1) {
+    const mid = (low + high) / 2;
+    if (cubic(x1, x2, mid) < part) low = mid; else high = mid;
+  }
+  return fade.from + (fade.to - fade.from) * cubic(y1, y2, (low + high) / 2);
+}
+
+/** Новое угасание блока: продолжается с той прозрачности, до которой дошло прошлое, если оно ещё идёт. */
+export function nextFade(previous: GlassFade | null, shown: boolean, now: number, ms: number, c: number[]): GlassFade {
+  const from = previous ? fadeAt(previous, now) : shown ? 0 : 1;
+  return { from, to: shown ? 1 : 0, ms, c, at: now };
+}
 let external: () => GlassBlock[] = () => [];
 export function setGlassSource(source: () => GlassBlock[]): void {
   external = source;
@@ -137,7 +156,8 @@ function collect(): Region[] {
     }
     flights.delete(id);
     if (box.x + box.w <= 0 || box.y + box.h <= 0 || box.x >= innerWidth || box.y >= innerHeight) return;
-    regions.push({ id, ...box, r: radius });
+    const fade = node.dataset.glassFade ? JSON.parse(node.dataset.glassFade) as GlassFade : null;
+    regions.push({ id, ...box, r: radius, ...(fade && { o: fade.to, fade }) });
   });
   for (const id of [...flights.keys()]) if (!seen.has(id)) flights.delete(id);
   for (const block of external()) {
@@ -215,7 +235,7 @@ export function setGlassEnabled(enabled: boolean, remember = true): void {
 function watch(): void {
   addEventListener('resize', kickGlass);
   for (const type of ['transitionstart', 'transitionrun', 'animationstart', 'pointerdown', 'keydown', 'scroll']) document.addEventListener(type, kickGlass, true);
-  new MutationObserver(kickGlass).observe(document.getElementById('root') ?? document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open', 'data-open', 'aria-expanded', 'data-focus'] });
+  new MutationObserver(kickGlass).observe(document.getElementById('root') ?? document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open', 'data-open', 'aria-expanded', 'data-focus', 'data-glass-fade'] });
   new MutationObserver(() => { push(true); kickGlass(); }).observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-surface'] });
   // после ресайза мышью блоки сообщаются заново
   let resizing = root.classList.contains('resizing');

@@ -6,10 +6,11 @@ import hashlib
 import re
 import threading
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 
 from koddi.dokky.client import DokkyError
-from koddi.storage.db import db, get_setting
+from koddi.storage.db import db, get_setting, set_setting
 
 MODE_WARNING = (
     "Смена режима может увеличить стоимость следующего запроса, поскольку ИИ может потребоваться "
@@ -693,23 +694,72 @@ def clear_local_account_data() -> None:
 LOCAL_TABLES = ("chats", "attachments", "queued_requests", "change_sets", "file_operations")
 
 
-def adopt_local_data(user_id: str) -> None:
-    """Переводит локальные чаты, вложения, очередь, память проектов и журнал изменений на вошедший аккаунт.
+def _declined_key(user_id: str) -> str:
+    return "local_data_declined:" + user_id
 
-    Серверные сессии разработки принадлежат аккаунту, который их создал: чужие удаляются, и следующий запрос
-    заводит новую сессию текущего аккаунта, а контекст собирается из локальной истории чата.
+
+def _foreign_owners(conn, user_id: str) -> set[str]:
+    """Другие аккаунты, у которых на компьютере есть чаты или память проектов; от чьих данных уже отказались, не считаются."""
+    rows = conn.execute(
+        "SELECT owner_id FROM chats WHERE owner_id NOT IN ('',?) UNION "
+        "SELECT owner_id FROM memory_summaries WHERE project_id IS NOT NULL AND owner_id NOT IN ('',?)",
+        (user_id, user_id),
+    ).fetchall()
+    return {row[0] for row in rows} - set(get_setting(_declined_key(user_id), []) or [])
+
+
+def adopt_local_data(user_id: str, keep: Iterable[str] = ()) -> None:
+    """Переводит локальные чаты, вложения, очередь, память проектов и журналы на текущий аккаунт; данные аккаунтов из keep остаются им.
+
+    Серверные сессии разработки принадлежат аккаунту, который их создал: следующий ход
+    заводит новую сессию текущего аккаунта, а контекст собирается из локальной истории.
     """
     if not user_id:
         return
+    kept = sorted(set(keep))
+    marks = ",".join("?" * len(kept))
+    other = f" AND owner_id NOT IN ({marks})" if kept else ""
     with db() as conn:
         for table in LOCAL_TABLES:
-            conn.execute(f"UPDATE {table} SET owner_id=? WHERE owner_id<>?", (user_id, user_id))
+            conn.execute(f"UPDATE {table} SET owner_id=? WHERE owner_id<>?{other}", (user_id, user_id, *kept))
         # память проекта - вместе с проектом, личная память без проекта остаётся у своего аккаунта
         conn.execute(
-            "UPDATE memory_summaries SET owner_id=? WHERE owner_id<>? AND (project_id IS NOT NULL OR owner_id='')",
-            (user_id, user_id),
+            f"UPDATE memory_summaries SET owner_id=? WHERE owner_id<>? AND (project_id IS NOT NULL OR owner_id=''){other}",
+            (user_id, user_id, *kept),
         )
-        # заметки карты описывают проект и переходят вместе с ним; совпавший заголовок остаётся у вошедшего аккаунта
-        conn.execute("UPDATE OR IGNORE project_map_notes SET owner_id=? WHERE owner_id<>?", (user_id, user_id))
+        # заметки карты описывают проект и переходят вместе с ним; совпавший заголовок не трогаем
+        conn.execute(f"UPDATE OR IGNORE project_map_notes SET owner_id=? WHERE owner_id<>?{other}", (user_id, user_id, *kept))
         for table in ("coding_sessions", "coding_session_keys", "coding_pending"):
-            conn.execute(f"DELETE FROM {table} WHERE user_id<>?", (user_id,))
+            conn.execute(f"DELETE FROM {table} WHERE user_id<>?{other.replace('owner_id', 'user_id')}", (user_id, *kept))
+
+
+def settle_local_data(user_id: str) -> None:
+    """При входе: данные без владельца забираем молча, чужие ждут ответа человека и до него не видны."""
+    if not user_id:
+        return
+    with db() as conn:
+        foreign = _foreign_owners(conn, user_id)
+    adopt_local_data(user_id, keep=foreign | set(get_setting(_declined_key(user_id), []) or []))
+
+
+def local_data_question(user_id: str) -> dict:
+    """Что показать в вопросе о данных другого аккаунта; chats=0 - спрашивать не о чем."""
+    with db() as conn:
+        foreign = _foreign_owners(conn, user_id)
+        if not foreign:
+            return {"ask": False, "chats": 0}
+        marks = ",".join("?" * len(foreign))
+        chats = conn.execute(
+            f"SELECT count(*) FROM chats WHERE parent_chat_id IS NULL AND owner_id IN ({marks})", tuple(foreign),
+        ).fetchone()[0]
+    return {"ask": True, "chats": int(chats)}
+
+
+def answer_local_data(user_id: str, take: bool) -> None:
+    declined = set(get_setting(_declined_key(user_id), []) or [])
+    if take:
+        adopt_local_data(user_id, keep=declined)
+        return
+    with db() as conn:
+        foreign = _foreign_owners(conn, user_id)
+    set_setting(_declined_key(user_id), sorted(declined | foreign))
