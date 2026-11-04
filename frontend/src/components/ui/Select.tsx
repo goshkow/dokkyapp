@@ -20,10 +20,12 @@ interface SelectProps<T extends string | number> {
   hidden?: boolean;
   /** Меню раскрывается над кнопкой (поле ввода внизу окна). */
   side?: 'below' | 'above';
+  /** Роль нативной плитки, которая рисует кнопку под Liquid Glass. */
+  glass?: string;
 }
 
 /** Список выбора в стиле приложения вместо системного <select>. */
-export function Select<T extends string | number>({ value, options, onChange, label, className = '', disabled, hidden, side = 'below' }: SelectProps<T>) {
+export function Select<T extends string | number>({ value, options, onChange, label, className = '', disabled, hidden, side = 'below', glass }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   if (hidden) return null;
@@ -39,6 +41,7 @@ export function Select<T extends string | number>({ value, options, onChange, la
         aria-expanded={open}
         aria-label={label}
         className={`select-trigger ${className}`}
+        data-glass={glass}
         disabled={disabled}
         onClick={toggle}
         onKeyDown={(event) => {

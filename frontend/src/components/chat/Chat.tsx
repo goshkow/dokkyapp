@@ -10,6 +10,7 @@ import { ChatSearchBar } from './ChatSearchBar';
 import { Composer } from './Composer';
 import { ExpandedEditor } from './ExpandedEditor';
 import { Feed } from './Feed';
+import { Home } from './Home';
 import { MessageRail } from './MessageRail';
 
 /** Отступы ленты под шапку и поле ввода считаются по их реальным размерам; чтение не прыгает, когда они меняются. */
@@ -133,6 +134,7 @@ export function Chat() {
       <div className="chat-edge-fade chat-edge-fade-top" aria-hidden="true" />
       <div className="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true" />
       <ChatSearchBar />
+      <Home />
       <Feed />
       <Composer />
       {page === 'chat' && <MessageRail />}

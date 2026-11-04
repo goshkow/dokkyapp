@@ -18,6 +18,20 @@ const raw = {
 };
 
 describe('каталог планов', () => {
+  it('новый план приходит с сервера со своим цветом, чужие значения цвета не проходят', () => {
+    const badge = { dark: ['#d8b4ff', '#8f7aff'], light: ['#8a52d6', '#5f2fa8'] };
+    const catalog = parseCatalog({ ...raw, plans: [
+      ...raw.plans,
+      { id: 'atlas', name: 'Atlas', action: 'upgrade', price: { amount: 5000 }, badge, features: [] },
+      { id: 'evil', name: 'Evil', action: 'upgrade', badge: { dark: ['url(x)', '#000000'], light: ['#000000', '#000000'] }, features: [] },
+      { id: 'next', name: 'Next', action: 'upgrade', features: [] },
+    ] });
+    expect(catalog?.plans).toHaveLength(6);
+    expect(catalog?.plans.find((plan) => plan.id === 'atlas')?.badge).toEqual(badge);
+    expect(catalog?.plans.find((plan) => plan.id === 'evil')?.badge).toBeUndefined();
+    expect(planName('next', catalog)).toBe('Next');
+  });
+
   it('читает ответ сервера и не зашивает названия', () => {
     const catalog = parseCatalog(raw) as Catalog;
     expect(catalog.plans.map((plan) => plan.name)).toEqual(['Base', 'Plus', 'Ultra']);

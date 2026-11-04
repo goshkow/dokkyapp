@@ -1,10 +1,12 @@
-import { ArrowDown, ChartNoAxesColumn, CircleAlert, CircleUserRound, CreditCard, Gauge, LoaderCircle, RefreshCw, RotateCw, Settings, SquarePen } from 'lucide-react';
+import { ArrowDown, ChartNoAxesColumn, CircleAlert, CircleUserRound, CreditCard, Gauge, LoaderCircle, RefreshCw, RotateCw, Settings, } from 'lucide-react';
+import { NewChatPen } from '../ui/DokkyIcons';
 import { useEffect, useRef, useState } from 'react';
 import { cloudPath } from '../../lib/api';
 import type { Limits } from '../../lib/types';
 import { lastProject, useData } from '../../state/data';
 import { useLimits } from '../../state/limits';
 import { planName, usePlans } from '../../state/plans';
+import { PlanName } from '../billing/planUi';
 import { downloadUpdate, loadLimits, newChat, openBilling, openSettings, restartForUpdate } from '../../state/remote';
 import { guarded } from '../../state/overlay';
 import { useUi } from '../../state/ui';
@@ -156,13 +158,13 @@ export function AccountRow() {
             onClick={() => { setOpen((state) => !state); if (!open) void loadLimits(); }}
           >
             {!free && left != null && <UsageRing percent={left} />}
-            {plan && <span className="plan-badge" data-plan={plan}>{planName(plan, catalog)}</span>}
+            {plan && <PlanName id={plan} name={planName(plan, catalog)} />}
             {!free && plan && <span className="plan-sep" aria-hidden="true">·</span>}
             {!free && <span className="usage-percent">{left != null ? `${left}%` : loading ? '…' : '—'}</span>}
           </button>
         </div>
         <button id="new-chat" type="button" className="new-chat" aria-label="Новый чат" title="Новый чат" onClick={() => newChat(development ? project ?? lastProject() : null)}>
-          <SquarePen aria-hidden="true" />
+          <NewChatPen aria-hidden="true" />
         </button>
       </div>
       <Popover open={open} anchor={toggle} onClose={() => setOpen(false)} label="Аккаунт" side="above" className="account-menu">

@@ -45,9 +45,36 @@ export function placeCard(order: readonly CardName[], name: CardName, slot: numb
   return next;
 }
 
+/** Сколько нужно зайти на соседа, чтобы поменяться с ним местами: половина высокого блока была бы слишком далеко. */
+const SWAP_DEPTH = 32;
+/** Разворот считается только после такого сдвига, иначе дрожание руки меняло бы блоки туда-обратно. */
+const TURN = 4;
+
+/**
+ * Новое место перетаскиваемого блока среди остальных. Решает зашедший на соседа край блока, а не центры:
+ * поэтому менять местами одинаково быстро и низкие блоки, и развёрнутые на весь экран.
+ */
+export function dragSlot(slot: number, direction: -1 | 0 | 1, top: number, height: number, others: readonly { top: number; height: number }[]): number {
+  let next = slot;
+  if (direction < 0) {
+    while (next > 0) {
+      const other = others[next - 1] as { top: number; height: number };
+      if (top >= other.top + other.height - Math.min(other.height / 2, SWAP_DEPTH)) break;
+      next -= 1;
+    }
+  } else if (direction > 0) {
+    while (next < others.length) {
+      const other = others[next] as { top: number; height: number };
+      if (top + height <= other.top + Math.min(other.height / 2, SWAP_DEPTH)) break;
+      next += 1;
+    }
+  }
+  return next;
+}
+
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((item, index) => item === b[index]);
 
-interface Drag { name: CardName; pointer: number; startY: number; startTop: number; grab: number; moved: boolean; before: CardName[] }
+interface Drag { name: CardName; pointer: number; startY: number; startTop: number; grab: number; moved: boolean; before: CardName[]; lastY: number; direction: -1 | 0 | 1 }
 
 /** Перетаскивание блоков с FLIP-анимацией: соседи едут через element.animate, стекло под ними следует сдвигу. */
 export function useCardOrder(hidden: (name: CardName) => boolean) {
@@ -157,7 +184,7 @@ export function useCardOrder(hidden: (name: CardName) => boolean) {
     const node = head?.closest<HTMLElement>('.inspector-card');
     const name = node?.dataset.card as CardName | undefined;
     if (!head || !node || !name || hidden(name)) return;
-    drag.current = { name, pointer: event.clientY, startY: event.clientY, startTop: node.offsetTop, grab: event.clientY - node.getBoundingClientRect().top, moved: false, before: order };
+    drag.current = { name, pointer: event.clientY, startY: event.clientY, startTop: node.offsetTop, grab: event.clientY - node.getBoundingClientRect().top, moved: false, before: order, lastY: event.clientY, direction: 0 };
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -179,9 +206,13 @@ export function useCardOrder(hidden: (name: CardName) => boolean) {
     }
     const node = cardOf(current.name);
     if (!node || !box.current) return;
-    const center = event.clientY - box.current.getBoundingClientRect().top + box.current.scrollTop - current.grab + node.offsetHeight / 2;
+    if (Math.abs(event.clientY - current.lastY) >= TURN) {
+      current.direction = event.clientY > current.lastY ? 1 : -1;
+      current.lastY = event.clientY;
+    }
+    const top = event.clientY - box.current.getBoundingClientRect().top + box.current.scrollTop - current.grab;
     const others = cards().filter((item) => item !== node && !hidden(item.dataset.card as CardName));
-    const slot = others.filter((item) => item.offsetTop + item.offsetHeight / 2 < center).length;
+    const slot = dragSlot(others.filter((item) => item.offsetTop < node.offsetTop).length, current.direction, top, node.offsetHeight, others.map((item) => ({ top: item.offsetTop, height: item.offsetHeight })));
     const next = placeCard(order, current.name, slot, (name) => !hidden(name));
     if (!same(next, order)) {
       remember();

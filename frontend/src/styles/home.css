@@ -1,0 +1,74 @@
+/* новый чат: тот же экран, что на сайте (assets/new-home.css), поле и логотип по центру, под ними простые строки без плашек */
+.home-stage { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64px 16px 7vh; pointer-events: none; }
+.home-stage.leaving { animation: home-leave 200ms cubic-bezier(.4, 0, .6, 1) forwards; }
+.home-stage.leaving .home-brand { animation: home-leave-up 200ms cubic-bezier(.4, 0, .6, 1) forwards; }
+.home-stage.leaving .home-hints-box { animation: home-leave-down 200ms cubic-bezier(.4, 0, .6, 1) forwards; }
+@keyframes home-leave { to { opacity: 0; } }
+@keyframes home-leave-up { to { translate: 0 -18px; } }
+@keyframes home-leave-down { to { translate: 0 16px; } }
+.home-brand { display: flex; align-items: center; justify-content: center; gap: 2px; height: 68px; margin-bottom: 22px; }
+.home-word { margin-left: -4px; font-family: Unbounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 32px; font-weight: 600; letter-spacing: -.01em; line-height: 1; }
+.home-field-slot { flex: none; width: 100%; }
+.home-hints-box { flex: none; width: min(760px, 100%); pointer-events: auto; }
+.home-hints { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 6px; }
+.home-hints.only-start .home-column { grid-column: 1 / -1; }
+.home-hints.only-start .home-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
+.home-column { min-width: 0; }
+.home-label { margin: 0 0 6px; padding: 0 12px; color: var(--muted); font-size: var(--fs-13); font-weight: 600; line-height: 18px; }
+.home-list { display: grid; }
+.home-row { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 58px; padding: 8px 12px; border: 0; border-radius: 13px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background .18s ease; }
+.home-row > svg { flex: none; width: 19px; height: 19px; color: var(--muted); }
+.home-copy { flex: 1; display: block; min-width: 0; }
+.home-copy b { display: block; overflow: hidden; color: var(--text); font-size: var(--fs-15); font-weight: 450; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.home-copy small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: var(--fs-13); line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.home-row.is-working small::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #3fae7c; vertical-align: 1px; animation: home-working 1.8s ease-in-out infinite; }
+@keyframes home-working { 50% { opacity: .4; } }
+.home-row:active { background: var(--hover); }
+.home-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .home-row:hover { background: var(--hover); }
+}
+/* подсветка по центру, прозрачность доходит до нуля внутри своей рамки, поэтому не обрезается */
+.home-glow { position: absolute; z-index: -1; left: 50%; top: 50%; width: min(1180px, 96%); height: min(760px, 92%); translate: -50% -50%; pointer-events: none; }
+.home-glow::before, .home-glow::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+.home-glow::before { background: linear-gradient(110deg, #4bcaff66, #60da9855, #ffe18155, #ff945c55, #cc7aff70, #529cfe66); filter: blur(36px); -webkit-mask-image: radial-gradient(closest-side, #000, #000000e0 18%, #000000a8 36%, #00000070 52%, #0000003d 68%, #00000018 84%, transparent); mask-image: radial-gradient(closest-side, #000, #000000e0 18%, #000000a8 36%, #00000070 52%, #0000003d 68%, #00000018 84%, transparent); }
+/* 8 бит на канал не хватает на такой длинный слабый переход, на обычном мониторе видны ступеньки: зерно в пару уровней их разбивает */
+.home-glow::after { background: url('/ui/assets/dither.png') 0 0 / 128px 128px; image-rendering: pixelated; -webkit-mask-image: radial-gradient(closest-side, #000 80%, transparent); mask-image: radial-gradient(closest-side, #000 80%, transparent); }
+.home-glow[hidden] { display: none; }
+html.glass .home-glow { opacity: .7; }
+
+/* поле и всё вокруг него */
+#main[data-home] > #composer { top: var(--home-field-y, 40%); bottom: auto; z-index: 9; }
+/* затемнение низа ленты нужно только над лентой: на новом экране их нет, а появляются они плавно,
+   когда поле уже почти долетело вниз. Обратно к центру гаснут сразу, иначе полоса уедет вместе с полем */
+#main.chat-page:not([data-home]) > .chat-edge-fade-bottom { transition: height .22s var(--ease), opacity 240ms ease 300ms, transform .28s cubic-bezier(.22, 1, .36, 1); }
+#main[data-home] > .chat-edge-fade { opacity: 0; transition: none; pointer-events: none; }
+#main[data-home] #feed { overflow: hidden; }
+
+/* маскот: те же классы и цвета, что на сайте. Дырки лица закрашены цветом фона, под стеклом это его тон */
+.welcome-mascot { position: relative; flex: none; width: 76px; height: 68px; display: grid; place-items: start center; translate: 0 9px; }
+.home-brand .welcome-mark { position: absolute; z-index: 1; top: 4px; left: 16px; display: block; width: 44px; height: 44px; object-fit: contain; opacity: .92; }
+.welcome-rig { position: absolute; z-index: 1; top: 4px; left: 16px; width: 44px; height: 44px; transform-origin: 50% 70%; --mascot-ink: var(--bg); }
+html.glass .welcome-rig { --mascot-ink: var(--glass-base, var(--bg)); }
+.dokky-mascot { position: absolute; left: -56.25%; top: -81.25%; display: block; width: 212.5%; height: 212.5%; overflow: visible; color: #fff; pointer-events: none; }
+[data-theme="light"] .dokky-mascot { color: #121212; }
+.m-prop-rim { fill: currentColor; stroke: var(--mascot-ink); stroke-width: 2.6; paint-order: stroke; stroke-linejoin: round; }
+.m-prop-line { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.m-prop-ink { fill: none; stroke: var(--mascot-ink); stroke-width: 2.6; stroke-linecap: round; }
+.m-prop-solid { fill: currentColor; }
+.m-prop-lid { fill: var(--mascot-ink); stroke: currentColor; stroke-width: 3.2; stroke-linejoin: round; }
+.welcome-rig .dokky-mascot { opacity: .92; }
+
+@media (max-width: 720px) {
+  .home-hints { grid-template-columns: minmax(0, 1fr); }
+  .home-hints.only-start .home-sections { grid-template-columns: minmax(0, 1fr); }
+  .home-hints .home-column:nth-child(2):not(:first-child) { display: none; }
+}
+@media (max-height: 640px) {
+  .home-stage { padding-bottom: 16px; }
+  .home-brand { margin-bottom: 10px; }
+  .home-row { min-height: 50px; padding-block: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-stage.leaving, .home-stage.leaving .home-brand, .home-stage.leaving .home-hints-box, .home-row.is-working small::before { animation: none; }
+}

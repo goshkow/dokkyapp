@@ -14,6 +14,7 @@ export interface PlanFeature {
   icon?: PlanIcon;
 }
 export interface PlanPrice { amount: number; original_amount?: number; discount_percent?: number; currency?: string; period_months?: number }
+export interface PlanBadge { dark: [string, string]; light: [string, string] }
 export type PlanAction = 'subscribe' | 'upgrade' | 'current' | 'included' | 'unavailable';
 export interface Plan {
   id: string;
@@ -25,6 +26,8 @@ export interface Plan {
   /** Сколько человек заплатит сейчас: при улучшении это доплата; `null`, если платить не нужно. */
   checkout_price?: { amount: number; currency?: string } | null;
   usage_multiplier?: number;
+  /** Цвет названия плана от сервера: новый план приходит сразу со своим цветом. */
+  badge?: PlanBadge;
   features: PlanFeature[];
 }
 export interface CatalogCurrent {
@@ -62,6 +65,19 @@ const ACTIONS = new Set<PlanAction>(['subscribe', 'upgrade', 'current', 'include
 const text = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
 const finite = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 
+/* цвета уходят в стиль страницы: только #rrggbb, иначе план остаётся без своего цвета */
+function parseColors(value: unknown): [string, string] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  return value.every((part) => typeof part === 'string' && /^#[0-9a-f]{6}$/i.test(part)) ? [value[0] as string, value[1] as string] : null;
+}
+
+function parseBadge(value: unknown): PlanBadge | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const dark = parseColors((value as Record<string, unknown>).dark);
+  const light = parseColors((value as Record<string, unknown>).light);
+  return dark && light ? { dark, light } : undefined;
+}
+
 function parsePlan(raw: unknown): Plan | null {
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
@@ -87,6 +103,7 @@ function parsePlan(raw: unknown): Plan | null {
   return {
     id,
     name: text(item.name, id),
+    badge: parseBadge(item.badge),
     tagline: text(item.tagline) || undefined,
     action,
     is_current: item.is_current === true,

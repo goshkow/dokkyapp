@@ -1,5 +1,6 @@
 import {
-  CalendarClock, Ellipsis, FolderOpen, GitPullRequest, Globe, Images, Layers, ListChecks, MessageCircle, ScrollText, Search, SquareTerminal, X,
+  AudioLines, CalendarClock, CalendarDays, Cloud, Ellipsis, Files, FolderOpen, GitPullRequest, Globe, Image, Layers, ListChecks, MessageCircle, PanelsTopLeft, Plug, ScrollText, Search,
+  SquareTerminal, Utensils, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { guarded } from '../../state/overlay';
@@ -21,6 +22,16 @@ interface TileSpec {
   active?: boolean;
   pressed?: boolean;
   badge?: boolean;
+}
+
+/* сайт может не прислать иконку (сбой, старая или новая вёрстка): известные разделы всё равно различимы */
+const SECTION_ICONS: Record<string, typeof Globe> = {
+  library: Files, projects: PanelsTopLeft, cloud: Cloud, scheduled: CalendarDays, food: Utensils, voices: AudioLines, images: Image, integrations: Plug,
+};
+
+function sectionFallback(key: string) {
+  const Icon = SECTION_ICONS[key] ?? Globe;
+  return <Icon aria-hidden="true" />;
 }
 
 /** Иконка раздела сайта: SVG-маска, которую прислала страница сайта. */
@@ -127,12 +138,12 @@ export function Nav() {
             key: `site-${section.key}`,
             id: `site-section-${section.key}`,
             label: section.label,
-            icon: <SurfaceIcon icon={section.icon} fallback={<Globe aria-hidden="true" />} />,
+            icon: <SurfaceIcon icon={section.icon} fallback={sectionFallback(section.key)} />,
             active: section.active,
             badge: section.badge,
             run: () => { void openSection(section.key); },
           }))
-        : [{ key: 'library', id: 'cloud-library-button', label: 'Библиотека', icon: <Images aria-hidden="true" />, active: page === 'library', run: openLibrary }]),
+        : [{ key: 'library', id: 'cloud-library-button', label: 'Библиотека', icon: <Files aria-hidden="true" />, active: page === 'library', run: openLibrary }]),
   ];
   const overflow = tiles.length > ROW;
   const visible = overflow ? tiles.slice(0, ROW - 1) : tiles;

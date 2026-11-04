@@ -311,6 +311,12 @@ def _autostart_enabled() -> bool:
         return False
 
 
+def _saved_surface() -> str:
+    # «classic» раньше был значением по умолчанию и сохранялся без выбора человека: теперь это тёмное меню
+    value = get_setting("ui_surface", "side-dark")
+    return "side-dark" if value == "classic" else value
+
+
 def _saved_render_mode() -> str:
     from koddi.desktop import saved_render_mode
 
@@ -320,7 +326,9 @@ def _saved_render_mode() -> str:
 class UiStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-store"
+        # no-cache, а не no-store: файл всё равно сверяется при каждом запуске, но ответ 304 и готовый
+        # байт-код движка экономят секунды, особенно на Windows, где те же чанки грузят все виды окна
+        response.headers["Cache-Control"] = "no-cache"
         return response
 
 
@@ -336,6 +344,9 @@ def create_app() -> FastAPI:
 
         monitor = asyncio.create_task(watch_account(), name="dokky-account-monitor")
         scheduler = asyncio.create_task(run_scheduler(launch_automation_agent), name="automation-scheduler")
+        from koddi.dokky.client import dokky as dokky_client
+
+        warm = asyncio.create_task(dokky_client.warm_connections(), name="dokky-warm-connections")
         request_queue.recover()
         await remote_control.start()
         from koddi.updates import updater
@@ -357,6 +368,7 @@ def create_app() -> FastAPI:
             yield
         finally:
             set_notifier(None)
+            warm.cancel()
             await asyncio.to_thread(projectmap.shutdown)
             await updater.stop()
             monitor.cancel()
@@ -476,7 +488,7 @@ def create_app() -> FastAPI:
             "ui_motion": get_setting("ui_motion", "system"),
             "chat_width": get_setting("chat_width", "standard"),
             "text_size": get_setting("text_size", 14),
-            "ui_surface": get_setting("ui_surface", "classic"),
+            "ui_surface": _saved_surface(),
             "render_mode": _saved_render_mode(),
             "code_font": get_setting("code_font", "system"),
             "ui_font": get_setting("ui_font", "inter"),
@@ -508,7 +520,7 @@ def create_app() -> FastAPI:
             "permission_profile": {"ask", "trusted", "full", "read-only"},
             "ui_motion": {"system", "full", "reduced"},
             "chat_width": {"compact", "standard", "wide"},
-            "ui_surface": {"classic", "chat-dark", "side-dark"},
+            "ui_surface": {"one-color", "chat-dark", "side-dark"},
             "render_mode": {"gpu", "software"},
             "ui_font": {"inter", "system"},
             "theme": {"dark", "light", "system"},

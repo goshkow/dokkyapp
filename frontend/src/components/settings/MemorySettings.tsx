@@ -53,7 +53,7 @@ export function MemorySettings({ project, say }: { project: { id: number; name: 
           key={scope}
           title={title}
           detail={detail}
-          items={memory[scope]}
+          items={memory[scope] ?? []}
           add={(content) => run(() => post<Memory>('/api/memory', { scope, project_id: project?.id ?? null, content }), 'Добавлено')}
           edit={(item, content) => run(() => patch<Memory>(`/api/memory/${item.id}${query}`, { content }))}
           remove={(item) => run(() => del<Memory>(`/api/memory/${item.id}${query}`), 'Удалено')}

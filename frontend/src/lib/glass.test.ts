@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { glassPreferred, nextFade, setGlassEnabled, tailCurve } from './glass';
+import { glassPreferred, nextFade, sameFlightTarget, setGlassEnabled, tailCurve } from './glass';
 
 const cubic = (a: number, b: number, t: number) => 3 * a * t * (1 - t) ** 2 + 3 * b * t ** 2 * (1 - t) + t ** 3;
 function ease(curve: number[], t: number): number {
@@ -120,5 +120,18 @@ describe('выбор стекла', () => {
     expect(glassPreferred()).toBe(true);
     localStorage.setItem('koddi.liquid-glass', 'off');
     expect(glassPreferred()).toBe(false);
+  });
+});
+
+describe('цель перелёта стекла', () => {
+  const box = { x: 304, y: 694, w: 98, h: 28 };
+
+  it('дрожь замера в пару точек не перезапускает движение', () => {
+    expect(sameFlightTarget(box, { ...box, y: 697 })).toBe(true);
+  });
+
+  it('настоящая смена цели запускает его заново', () => {
+    expect(sameFlightTarget(box, { ...box, y: 740 })).toBe(false);
+    expect(sameFlightTarget(box, { ...box, w: 140 })).toBe(false);
   });
 });

@@ -96,7 +96,9 @@ function pendingShift(node: Element): { dx: number; dy: number; ms: number; c: n
   return curve && motion && total > 0 && (Math.abs(dx) > 1 || Math.abs(dy) > 1) ? { dx, dy, ms, c: curve, t: elapsed / total, motion } : null;
 }
 
-const near = (a: Box, b: Box): boolean => Math.abs(a.x - b.x) < 1.5 && Math.abs(a.y - b.y) < 1.5 && Math.abs(a.w - b.w) < 1.5 && Math.abs(a.h - b.h) < 1.5;
+// цель в полёте меряется с дрожью в пару точек: перезапуск по ней вернул бы стекло к отставшей рамке страницы, и оно прыгало назад
+const FLIGHT_SLACK = 5;
+export const sameFlightTarget = (a: Box, b: Box): boolean => (['x', 'y', 'w', 'h'] as const).every((side) => Math.abs(a[side] - b[side]) < FLIGHT_SLACK);
 
 /** Блоки стекла не из своей разметки (поле ввода страницы сайта во фрейме): источник отдаёт их в координатах окна. */
 /** Угасание блока, которое хост проигрывает сам: прозрачность from -> to за ms по кривой c, начало - at (Date.now). */
@@ -143,7 +145,7 @@ function collect(): Region[] {
       const ms = shift.ms;
       const curve = tailCurve(shift.c, shift.t);
       // то же движение, что уже передано хосту: повторять его не нужно, иначе оно начнётся заново
-      if (flight && flight.motion === shift.motion && near(flight.to, to)) {
+      if (flight && flight.motion === shift.motion && sameFlightTarget(flight.to, to)) {
         seen.add(id);
         regions.push({ id, ...flight.from, r: radius, to: flight.to, ms: flight.ms, c: flight.c, at: flight.at });
         return;
@@ -264,6 +266,7 @@ export function initGlass(): void {
 export function startTileGlass(): void {
   if (started) return;
   started = true;
+  window.koddiGlassResend = () => { push(true); kickGlass(); };
   const start = () => { active = true; watch(); push(true); kickGlass(); };
   if (window.koddiWindowBridge) start();
   else addEventListener('koddi-bridge', start, { once: true });

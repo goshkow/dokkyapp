@@ -148,3 +148,59 @@ dialog.form-dialog::backdrop { background: #0008; }
 .plugin-exec code { display: block; max-height: 90px; overflow: auto; margin-top: 2px; padding: 6px 8px; border-radius: 8px; background: color-mix(in srgb, var(--text) 6%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
 .plugin-exec small { color: var(--muted); }
 .plugin-exec > button { justify-self: start; }
+
+/* страницы говорят на языке нового экрана чата: простые строки без рамок, заголовок шрифтом знака, содержимое всплывает как там */
+main:not(.chat-page) #title { opacity: 0; }
+.page-heading h1 { font-family: Unbounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: var(--fs-24); font-weight: 600; letter-spacing: -.01em; }
+.task-card { border-color: transparent; border-radius: 13px; background: transparent; }
+.task-card:hover { border-color: transparent; background: var(--hover); }
+.task-list { gap: 2px; }
+.data-table .table-row { border-bottom: 0; border-radius: 13px; transition: background .18s ease; }
+.data-table .table-row:hover, .table-row:hover { background: var(--hover); }
+.data-table .table-head { border-bottom: 0; border-radius: 0; }
+.auto-card, .skill-card { border-color: transparent; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.template-card { border: 0; background: transparent; transition: background .18s ease; }
+.template-card:hover { background: var(--hover); }
+/* вкладки страниц: та же капсула с заливкой выбранного, что «Чат / Поиск» */
+.task-tabs { width: fit-content; max-width: 100%; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 22px; background: var(--field); }
+.task-tabs button { min-height: 32px; padding: 0 13px; border-radius: 18px; background: transparent; transition: background .2s ease, color .2s ease; }
+.task-tabs button[aria-selected="true"] { background: var(--bg); box-shadow: 0 1px 4px #0002; }
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="reduced"]) .page-content > * { animation: page-rise 300ms var(--ease) both; }
+  html:not([data-motion="reduced"]) .page-content > :nth-child(2) { animation-delay: 40ms; }
+  html:not([data-motion="reduced"]) .page-content > :nth-child(n + 3) { animation-delay: 80ms; }
+}
+@keyframes page-rise { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
+/* под стеклом заливки лежат прямо на стекле окна: непрозрачные цвета закрыли бы его */
+html.glass .task-tabs { border-color: transparent; background: color-mix(in srgb, var(--text) 7%, transparent); }
+html.glass .task-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--text) 15%, transparent); box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .14), 0 1px 3px rgba(0, 0, 0, .12); }
+html.glass :is(.task-card:hover, .data-table .table-row:hover, .table-row:hover, .template-card:hover, .home-row:hover) { background: color-mix(in srgb, var(--text) 8%, transparent); }
+html.glass :is(.auto-card, .skill-card) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+/* строки проектов и изменений - как на новом экране: без разделителей, с подсветкой при наведении */
+.project-row, .data-table .project-row { border-bottom: 0; border-radius: 13px; padding-inline: 12px; transition: background .18s ease; }
+@media (hover: hover) and (pointer: fine) { .project-row:hover { background: var(--hover); } }
+html.glass .project-row:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+/* выбранная вкладка одна на всех страницах, поля поиска одной формы */
+.lib-tabs button[aria-selected="true"] { background: var(--bg); color: var(--text); box-shadow: 0 1px 4px #0002; }
+html.glass .lib-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--text) 15%, transparent); box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .14), 0 1px 3px rgba(0, 0, 0, .12); }
+.page-search .page-input, .page-select, .page-input { border-radius: 12px; }
+.page-search .page-input { min-height: 44px; padding-inline: 16px; }
+html.glass .page-input, html.glass .page-select { border-color: transparent; background: color-mix(in srgb, var(--text) 7%, transparent); }
+/* подсветка выступает за край колонки, текст строки остаётся вровень с заголовком */
+.project-row { margin-inline: -12px; }
+/* поле поиска навыков - то же, что в журнале */
+.page-search .page-input { border-color: var(--line); background: var(--panel); }
+/* четыре кнопки навыка помещаются в карточку одной строкой */
+.skill-actions { gap: 6px; }
+.skill-actions > :is(.primary, .secondary) { min-height: 34px; padding-inline: 12px; font-size: var(--fs-13); }
+.skill-actions > .icon-button[aria-label="Автоподбор навыка"] { margin-left: auto; }
+.skill-actions { flex-wrap: nowrap; }
+.skill-actions > :is(.primary, .secondary) { flex: 0 1 auto; min-width: 0; padding-inline: 10px; }
+.skill-actions > :is(.primary, .secondary) > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-actions > .icon-button { flex: none; }
+/* изменения - тоже без разделителя, с подсветкой при наведении */
+.review-file { margin: 0 -12px 2px; padding: 0; border-bottom: 0; border-radius: 13px; transition: background .18s ease; }
+.review-file summary { padding: 11px 12px; border-radius: 13px; }
+@media (hover: hover) and (pointer: fine) { .review-file:not([open]):hover { background: var(--hover); } }
+html.glass .review-file:not([open]):hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+:root[data-theme="light"] .badge.running { color: #2467d6; background: color-mix(in srgb, #2467d6 11%, transparent); }

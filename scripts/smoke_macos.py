@@ -178,7 +178,7 @@ def main():
 
     @guarded
     def slow_start():
-        assert not backend.server.started
+        assert not backend.started
         assert host._load_attempts == 0
         assert host.startup_label.isVisible() and host.view.isVisible() and host.view.width() > 400
         result["slow_start"] = True

@@ -13,9 +13,9 @@ import threading
 import time
 import urllib.request
 from ctypes import wintypes  # импортируется и на macOS: структуры нужны только Windows-коду и его тестам
+from functools import cached_property
 from pathlib import Path
 
-import uvicorn
 from PySide6.QtCore import (
     QAbstractNativeEventFilter,
     QByteArray,
@@ -57,13 +57,22 @@ from PySide6.QtWidgets import (
 )
 
 from koddi.desktop import prune_webengine_caches, software_rendering, webengine_cache_path
-from koddi.desktop import server as desktop_server
+
+
+def __getattr__(name: str):
+    if name == "desktop_server":
+        from koddi.desktop import server
+
+        return server
+    raise AttributeError(name)
 
 
 LOGGER = logging.getLogger("koddi.desktop")
 IS_MAC = sys.platform == "darwin"
 # плитки, у которых вид страницы лежит внутри стекла над лентой: поле ввода и «Чат / Поиск» режима чата
-CONTENT_TILES = ("composer", "product", "pill")
+CONTENT_TILES = ("composer", "product", "pill", "mode")
+# нужны только в режиме кода: вид страницы при запуске не создаётся, это лишний процесс и время
+LAZY_TILES = frozenset({"mode"})
 # виды, в которые страница может перевести клавиатуру (навигация с клавиатуры)
 FOCUS_ROLES = frozenset({"main", "sidebar", "inspector", "composer"})
 
@@ -78,59 +87,68 @@ class UrlHandler(QObject):
         self.activation_requested.emit()
 
 
-class DesktopApiServer(uvicorn.Server):
-    def __init__(self, config):
-        super().__init__(config)
-        self.stop_requested = threading.Event()
-        self._main_loop_entered = threading.Event()
-
-    def request_shutdown(self):
-        self.stop_requested.set()
-        if self._main_loop_entered.is_set():
-            self.should_exit = True
-
-    async def main_loop(self):
-        # uvicorn 0.30 пропускает lifespan.shutdown при should_exit во время startup.
-        self._main_loop_entered.set()
-        if self.stop_requested.is_set():
-            self.should_exit = True
-        await super().main_loop()
-
-
 class DesktopBackend:
     def __init__(self, port: int):
         from koddi.desktop.transport import desktop_access
 
         desktop_access.enable()
         desktop_access.origin = f"http://127.0.0.1:{port}"
-        self.server = DesktopApiServer(uvicorn.Config(
-            desktop_server.app, host="127.0.0.1", port=port,
-            log_level="warning", access_log=False, lifespan="on",
-            # открытый SSE не должен бесконечно откладывать остановку очереди и runs.
-            timeout_graceful_shutdown=5,
-        ))
+        self.port = port
         self.failed = threading.Event()
+        self._stop_early = threading.Event()
         self.thread = threading.Thread(target=self._run, name="koddi-api", daemon=False)
 
+    @cached_property
+    def server(self):
+        # FastAPI и всё приложение грузятся здесь, в потоке сервера: окно с заставкой к этому времени уже на экране
+        import uvicorn
+
+        from koddi.desktop import server as desktop_server
+        from koddi.desktop.api_server import DesktopApiServer
+
+        return DesktopApiServer(uvicorn.Config(
+            desktop_server.app, host="127.0.0.1", port=self.port,
+            log_level="warning", access_log=False, lifespan="on",
+            # открытый SSE не должен бесконечно откладывать остановку очереди
+            timeout_graceful_shutdown=5,
+        ))
+
+    @property
+    def started(self) -> bool:
+        """Для потока окна: сам сервер отсюда не создаётся, иначе окно ждало бы загрузку FastAPI."""
+        server = self.__dict__.get("server")
+        return server is not None and server.started
+
     def _run(self):
+        stopped_on_request = False
         try:
+            from koddi.desktop import server as desktop_server
+
             desktop_server.migrate_legacy_data()
             desktop_server.configure_logging()
             desktop_server.init_db()
-            self.server.run()
+            server = self.server
+            if self._stop_early.is_set():
+                server.request_shutdown()
+            server.run()
+            stopped_on_request = server.stop_requested.is_set()
         except BaseException:
-            # пути, настройки и текст исключения не нужны в сообщении о сбое запуска.
+            # пути, настройки и текст исключения не нужны в сообщении о сбое запуска
             LOGGER.error("Локальный сервер завершился с ошибкой")
             self.failed.set()
         finally:
-            if not self.server.stop_requested.is_set():
+            if not stopped_on_request and not self._stop_early.is_set():
                 self.failed.set()
 
     def start(self):
         self.thread.start()
 
     def request_shutdown(self):
-        self.server.request_shutdown()
+        # сначала флаг: поток мог создать сервер сразу после проверки ниже и прочитать флаг раньше нас
+        self._stop_early.set()
+        server = self.__dict__.get("server")
+        if server is not None:
+            server.request_shutdown()
 
     def stop(self):
         self.request_shutdown()
@@ -769,7 +787,7 @@ class WebHost(QMainWindow):
 
             shortcuts.install(self)
         QTimer.singleShot(0, self._enable_native_frame)
-        QTimer.singleShot(250, self._load_ui)
+        QTimer.singleShot(0, self._load_ui)
 
     def _create_engine_view(self, root) -> None:
         self.view = QWebEngineView(root)
@@ -980,7 +998,8 @@ class WebHost(QMainWindow):
             tile.attach()
             self.tiles[role] = tile
         for role in CONTENT_TILES:
-            self.tiles[role] = ComposerTile(self, role)
+            if role not in LAZY_TILES:
+                self.tiles[role] = ComposerTile(self, role)
         # заставка или экран входа могли открыться раньше плиток: тогда плитки сразу под страницей
         if getattr(self, "_overlay_active", False):
             self.apply_overlay(True)
@@ -1071,6 +1090,9 @@ class WebHost(QMainWindow):
             for tile in self.tiles.values():
                 tile.dress(theme)
                 tile.layout(animate=False)
+                # пока стекло было выключено, рамки карточек плитки отбрасывались, а страница считает их уже отправленными
+                if enabled:
+                    tile.view.page().runJavaScript("window.koddiGlassResend && window.koddiGlassResend()")
             color = QColor(0, 0, 0, 0) if enabled else QColor("#080808")
             self.view.page().setBackgroundColor(color)
             self.view.setStyleSheet("background: transparent;" if enabled else "background: #080808;")
@@ -1090,8 +1112,21 @@ class WebHost(QMainWindow):
         """Рамки поля ввода и «Чат / Поиск» идут их плиткам: стекло над лентой; нет плитки - блок остаётся без стекла."""
         for role in CONTENT_TILES:
             tile = self.tiles.get(role)
+            own = [item for item in regions if item["id"] == role]
+            if tile is None and own and role in LAZY_TILES and self.tiles:
+                tile = self._create_lazy_tile(role)
             if tile is not None:
-                tile.set_regions([item for item in regions if item["id"] == role], size)
+                tile.set_regions(own, size)
+
+    def _create_lazy_tile(self, role: str):
+        from koddi.desktop.macos_tiles import ComposerTile
+
+        tile = ComposerTile(self, role)
+        tile.dress(self.glass.theme)
+        if getattr(self, "_overlay_active", False):
+            tile.set_overlay(True)
+        self.tiles[role] = tile
+        return tile
 
     def focus_composer(self) -> None:
         """Клавиатура переходит в поле ввода: в его собственный вид, если он стоит над лентой, иначе в главный."""
@@ -1351,13 +1386,13 @@ class WebHost(QMainWindow):
 
     def _load_ui(self) -> None:
         if not self._initial_show_done:
-            QTimer.singleShot(100, self._load_ui)
+            QTimer.singleShot(30, self._load_ui)
             return
-        if self.backend is not None and not self.backend.server.started:
+        if self.backend is not None and not self.backend.started:
             if self.backend.failed.is_set():
                 self.startup_label.setText("Не удалось запустить локальный сервер. Перезапустите Докки.")
                 return
-            QTimer.singleShot(100, self._load_ui)
+            QTimer.singleShot(30, self._load_ui)
             return
         self._load_attempts += 1
         try:
@@ -1766,10 +1801,11 @@ def main() -> None:
     app.aboutToQuit.connect(request_shutdown)
     try:
         backend = DesktopBackend(api_port)
-        backend.start()
         host = WebHost(api_port, session_key, backend)
         host.restore_geometry()
         host.show()
+        # сервер стартует после показа: его импорты не задерживают первый кадр заставки
+        backend.start()
 
         activate = host.bring_to_front
         from koddi.desktop import tray

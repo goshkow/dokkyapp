@@ -1,4 +1,4 @@
-import { CircleUserRound, Code2, CreditCard, Info, MessagesSquare, Monitor, RefreshCw, Search, Settings, Smartphone, X, type LucideIcon } from 'lucide-react';
+import { AudioLines, CircleHelp, CircleUserRound, Code2, CreditCard, Info, MessagesSquare, Monitor, RefreshCw, Search, Settings, Smartphone, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { closeSettings, openSettings, useSettingsUi, type SettingsSection } from '../../state/settingsUi';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
@@ -7,10 +7,12 @@ import { AccountPage } from './AccountPage';
 import { BillingPage } from './BillingPage';
 import { DevelopmentPage } from './DevelopmentPage';
 import { GeneralPage } from './GeneralPage';
+import { HelpPage } from './HelpPage';
 import { RemoteControlPage } from './RemoteControlPage';
 import { AboutPage, SystemPage } from './SystemPages';
 import { ConversationPage } from './UsageConversationPages';
 import { UpdatesPage } from './UpdatesPage';
+import { VoicePage } from './VoicePage';
 import { hasUpdate, useUpdates } from '../../state/updates';
 
 interface Entry {
@@ -28,7 +30,9 @@ const groups: Array<{ title: string; items: Entry[] }> = [
       { id: 'general', title: 'Общие', Icon: Settings, keywords: 'оформление тема тёмная светлая системная поверхность liquid glass стекло шрифт интерфейса размер текста ширина чата анимации код шрифт кода отправка enter' },
       { id: 'account', title: 'Аккаунт', Icon: CircleUserRound, keywords: 'профиль имя фото вход выход обновить аккаунт telegram почта' },
       { id: 'billing', title: 'Подписка и оплата', Icon: CreditCard, keywords: 'планы тариф подписка оплата купить plus premium ultra base автопродление пополнение использования чек лимит остаток окно 5 часов неделя токены' },
-      { id: 'conversation', title: 'Общение', Icon: MessagesSquare, keywords: 'полнота ответов подробность кратко источники ссылки память режим по умолчанию быстрый улучшенный авто' },
+      { id: 'conversation', title: 'Общение', Icon: MessagesSquare, keywords: 'полнота ответов подробность кратко источники ссылки память режим по умолчанию быстрый улучшенный авто вид ответов адаптивный простой чаты telegram синхронизация перенос очистить' },
+      { id: 'voice', title: 'Голос Докки', Icon: AudioLines, keywords: 'голос озвучка озвучить прослушать' },
+      { id: 'help', title: 'Помощь', Icon: CircleHelp, keywords: 'помощь поддержка вопросы telegram почта документы оферта' },
     ],
   },
   {
@@ -123,6 +127,8 @@ export function SettingsDialog() {
             {section === 'account' && <AccountPage say={setFeedback} close={closeSettings} />}
             {(section === 'billing' || section === 'usage') && <BillingPage say={setFeedback} />}
             {section === 'conversation' && <ConversationPage say={setFeedback} />}
+            {section === 'voice' && <VoicePage say={setFeedback} />}
+            {section === 'help' && <HelpPage say={setFeedback} />}
             {section === 'development' && <DevelopmentPage say={setFeedback} />}
             {section === 'remote' && <RemoteControlPage say={setFeedback} />}
             {section === 'system' && <SystemPage say={setFeedback} />}

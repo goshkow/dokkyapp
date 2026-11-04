@@ -15,7 +15,7 @@
 .desktop-window-controls [data-window-action="close"]:active { background:#b02519; color:white; }
 .desktop-window .header-end { padding-right:var(--caption-width,138px); }
 .desktop-window #shell:not(.right-collapsed) .header-end { padding-right:0; }
-.desktop-window #shell:not(.right-collapsed) .inspector-heading { min-height:70px; padding-top:var(--caption-height,42px); }
+html.glass.desktop-window #shell:not(.right-collapsed) .inspector-heading { min-height:70px; padding-top:var(--caption-height,42px); }
 .desktop-window .chat-header,.desktop-window .sidebar-brand,.desktop-window .inspector-heading { user-select:none; }
 .desktop-window body.auth-required .desktop-window-controls { background:transparent; }
 @media (forced-colors:active) {

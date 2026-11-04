@@ -20,7 +20,7 @@ def isolate_desktop_access(monkeypatch):
 
 def test_window_waits_for_backend_before_loading_page(monkeypatch):
     callbacks, loaded, errors = [], [], []
-    backend = SimpleNamespace(server=SimpleNamespace(started=False), failed=threading.Event())
+    backend = SimpleNamespace(started=False, failed=threading.Event())
     host = SimpleNamespace(
         backend=backend, _initial_show_done=True, _load_attempts=0, api_base="http://127.0.0.1:12345",
         view=SimpleNamespace(load=loaded.append),
@@ -31,11 +31,11 @@ def test_window_waits_for_backend_before_loading_page(monkeypatch):
         web_host.WebHost._load_ui(host)
     assert len(callbacks) == 120
     assert not loaded and host._load_attempts == 0
-    backend.server.started = True
+    backend.started = True
     web_host.WebHost._load_ui(host)
     assert loaded[0].toString() == host.api_base + "/ui/"
     assert host._load_attempts == 1
-    backend.server.started = False
+    backend.started = False
     backend.failed.set()
     web_host.WebHost._load_ui(host)
     assert len(loaded) == 1 and len(callbacks) == 120
@@ -44,7 +44,7 @@ def test_window_waits_for_backend_before_loading_page(monkeypatch):
 
 def test_window_keeps_splash_and_retries_until_page_loads(monkeypatch):
     callbacks, retried, errors = [], [], []
-    backend = SimpleNamespace(server=SimpleNamespace(started=True), failed=threading.Event())
+    backend = SimpleNamespace(started=True, failed=threading.Event())
     page = SimpleNamespace(requestedUrl=lambda: web_host.QUrl("http://127.0.0.1:12345/ui/"))
     host = SimpleNamespace(
         backend=backend, _ui_loaded=False, _load_attempts=0, api_base="http://127.0.0.1:12345",
@@ -241,6 +241,7 @@ def test_join_does_not_force_exit_on_slow_writes_or_repeated_interrupt(monkeypat
 
     backend = object.__new__(web_host.DesktopBackend)
     backend.server = SimpleNamespace(request_shutdown=lambda: calls.append("stop"), force_exit=False)
+    backend._stop_early = threading.Event()
     backend.thread = Worker()
     ticks = iter([0, 16, 16, 32, 32])
     monkeypatch.setattr(web_host.time, "monotonic", lambda: next(ticks))
@@ -249,6 +250,19 @@ def test_join_does_not_force_exit_on_slow_writes_or_repeated_interrupt(monkeypat
     assert backend.thread.joins == 3
     assert backend.server.force_exit is False
     assert "Ожидаем безопасного завершения" in caplog.text
+
+
+def test_stop_request_is_not_lost_while_server_is_being_created():
+    backend = object.__new__(web_host.DesktopBackend)
+    backend._stop_early = threading.Event()
+    backend.request_shutdown()
+    assert backend._stop_early.is_set()
+    calls = []
+    backend.server = SimpleNamespace(request_shutdown=lambda: calls.append("stop"))
+    backend._stop_early = threading.Event()
+    backend.request_shutdown()
+    # флаг стоит и при готовом сервере: поток мог прочитать его сразу после создания сервера
+    assert backend._stop_early.is_set() and calls == ["stop"]
 
 
 @pytest.mark.asyncio
@@ -389,3 +403,22 @@ def test_closing_without_a_run_or_after_agreement_asks_nothing(monkeypatch):
     assert web_host.WebHost._stop_agreed(SimpleNamespace(_stop_confirmed=False)) is True
     monkeypatch.setattr(agent_runs, "active_ids", lambda: [1])
     assert web_host.WebHost._stop_agreed(SimpleNamespace(_stop_confirmed=True)) is True
+
+
+def test_mode_tile_is_created_only_when_code_mode_needs_it(monkeypatch):
+    made = []
+
+    class Tile:
+        def __init__(self):
+            self.regions = None
+
+        def set_regions(self, regions, size=None):
+            self.regions = regions
+
+    host = SimpleNamespace(tiles={"composer": Tile(), "product": Tile(), "pill": Tile()})
+    host._create_lazy_tile = lambda role: made.append(role) or host.tiles.setdefault(role, Tile())
+    web_host.WebHost._apply_composer(host, [{"id": "composer"}, {"id": "pill"}])
+    assert made == []
+    web_host.WebHost._apply_composer(host, [{"id": "mode"}])
+    assert made == ["mode"] and host.tiles["mode"].regions == [{"id": "mode"}]
+    assert host.tiles["composer"].regions == []

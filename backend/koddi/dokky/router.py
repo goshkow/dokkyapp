@@ -9,6 +9,8 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
 import asyncio
 
+import httpx
+
 from koddi.dokky.client import API, ORIGIN, DokkyError, dokky
 from koddi.dokky.privacy import scrub_event_line
 from koddi.policy.network import NetworkAccessError, NetworkLimits, fetch_response
@@ -230,6 +232,22 @@ async def events(run_id: str, after: int = 0):
     )
 
 
+@router.get("/voice-assets/{name}")
+async def voice_asset(name: str):
+    """Пример голоса или обложка с сайта: статика, вход не нужен, строгая политика страницы чужой адрес не пускает."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,120}\.(mp3|webp)", name, flags=re.ASCII):
+        raise HTTPException(404, "Файл не найден")
+    try:
+        async with dokky.http() as client:
+            response = await client.get(f"{ORIGIN}/assets/voices/{name}")
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Не удалось получить файл голоса") from exc
+    if response.status_code != 200 or len(response.content) > 30_000_000:
+        raise HTTPException(404, "Файл не найден")
+    media = "audio/mpeg" if name.endswith(".mp3") else "image/webp"
+    return Response(response.content, media_type=media, headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+
 @router.get("/cloud/files/{file_id}/content")
 async def file_content(file_id: str, request: Request):
     if not re.fullmatch(r"file_[A-Za-z0-9_-]{1,128}", file_id):
@@ -303,6 +321,9 @@ async def cloud(path: str, request: Request):
             r"me",
             r"me/avatar",
             r"preferences",
+            r"memory",
+            r"voices",
+            r"sync",
             r"subscription",
             r"library",
             r"artifacts/[\w-]+",
@@ -315,10 +336,11 @@ async def cloud(path: str, request: Request):
             r"chats/[\w-]+/(messages|read)",
             r"chats/[\w-]+/messages/[\w-]+/regenerate",
             r"runs/[\w-]+/cancel",
+            r"memory/import/(parse|apply)",
         ],
         "PATCH": [r"chats/[\w-]+", r"chats/[\w-]+/messages/[\w-]+", r"preferences"],
-        "PUT": [r"library/[\w-]+/favorite"],
-        "DELETE": [r"chats/[\w-]+", r"files/[\w-]+"],
+        "PUT": [r"library/[\w-]+/favorite", r"voices/choice", r"sync"],
+        "DELETE": [r"chats/[\w-]+", r"files/[\w-]+", r"memory"],
     }
     if not any(re.fullmatch(pattern, path, flags=re.ASCII) for pattern in allowed[request.method]):
         raise HTTPException(404, "Операция Dokky не поддерживается")

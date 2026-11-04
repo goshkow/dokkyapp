@@ -150,14 +150,6 @@
 
 /* очередь и карточки над полем лежат поверх ленты: своя подложка с размытием, чтобы текст под ними не просвечивал */
 #composer { isolation: isolate; }
-#composer::before {
-  content: "";
-  position: absolute;
-  inset: -28px 0 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--bg) 28px);
-}
 #local-queue, .approval-panel {
   background: color-mix(in srgb, var(--panel) 78%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(1.4);

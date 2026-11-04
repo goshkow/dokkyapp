@@ -2,7 +2,7 @@ import { codeFontStack } from '../lib/codeFonts';
 import { createStore, useStore } from '../lib/store';
 
 export type Theme = 'dark' | 'light';
-export type Surface = 'classic' | 'chat-dark' | 'side-dark';
+export type Surface = 'one-color' | 'chat-dark' | 'side-dark';
 export type Scope = 'chat' | 'search' | 'development';
 
 export interface UiState {
@@ -22,7 +22,7 @@ export const ui = createStore<UiState>({
   leftOpen: true,
   rightOpen: false,
   theme: 'dark',
-  surface: 'classic',
+  surface: 'side-dark',
   baseSize: 14,
   uiFont: 'inter',
   codeFont: 'system',

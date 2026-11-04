@@ -46,7 +46,7 @@ export function Shell({ sidebar, main, inspector }: ShellProps) {
           <PanelRight aria-hidden="true" />
         </button>
       </div>
-      <aside id="left" aria-label="Главное меню"><div className="panel-inner sidebar-panel">{tiles ? null : sidebar}</div></aside>
+      <aside id="left" aria-label="Главное меню"><PanelResizer side="left" /><div className="panel-inner sidebar-panel">{tiles ? null : sidebar}</div></aside>
       <main id="main" className={mainClass || undefined}>{main}</main>
       <aside id="right" aria-label="Инспектор проекта"><PanelResizer /><div className="panel-inner inspector-panel">{tiles ? null : inspector}</div></aside>
     </div>

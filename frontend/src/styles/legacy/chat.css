@@ -1361,28 +1361,6 @@ main:not(.chat-page) .chat-edge-fade {
 .chat-page .empty {
   min-height: min(240px, 100%);
 }
-.live-plan {
-  margin: 4px 0 16px;
-  padding: 12px 16px 8px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-}
-.live-plan-heading {
-  font-size: var(--fs-13);
-  color: var(--muted);
-}
-.live-plan .plan-list {
-  margin: 6px 0 0;
-}
-.live-plan .plan-list li {
-  padding: 6px 0;
-  font-size: var(--fs-14);
-  color: var(--text);
-  align-items: center;
-}
-.live-plan .plan-list li.completed {
-  color: var(--muted);
-}
 .plan-dot {
   flex: 0 0 16px;
   width: 16px;

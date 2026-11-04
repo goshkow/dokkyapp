@@ -94,6 +94,8 @@
   cursor: col-resize;
   touch-action: none;
 }
+/* у меню ручка на правом краю, а полоса на самой границе с чатом */
+.panel-resizer[data-side="left"] { left: auto; right: -5px; }
 .panel-resizer::after {
   content: "";
   position: absolute;
@@ -102,10 +104,13 @@
   left: 3px;
   width: 2px;
   border-radius: 1px;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--text) 45%, transparent);
   opacity: 0;
   transition: opacity 160ms ease;
 }
-.panel-resizer:hover::after, .panel-resizer:focus-visible::after, html.panel-resizing .panel-resizer::after { opacity: 0.6; }
+/* не :hover: плитки стекла лежат над страницей, и наведение могло зависнуть, пока курсор уже над меню */
+.panel-resizer[data-hot]::after, .panel-resizer:focus-visible::after { opacity: 1; }
+/* затемнение краёв ленты и фрейм чата лежат выше панели: горящая полоса должна быть над ними */
+:is(#left, #right):has(> .panel-resizer[data-hot], > .panel-resizer:focus-visible) { z-index: 60; }
 .panel-resizer:focus-visible { outline: none; }
 html.panel-resizing, html.panel-resizing * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }

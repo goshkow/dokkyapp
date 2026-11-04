@@ -5,11 +5,11 @@
  */
 import type { Store } from './store';
 
-export type Role = 'main' | 'sidebar' | 'inspector' | 'composer' | 'product' | 'pill' | 'popup';
+export type Role = 'main' | 'sidebar' | 'inspector' | 'composer' | 'product' | 'pill' | 'mode' | 'popup';
 
 export const role: Role = (() => {
   const value = new URLSearchParams(location.search).get('role');
-  return value === 'sidebar' || value === 'inspector' || value === 'composer' || value === 'product' || value === 'pill' || value === 'popup' ? value : 'main';
+  return value === 'sidebar' || value === 'inspector' || value === 'composer' || value === 'product' || value === 'mode' || value === 'pill' || value === 'popup' ? value : 'main';
 })();
 /** Вид плитки: состояния не владеет, действия отправляет главному виду. */
 export const isMirror = role !== 'main';
@@ -196,5 +196,7 @@ declare global {
     koddiRelayIn?: (payload: string) => void;
     koddiTiles?: boolean;
     koddiGlassPreferred?: boolean;
+    /** Плитка отправляет рамки карточек заново: хост только что включил стекло. */
+    koddiGlassResend?: () => void;
   }
 }

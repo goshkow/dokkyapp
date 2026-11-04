@@ -196,6 +196,20 @@ class DokkyClient:
             self._pool_loop = loop
         return _PooledClient(self._pool)
 
+    async def warm_connections(self, count: int = 3) -> None:
+        """Первые запросы окна идут к серверу одновременно: готовые TLS-соединения экономят им по полсекунды."""
+        if self.transport is not None or not self.store.load():
+            return
+
+        async def touch() -> None:
+            try:
+                async with self.http() as client:
+                    await client.get(f"{ORIGIN}/api/frontend-release", timeout=8)
+            except (httpx.HTTPError, OSError, RuntimeError):
+                pass  # окно просто откроет соединение само
+
+        await asyncio.gather(*(touch() for _ in range(count)))
+
     LOGIN_SECONDS = 600
 
     def _login_result(self, status: str, message: str = "") -> None:

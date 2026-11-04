@@ -1,6 +1,7 @@
 import { useState, type UIEvent } from 'react';
 import { useLimits } from '../../state/limits';
-import { openBilling } from '../../state/remote';
+import { guarded } from '../../state/overlay';
+import { openBilling, switchScope } from '../../state/remote';
 import { useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { AccountRow } from './AccountRow';
@@ -30,8 +31,17 @@ export function Sidebar() {
         <span className="brand">
           <img className="brand-mark" src="/ui/assets/brand-mark.png" alt="" draggable={false} />
           <span className="brand-word">Докки</span>
-          {/* подпись показывает текущий режим; переключает режим плитка в ряду разделов */}
-          <span className="mode-badge" data-active={development || undefined}>{development ? 'Code' : 'Чат'}</span>
+          {/* подпись показывает текущий режим и переключает его, как плитка в ряду разделов */}
+          <button
+            type="button"
+            className="mode-badge"
+            data-active={development || undefined}
+            aria-label={development ? 'Вернуться в режим чата' : 'Режим разработки'}
+            title={development ? 'Вернуться в режим чата' : 'Режим разработки'}
+            onClick={guarded(() => switchScope(development ? 'chat' : 'development'))}
+          >
+            {development ? 'Code' : 'Чат'}
+          </button>
         </span>
       </div>
       <div className="sidebar-scroll" onScroll={onScroll}>

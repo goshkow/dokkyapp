@@ -3,6 +3,7 @@ import { createStore, useStore } from '../lib/store';
 import { data } from './data';
 import { limitsStore, loadLimits, onLimitsLoaded, useLimits } from './limits';
 import { notify } from './overlay';
+import { developerPlan, plansStore } from './plans';
 import { openSettings } from './settingsUi';
 
 /* Докки Code открыт с Plus и выше (а также тестерам с кредитами и админам). Free, пробный период и Base видят
@@ -45,7 +46,8 @@ export function useDeveloperAccess(): DeveloperAccess {
 /** Не пускает начало работы агента без доступа: подсказка и переход к планам. */
 export function requireDeveloper(): boolean {
   if (!developerAccess().locked) return true;
-  notify('Докки Code включается с подпиской Plus. Обновите план, чтобы писать агенту', true);
+  const { name } = developerPlan(plansStore.get().catalog);
+  notify(`Докки Code включается с подпиской ${name || 'выше'}. Обновите план, чтобы писать агенту`, true);
   openSettings('billing');
   return false;
 }

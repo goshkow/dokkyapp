@@ -1,12 +1,13 @@
-import { ArrowUp, ListPlus, Maximize2, Mic, Plus, Square, X, Zap } from 'lucide-react';
+import { ArrowUp, ListPlus, Maximize2, Mic, Plus, Search, Square, X, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { announceComposerFocus } from '../../lib/bridge';
 import { isMirror } from '../../lib/mirror';
+import { reducedMotion } from '../../lib/motion';
 import { mod } from '../../lib/platform';
 import { useChat } from '../../state/chatCore';
 import { useData } from '../../state/data';
 import { fieldActions, uploadFromField, useField, useFieldHost, voiceMeter } from '../../state/field';
-import { useSurface } from '../../state/surface';
+import { pressOutsideSurface, surface, useSurface } from '../../state/surface';
 import { useUi } from '../../state/ui';
 import { VoiceWave } from './VoiceWave';
 import { appendPastedText, pastedTextFile } from '../../lib/pastedText';
@@ -35,6 +36,7 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
   const siteReady = useSurface((s) => s.siteField?.ready ?? false);
   const siteClosed = useSurface((s) => Boolean(s.siteField?.disabled && !s.siteField.busy));
   const sitePlaceholder = useSurface((s) => s.siteField?.placeholder ?? '');
+  const siteSearch = useSurface((s) => s.siteField?.search ?? false);
   const development = !site && scope === 'development';
   const search = !site && scope === 'search';
   const settings = useData((s) => s.settings);
@@ -115,6 +117,19 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
     if (isMirror) announceComposerFocus();
   }, [focus]);
 
+  // смена режима на новом экране сайта: своё поле страницы невидимо, вспыхивает поле приложения
+  const flash = useSurface((state) => state.siteField?.flash ?? 0);
+  const flashed = useRef(flash);
+  useEffect(() => {
+    if (flash === flashed.current) return;
+    flashed.current = flash;
+    if (flash === 0 || reducedMotion()) return;
+    document.getElementById('composer')?.querySelector('.composer-field')?.animate(
+      [{ boxShadow: 'inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent)' }, { boxShadow: 'inset 0 0 0 1.5px transparent' }],
+      { duration: 560, easing: 'ease-out' },
+    );
+  }, [flash]);
+
   // в виде поля файлы тоже можно бросить сверху; в главном виде этим занят Composer
   useEffect(() => {
     if (!isMirror) return undefined;
@@ -175,7 +190,14 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
   }, [place, placeAt, text]);
 
   return (
-    <div className="composer-field" data-field="live" data-multiline={String(multiline)}>
+    <div
+      className="composer-field"
+      data-field="live"
+      data-multiline={String(multiline)}
+      // меню режимов сайта закрывается нажатием мимо него, а нажатие в поле приложения странице не видно
+      onPointerDownCapture={() => { if (surface.get().siteField?.tabs?.items.some((tab) => tab.open)) void pressOutsideSurface(); }}
+    >
+      {site && siteSearch && !voiceBusy && <span className="composer-icon composer-search-mark" aria-hidden="true"><Search /></span>}
       <button
         id="attach"
         ref={attach}
@@ -185,7 +207,7 @@ export function ComposerField({ attach, menuOpen, onExpanded }: { attach?: RefOb
         aria-label={voiceBusy ? cancelLabel : 'Добавить'}
         aria-haspopup={voiceBusy || site ? undefined : 'menu'}
         aria-expanded={voiceBusy || site ? undefined : open}
-        hidden={search && !voiceBusy}
+        hidden={(search || (site && siteSearch)) && !voiceBusy}
         // у страницы сайта своё меню вложений нет смысла повторять: «+» сразу открывает выбор файлов этого вида
         onClick={() => void (voiceBusy ? fieldActions.cancelVoice() : site ? picker.current?.click() : fieldActions.menu(!menu))}
       >

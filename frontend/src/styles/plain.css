@@ -1,0 +1,86 @@
+/* обычный вид без Liquid Glass: одна линия и одна заливка на весь интерфейс, меньше рамок и оттенков.
+   Поле и кнопки вокруг него - сплошной фон, как у блоков правой панели: без размытия, градиентов и обводки */
+:root:not(.glass) {
+  --line: color-mix(in srgb, var(--text) 13%, transparent);
+  --solid: var(--fill);
+  --solid-hover: color-mix(in srgb, var(--text) 12%, var(--bg));
+  /* поле и таблетки стоят над лентой: лёгкая тень отделяет их от текста под ними */
+  --float-shadow: 0 2px 14px rgb(0 0 0 / 0.34), 0 0 0 1px rgb(255 255 255 / 0.03);
+}
+:root[data-theme="light"]:not(.glass) { --float-shadow: 0 2px 12px rgb(0 0 0 / 0.1), 0 0 0 1px rgb(0 0 0 / 0.04); }
+
+/* поле ввода */
+html:not(.glass) .composer-field, html:not(.glass) .composer-field:focus-within {
+  background: var(--solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: var(--float-shadow);
+}
+html:not(.glass) #prompt { font-size: var(--fs-15); }
+html:not(.glass) #prompt::placeholder { color: #ffffffbd; }
+html[data-theme="light"]:not(.glass) #prompt::placeholder { color: #0000009e; }
+html:not(.glass) #send, html:not(.glass) #send.ready, html:not(.glass) #send.is-running { background: var(--text); color: var(--bg); }
+html:not(.glass) .ai-product-switch {
+  background: var(--solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* переключатели режима кода - таблетки над полем, как у чатов компьютера на сайте: само поле стоит на той же
+   высоте, что в режиме чата, и при смене режима не прыгает */
+#main.chat-page > #composer[data-product-scope="development"] { display: flex; flex-direction: column; }
+#composer .composer-toolbar { order: 1; gap: 6px; min-height: 0; padding: 0 0 8px; }
+/* вложения и текст голоса относятся к полю: остальное (очередь, запросы агента) остаётся над переключателями */
+#composer :is(.skill-chips, .attachment-strip, .voice-preview) { order: 2; }
+#composer .composer-field { order: 3; }
+#composer .composer-meta { order: 4; }
+html:not(.glass) .composer-toolbar :is(.workspace-selector, .select-trigger) {
+  position: relative;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--text);
+  box-shadow: var(--float-shadow);
+}
+html:not(.glass) .composer-toolbar :is(.workspace-selector, .select-trigger) span { color: var(--text); }
+html:not(.glass) .composer-toolbar :is(.workspace-selector:hover, .select-trigger:hover:not(:disabled), .select-trigger[aria-expanded="true"]) { background: var(--solid-hover); }
+
+/* подпись правой панели в строке кнопок окна: закрывает панель кнопка в той же строке, вторая не нужна */
+@media (min-width: 861px) {
+  /* #shell: у окна приложения своя рамка в desktop-window.css держит подпись ниже кнопок окна, а здесь она рядом с ними */
+  html:not(.glass) #shell .inspector-heading { display: flex; align-items: center; min-height: 0; height: var(--controls-h); padding: 0 calc(var(--caption-width, 138px) + 38px) 0 16px; margin: 0 0 4px; white-space: nowrap; }
+  html:not(.glass) #close-inspector { display: none; }
+  html:not(.glass) .inspector-cards { padding-top: 0; }
+}
+
+/* меню и правая панель: границу держит заливка */
+html:not(.glass) .inspector-card:not(.dragging) { border-color: transparent; }
+html:not(.glass) .inspector-card { border-radius: 14px; }
+html:not(.glass) .sidebar-panel { border-right-color: transparent; }
+
+html:not(.glass) .side-search-field { background: var(--fill); }
+
+/* список чатов: выбранная строка цвета поля, время только при наведении */
+html:not(.glass) .chat-row:hover, html:not(.glass) .chat-row[data-selected] { background: var(--fill); }
+/* дата ложится поверх конца названия, а не сдвигает его: название при наведении не меняет ширину */
+html:not(.glass) .chat-time { position: absolute; top: 50%; right: 34px; translate: 0 -50%; padding-left: 16px; background: linear-gradient(to right, transparent, var(--fill) 12px); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+html:not(.glass) .chat-row:hover .chat-time, html:not(.glass) .chat-row:has(:focus-visible) .chat-time { opacity: 1; }
+
+/* подписи тише содержимого */
+html:not(.glass) .section-title { font-size: var(--fs-12); font-weight: 500; color: var(--faint); }
+html:not(.glass) .card-head, html:not(.glass) .card-head span { font-weight: 500; }
+
+/* код в ленте */
+html:not(.glass) .code-block { border-color: transparent; border-radius: 14px; background: var(--fill); }
+html:not(.glass) .code-head { border-bottom-color: transparent; background: transparent; }
+html:not(.glass) .code-block pre { background: transparent; }
+
+/* очередь и карточки над полем тоже сплошные */
+html:not(.glass) :is(#local-queue, .approval-panel) { background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }

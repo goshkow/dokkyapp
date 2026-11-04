@@ -8,6 +8,7 @@ import { relativeTime } from '../../lib/format';
 import { useDeveloperAccess } from '../../state/access';
 import { data, loadLocal, useData } from '../../state/data';
 import { confirmDialog, guarded, notify } from '../../state/overlay';
+import { developerPlan, usePlans } from '../../state/plans';
 import { openBilling } from '../../state/settingsUi';
 import { openChat } from '../../state/view';
 import { Dialog } from '../ui/Dialog';
@@ -151,6 +152,7 @@ function EditDialog({ form, onClose, onSaved }: { form: Form | null; onClose: ()
 function AssistDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const projects = useData((s) => s.projects);
   const locked = useDeveloperAccess().locked;
+  const planOffer = usePlans((state) => developerPlan(state.catalog).name) || 'выше';
   const [projectId, setProjectId] = useState('');
   const [request, setRequest] = useState('');
   const [busy, setBusy] = useState(false);
@@ -192,7 +194,7 @@ function AssistDialog({ open, onClose }: { open: boolean; onClose: () => void })
             </div>
           </>
         )}
-        {locked && <p className="form-error">Создание с ИИ работает в Докки Code: он включается с подпиской Plus. <button type="button" className="link" onClick={() => { onClose(); openBilling(); }}>Выбрать план</button></p>}
+        {locked && <p className="form-error">Создание с ИИ работает в Докки Code: он включается с подпиской {planOffer}. <button type="button" className="link" onClick={() => { onClose(); openBilling(); }}>Выбрать план</button></p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="secondary" onClick={onClose}>Отмена</button>

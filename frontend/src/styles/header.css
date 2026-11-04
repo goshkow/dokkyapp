@@ -13,18 +13,28 @@ main:not(.chat-page) { grid-template-rows: var(--controls-h) minmax(0, 1fr); }
 
 /* затухание под шапкой и над полем ввода короче и мягче; у самого края ленты оно выключено, чтобы ничего не закрывать */
 .chat-edge-fade { transition: opacity 0.22s ease; }
-.chat-edge-fade-top {
-  height: calc(var(--feed-top, 84px) + 6px);
-  background: linear-gradient(to bottom, var(--bg) 0, var(--bg) 62%, color-mix(in srgb, var(--bg) 55%, transparent) 82%, transparent 100%);
+/* края ленты без стекла: только мягкий градиент, без размытия, во всех режимах одинаково */
+html:not(.glass) .chat-edge-fade { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html:not(.glass) .chat-edge-fade-top {
+  height: 84px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 78%, transparent) 0%, color-mix(in srgb, var(--bg) 72%, transparent) 42%, color-mix(in srgb, var(--bg) 46%, transparent) 68%, color-mix(in srgb, var(--bg) 14%, transparent) 88%, transparent 100%);
 }
-.chat-edge-fade-bottom {
-  height: calc(var(--feed-bottom, 140px) + 6px);
-  background: linear-gradient(to top, var(--bg) 0, var(--bg) 60%, color-mix(in srgb, var(--bg) 55%, transparent) 82%, transparent 100%);
+html:not(.glass) .chat-edge-fade-bottom {
+  /* закрывает и таблетки над полем: текст ленты не должен читаться между ними */
+  height: max(112px, calc(var(--feed-bottom, 140px) + 22px));
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 82%, transparent) 0%, color-mix(in srgb, var(--bg) 76%, transparent) 62%, color-mix(in srgb, var(--bg) 54%, transparent) 80%, color-mix(in srgb, var(--bg) 18%, transparent) 94%, transparent 100%);
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 #main[data-at-top] .chat-edge-fade-top { opacity: 0; }
-/* снизу затухание не пропадает: у конца ленты оно ужимается до самого поля ввода и не заходит выше его границы */
-.chat-edge-fade-bottom { transition: height 0.22s var(--ease); }
-#main[data-at-bottom] .chat-edge-fade-bottom { height: calc(var(--feed-bottom, 140px) - 20px); }
+/* у самого края ленты затухания нет, с началом прокрутки оно вырастает от края: текст в начале и в конце чата ничего не закрывает */
+html:not(.glass) .chat-edge-fade { transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease; }
+html:not(.glass) .chat-edge-fade-top { transform-origin: top; }
+html:not(.glass) .chat-edge-fade-bottom { transform-origin: bottom; }
+html:not(.glass) #main[data-at-top] .chat-edge-fade-top, html:not(.glass) #main[data-at-bottom] .chat-edge-fade-bottom { opacity: 0; transform: scaleY(0); }
+/* задержка из home.css нужна стеклу: здесь затухание растёт сразу, как только лента сдвинулась */
+html:not(.glass) #main.chat-page:not([data-home]) > .chat-edge-fade-bottom { transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease; }
+@media (prefers-reduced-motion: reduce) { html:not(.glass) .chat-edge-fade, html:not(.glass) #main.chat-page:not([data-home]) > .chat-edge-fade-bottom { transition: opacity 0.2s ease; } }
 
 /* в начатом чате переключатель «Чат / Поиск» плавно уходит */
 .chat-header .ai-product-switch { transition: opacity 0.22s ease, visibility 0s; }

@@ -6,6 +6,8 @@ import { goBack, goForward, togglePanel } from '../../state/remote';
 import { canGoBack, canGoForward, useNav } from '../../state/view';
 import { DialogHost, ToastHost } from '../ui/DialogHost';
 import { TileComposer } from '../chat/ComposerField';
+import { TileControl } from '../chat/TileControl';
+import { isBarControl, useComposerBar } from '../../state/composerBar';
 import { TilePill, TileProduct } from '../chat/SiteSurface';
 import { Inspector } from '../inspector/Inspector';
 import { Sidebar } from '../sidebar/Sidebar';
@@ -16,6 +18,8 @@ export function TileApp({ role }: { role: Role }) {
   useEffect(() => startMirror(() => setReady(true)), []);
   const back = useNav(canGoBack);
   const forward = useNav(canGoForward);
+  const control = useComposerBar((bar) => (isBarControl(role) ? bar[role] : null));
+  if (isBarControl(role) && (control || role === 'mode')) return <>{ready && control && <TileControl id={role} control={control} />}</>;
   if (role === 'composer') return <>{ready && <TileComposer />}<ToastHost /></>;
   if (role === 'product') return <>{ready && <TileProduct />}</>;
   if (role === 'pill') return <>{ready && <TilePill />}</>;

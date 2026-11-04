@@ -1,4 +1,4 @@
-import { ChevronRight, Ellipsis, Folder, Pin, Plus } from 'lucide-react';
+import { ChevronRight, Copy, Ellipsis, Folder, Pin, Plus, Smartphone } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react';
 import { copyText } from '../../lib/clipboard';
 import { relativeTime, serverTime } from '../../lib/format';
@@ -12,6 +12,7 @@ import { deleteChat, loadCloud, newChat, openChat, relocateProject, removeProjec
 import { useSidebarQuery } from '../../state/sidebarQuery';
 import { useUi } from '../../state/ui';
 import { useView } from '../../state/view';
+import { FillChat, FillEdit, FillPin, FillTrash } from '../ui/DokkyIcons';
 import { Popover } from '../ui/Popover';
 import { Sentinel } from '../ui/Sentinel';
 import { ChatState } from './ChatState';
@@ -267,13 +268,14 @@ export function ChatLists() {
         </div>
       </section>
       <Popover open={Boolean(projectMenu)} anchor={projectMenu?.anchor ?? null} onClose={() => setProjectMenu(null)} label="Действия с проектом" align="end">
-        <button type="button" role="menuitem" className="menu-item" onClick={() => { const project = projectMenu?.project; setProjectMenu(null); if (project) newChat(project); }}><span>Новый чат в проекте</span></button>
+        <button type="button" role="menuitem" className="menu-item" onClick={() => { const project = projectMenu?.project; setProjectMenu(null); if (project) newChat(project); }}><FillChat aria-hidden="true" /><span>Новый чат в проекте</span></button>
         <button
           type="button"
           role="menuitem"
           className="menu-item"
           onClick={(event) => { const project = projectMenu?.project; setProjectMenu(null); if (project) guarded(() => copyText(project.path, event, 'Путь к проекту скопирован'))(); }}
         >
+          <Copy aria-hidden="true" />
           <span>Копировать путь</span>
         </button>
         <button
@@ -287,23 +289,24 @@ export function ChatLists() {
             guarded(removeProject)(project);
           }}
         >
+          <FillTrash aria-hidden="true" />
           <span>Убрать из списка</span>
         </button>
       </Popover>
       <Popover open={Boolean(menu)} anchor={menu?.anchor ?? null} onClose={() => setMenu(null)} label="Действия с чатом" align="end">
         {!development && (
-          <button type="button" role="menuitem" className="menu-item" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(togglePin)(chat); }}><span>{menu?.chat.pinned ? 'Открепить' : 'Закрепить'}</span></button>
+          <button type="button" role="menuitem" className="menu-item" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(togglePin)(chat); }}><FillPin aria-hidden="true" /><span>{menu?.chat.pinned ? 'Открепить' : 'Закрепить'}</span></button>
         )}
-        <button type="button" role="menuitem" className="menu-item" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(renameChat)(chat); }}><span>Переименовать</span></button>
+        <button type="button" role="menuitem" className="menu-item" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(renameChat)(chat); }}><FillEdit aria-hidden="true" /><span>Переименовать</span></button>
         {phone && menu && (
           <button
             type="button"
             role="menuitem"
             className="menu-item"
             onClick={() => { const chat = menu.chat; const shown = sharedOnPhone(remoteStatus, chat.id); setMenu(null); guarded(setChatShared)(chat.id, !shown); }}
-          ><span>{sharedOnPhone(remoteStatus, menu.chat.id) ? 'Не показывать на телефоне' : 'Показывать на телефоне'}</span></button>
+          ><Smartphone aria-hidden="true" /><span>{sharedOnPhone(remoteStatus, menu.chat.id) ? 'Не показывать на телефоне' : 'Показывать на телефоне'}</span></button>
         )}
-        <button type="button" role="menuitem" className="menu-item danger" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(deleteChat)(chat); }}><span>Удалить</span></button>
+        <button type="button" role="menuitem" className="menu-item danger" onClick={() => { const chat = menu?.chat; setMenu(null); if (chat) guarded(deleteChat)(chat); }}><FillTrash aria-hidden="true" /><span>Удалить</span></button>
       </Popover>
     </>
   );

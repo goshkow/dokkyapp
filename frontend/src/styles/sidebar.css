@@ -7,17 +7,21 @@
   src: url("/ui/assets/fonts/unbounded-600-cyrillic.woff2") format("woff2");
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
 }
-.sidebar-panel { --footer-h: 46px; position: relative; padding: 0 12px; }
+.sidebar-panel { --footer-h: 46px; position: relative; padding: 0 12px; container: side-panel / inline-size; }
 
 /* шапка: знак, название шрифтом Unbounded и переключатель «Code» */
 .side-top { position: relative; z-index: 4; display: flex; align-items: center; flex: none; height: var(--controls-h); margin: 0 -4px; padding: 0 calc(var(--cluster-w) - 4px) 0 4px; container-type: inline-size; }
 .brand { display: flex; align-items: center; gap: 7px; min-width: 0; height: 30px; color: var(--text); font-family: Unbounded, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; line-height: 30px; white-space: nowrap; }
 .brand-mark { flex: none; display: block; width: 24px; height: 24px; object-fit: contain; }
 .brand-word { display: block; line-height: 30px; }
-.mode-badge { flex: none; height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--faint); font-family: Inter, system-ui, sans-serif; font-size: 11px; font-weight: 650; letter-spacing: 0.2px; line-height: 22px; }
+.mode-badge { flex: none; height: 22px; min-height: 0; padding: 0 8px; border: 0; border-radius: 11px; cursor: pointer; transition: background 140ms ease, color 140ms ease; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--faint); font-family: Inter, system-ui, sans-serif; font-size: 11px; font-weight: 650; letter-spacing: 0.2px; line-height: 22px; }
 .mode-badge[data-active] { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.mode-badge:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
+.mode-badge[data-active]:hover { background: color-mix(in srgb, var(--accent) 32%, transparent); color: var(--accent); }
+.mode-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* узкое меню: сначала уходит знак, чтобы название и «Code» не наезжали на кнопки справа */
 @container (max-width: 140px) { .brand-mark { display: none; } }
+@container (max-width: 132px) { .mode-badge { display: none; } }
 /* знак белый: на светлом меню он иначе сливается с фоном */
 html[data-theme="light"] .brand-mark { filter: invert(1); }
 /* затемнение под шапкой появляется, когда список прокручен */
@@ -31,7 +35,8 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 
 /* плитки разделов: пять равных квадратов в ряд */
 .side-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 4px 2px 6px; }
-.side-tile { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1 / 1; padding: 0; border: 1px solid color-mix(in srgb, var(--text) 13%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); transition: background-color 150ms ease, scale 200ms var(--ease), color 150ms ease; }
+/* в широком меню плитка тянется только в ширину */
+.side-tile { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1 / 1; max-height: 46px; padding: 0; border: 0; border-radius: 15px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); transition: background-color 150ms ease, scale 200ms var(--ease), color 150ms ease; }
 .side-tile svg { width: 21px; height: 21px; color: inherit; }
 .side-tile:active { scale: 0.95; }
 .side-tile[aria-expanded="true"] { background: var(--hover); }
@@ -84,10 +89,13 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 .chat-row { position: relative; display: flex; align-items: center; border-radius: 10px; transition: background-color 150ms ease; }
 .chat-row:hover, .chat-row[data-selected] { background: var(--hover); }
 .chat-item { flex: 1 1 auto; min-width: 0; min-height: 38px; padding: 4px 11px; border-radius: 10px; font-size: var(--fs-15); text-align: left; color: var(--text); }
+.chat-item[data-offline] > span { color: var(--muted); }
 .chat-item > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* состояние чата стоит на месте времени: строка не прыгает, когда агент начинает или заканчивает */
 .chat-row > .chat-state[data-slot="time"] { font-size: var(--fs-12); width: 2.4em; justify-items: end; }
 .chat-time { flex: none; min-width: 2.4em; text-align: right; font-size: var(--fs-12); color: var(--faint); font-variant-numeric: tabular-nums; }
+/* узкое меню: название чата важнее времени */
+@container side-panel (max-width: 226px) { .chat-time { display: none; } }
 .chat-more { flex: 0 0 26px; width: 26px; height: 26px; margin: 0 4px 0 2px; border-radius: 6px; opacity: 0; transition: opacity 120ms ease, background-color 150ms ease; }
 .chat-row:hover .chat-more, .chat-row[data-selected] .chat-more, .chat-row:focus-within .chat-more { opacity: 1; }
 .chat-row[data-drop="before"]::before, .chat-row[data-drop="after"]::after { content: ""; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: var(--accent); }
@@ -122,12 +130,17 @@ html[data-theme="light"] .brand-mark { filter: invert(1); }
 .plan-badge[data-plan="base"] { background-image: linear-gradient(120deg, #8fd8ff, #55b4ff); }
 .plan-badge[data-plan="super"], .plan-badge[data-plan="plus"] { background-image: linear-gradient(120deg, #84a9ff, #4f7dff); }
 .plan-badge[data-plan="premium"] { background-image: linear-gradient(120deg, #ffc27d, #ff9440); }
-.plan-badge[data-plan="ultra"] { background-image: linear-gradient(120deg, #ff9494, #ff4d5e); }
-.plan-badge:not([data-plan="base"], [data-plan="super"], [data-plan="plus"], [data-plan="premium"], [data-plan="ultra"]) { background: none; color: var(--text); opacity: 0.85; }
+.plan-badge[data-plan="ultra"], .plan-badge[data-plan="unlimited"] { background-image: linear-gradient(120deg, #ff9494, #ff4d5e); }
+.plan-badge[data-plan="atlas"] { background-image: linear-gradient(120deg, #d8b4ff, #8f7aff); }
+.plan-badge:not([data-plan="base"], [data-plan="super"], [data-plan="plus"], [data-plan="premium"], [data-plan="ultra"], [data-plan="unlimited"], [data-plan="atlas"]) { background: none; color: var(--text); opacity: 0.85; }
 html[data-theme="light"] .plan-badge[data-plan="base"] { background-image: linear-gradient(120deg, #1d8fd6, #2aa1e8); }
 html[data-theme="light"] .plan-badge[data-plan="super"], html[data-theme="light"] .plan-badge[data-plan="plus"] { background-image: linear-gradient(120deg, #2a55d9, #3f6df0); }
 html[data-theme="light"] .plan-badge[data-plan="premium"] { background-image: linear-gradient(120deg, #d9700e, #f08a1c); }
-html[data-theme="light"] .plan-badge[data-plan="ultra"] { background-image: linear-gradient(120deg, #d12b3b, #e5473a); }
+html[data-theme="light"] .plan-badge[data-plan="ultra"], html[data-theme="light"] .plan-badge[data-plan="unlimited"] { background-image: linear-gradient(120deg, #d12b3b, #e5473a); }
+html[data-theme="light"] .plan-badge[data-plan="atlas"] { background-image: linear-gradient(120deg, #8a52d6, #5f2fa8); }
+/* цвет от сервера главнее зашитых: нового плана здесь нет, а каталог его уже знает */
+.plan-badge[data-plan][data-colored] { color: transparent; opacity: 1; -webkit-background-clip: text; background-clip: text; background-image: linear-gradient(120deg, var(--plan-a), var(--plan-b)); }
+html[data-theme="light"] .plan-badge[data-plan][data-colored] { background-image: linear-gradient(120deg, var(--plan-light-a), var(--plan-light-b)); }
 .new-chat { flex: none; display: grid; place-items: center; width: 42px; height: 42px; padding: 0; border-radius: 50%; background: var(--text); color: var(--bg); box-shadow: 0 6px 18px #0006; transition: scale 200ms var(--ease); }
 .side-bottom .new-chat svg { width: 20px; height: 20px; color: var(--bg); stroke: var(--bg); }
 .new-chat:active { scale: 0.94; }

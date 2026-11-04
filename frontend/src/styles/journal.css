@@ -30,15 +30,52 @@
 /* раскрытие считает Disclosure (высота через Web Animations); собственная анимация содержимого <details> только мешала */
 .activity::details-content { block-size: auto; transition: none; overflow: visible; }
 
-/* план-документ: раскрывается плавно (высота и затухание края), а не щелчком */
-@property --plan-fade { syntax: "<percentage>"; inherits: false; initial-value: 45%; }
-.plan-document-body {
-  max-height: min(70vh, 720px);
-  transition: max-height 0.38s var(--ease), --plan-fade 0.38s var(--ease);
-  mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%));
+/* план в ленте: одна тихая строка без рамки, подробности по щелчку. Заливка полупрозрачная, поэтому одинаково ложится и на обычный фон, и на стекло */
+.plan-document, .live-plan { margin: 4px 0 16px; overflow: hidden; border-radius: 14px; background: color-mix(in srgb, var(--text) 7%, transparent); }
+.plan-document summary, .live-plan summary { display: flex; align-items: center; min-width: 0; list-style: none; cursor: pointer; border-radius: 14px; }
+.plan-document summary::-webkit-details-marker, .live-plan summary::-webkit-details-marker { display: none; }
+.plan-document summary:focus-visible, .live-plan summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.plan-document summary > svg, .live-plan summary > .lucide-chevron-right { flex: none; width: 14px; height: 14px; color: var(--faint); transition: rotate 0.2s var(--ease); }
+.plan-document summary[aria-expanded="true"] > svg, .live-plan summary[aria-expanded="true"] > .lucide-chevron-right { rotate: 90deg; }
+
+.live-plan details::details-content { block-size: auto; transition: none; overflow: visible; }
+.live-plan summary { gap: 9px; min-height: 40px; padding: 0 12px; }
+.plan-ring { flex: none; width: 16px; height: 16px; rotate: -90deg; fill: none; stroke-width: 1.75; stroke: color-mix(in srgb, var(--text) 16%, transparent); }
+.plan-ring-value { stroke: var(--text); stroke-linecap: round; transition: stroke-dasharray 0.3s var(--ease); }
+.live-plan[data-stopped] .plan-ring-value { stroke: var(--danger); }
+.live-plan-current { flex: 1; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--fs-14); text-overflow: ellipsis; white-space: nowrap; }
+.live-plan-count { flex: none; color: var(--muted); font-size: var(--fs-12); font-variant-numeric: tabular-nums; }
+.live-plan-steps { padding: 0 12px 8px 37px; }
+.live-plan .plan-list { margin: 0; }
+.live-plan .plan-list li { align-items: center; padding: 4px 0; color: var(--text); font-size: var(--fs-13); }
+.live-plan .plan-list li.completed { color: var(--muted); }
+
+/* у строки плана запрос ширины: в узкой колонке кнопка сжимается до значка */
+.plan-document { container-type: inline-size; }
+.plan-bar { display: flex; align-items: center; gap: 4px; min-height: 44px; padding-right: 7px; }
+.plan-bar details { flex: 1; min-width: 0; }
+.plan-bar summary { gap: 8px; min-height: 44px; padding: 0 8px 0 12px; }
+.plan-bar strong { min-width: 0; overflow: hidden; font-size: var(--fs-14); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.plan-bar small { flex: none; color: var(--muted); font-size: var(--fs-12); white-space: nowrap; }
+.plan-actions { display: flex; flex: none; align-items: center; gap: 2px; }
+.plan-actions .icon-button { flex-basis: 30px; width: 30px; height: 30px; }
+.plan-actions .icon-button svg { width: 15px; height: 15px; }
+.plan-actions .primary { display: inline-flex; align-items: center; gap: 6px; height: 30px; min-height: 0; margin-left: 4px; padding: 0 12px 0 10px; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 92%, transparent); color: var(--bg); font-size: var(--fs-13); font-weight: 500; white-space: nowrap; }
+.plan-actions .primary:hover:not(:disabled) { background: var(--text); }
+.plan-actions .primary:disabled { opacity: 0.5; }
+.plan-actions .primary svg { width: 12px; height: 12px; fill: currentColor; }
+@container (max-width: 480px) {
+  .plan-bar small { display: none; }
+  .plan-actions .primary { justify-content: center; width: 30px; padding: 0; }
+  .plan-actions .primary span { display: none; }
 }
-.plan-document details:not([open]) + .plan-document-body { max-height: 112px; --plan-fade: 45%; mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%)); }
-.plan-document details[open] + .plan-document-body { --plan-fade: 100%; mask-image: linear-gradient(#000 var(--plan-fade), transparent calc(var(--plan-fade) + 55%)); }
+@container (max-width: 260px) { .plan-actions .icon-button { display: none; } }
+
+.plan-document-body { max-height: min(70vh, 720px); }
+.plan-document .plan-document-body { border-top-color: var(--line-soft); padding: 12px 16px 14px; transition: max-height 0.32s var(--ease), padding 0.32s var(--ease), border-color 0.2s ease; }
+.plan-document:not([data-open]) .plan-document-body { max-height: 0; padding-block: 0; border-top-color: transparent; overflow: hidden; }
+/* заголовок документа уже есть в строке плана */
+.plan-document .plan-document-body h1:first-child { display: none; }
 
 /* новый этап появляется проявлением, а не рывком */
 .journal-segment, .journal-stage, .journal-commentary { animation: status-swap 0.22s ease both; }

@@ -78,14 +78,18 @@ def test_missing_react_does_not_fall_back_to_legacy(tmp_path, monkeypatch):
     assert TestClient(module.create_app()).get("/ui/").status_code == 404
 
 
-def test_ui_assets_are_not_cached():
+def test_ui_assets_are_revalidated_on_every_load():
     client = TestClient(create_app())
     # имя общего чанка сборщик берёт от первого модуля в нём и меняет при правках фронта
     chunk = sorted((Path(desktop.__file__).parent / "web-next").glob("chunk-*.js"))[0].name
     for path in ("/ui/", "/ui/app.js", "/ui/app.css", f"/ui/{chunk}"):
         response = client.get(path)
         assert response.status_code == 200
-        assert response.headers["cache-control"] == "no-store"
+        # браузер обязан сверить файл при каждом запуске: после обновления старый чанк не останется
+        assert response.headers["cache-control"] == "no-cache"
+        assert "etag" in response.headers
+        repeated = client.get(path, headers={"If-None-Match": response.headers["etag"]})
+        assert repeated.status_code == 304
 
 
 def test_open_in_editor_only_opens_project_files(tmp_path, monkeypatch):
@@ -154,3 +158,15 @@ def test_voice_recording_is_transcribed_and_deleted_and_paths_are_confined(tmp_p
     for bad in ({"path": str(outside)}, {"path": ""}, {}, {"path": 5}, {"path": str(inside) + "\0"}, {"path": str(inside) + "/../../../etc/hosts"}):
         assert client.post("/api/speech/transcribe", json=bad).status_code == 422
     assert len(heard) == 2
+
+
+def test_saved_classic_surface_becomes_dark_menu():
+    from koddi.storage.db import set_setting
+
+    client = TestClient(create_app())
+    set_setting("ui_surface", "classic")
+    assert client.get("/api/settings").json()["ui_surface"] == "side-dark"
+    assert client.put("/api/settings", json={"ui_surface": "one-color"}).status_code == 200
+    assert client.get("/api/settings").json()["ui_surface"] == "one-color"
+    assert client.put("/api/settings", json={"ui_surface": "classic"}).status_code == 422
+    set_setting("ui_surface", "side-dark")

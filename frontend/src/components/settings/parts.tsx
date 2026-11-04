@@ -72,6 +72,47 @@ export function Segmented<T extends string>({ title, detail, options, value, sav
   );
 }
 
+/** Варианты картинками: тема и ширина чата. Подпись под картинкой, выбранный обведён. */
+export function PictureChoice<T extends string>({ title, detail, options, value, save, say, picture, className }: {
+  title: string; detail?: ReactNode; options: Array<[T, string]>; value: T; save: (value: T) => Promise<unknown>; say: Say; picture: (value: T) => ReactNode; className?: string;
+}) {
+  const { current, busy, commit } = useSaved(value, save, say);
+  return (
+    <Row title={title} detail={detail} stack>
+      <div className={`pref-pictures ${className ?? ''}`} role="group" aria-label={title}>
+        {options.map(([id, label]) => (
+          <button key={id} type="button" aria-pressed={current === id} disabled={busy} onClick={() => { if (id !== current) commit(id); }}>
+            {picture(id)}
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+    </Row>
+  );
+}
+
+/** Варианты карточками с пояснением и примером того, как это будет выглядеть. */
+export function OptionCards<T extends string>({ title, detail, options, value, save, say, preview }: {
+  title: string; detail?: ReactNode; options: Array<[T, string, string]>; value: T; save: (value: T) => Promise<unknown>; say: Say; preview?: (value: T) => ReactNode;
+}) {
+  const { current, busy, commit } = useSaved(value, save, say);
+  return (
+    <Row title={title} detail={detail} stack>
+      <div className="pref-options">
+        <div className="pref-option-list" role="radiogroup" aria-label={title}>
+          {options.map(([id, label, note]) => (
+            <button key={id} type="button" role="radio" className="pref-option" aria-checked={current === id} disabled={busy} onClick={() => { if (id !== current) commit(id); }}>
+              <span><strong>{label}</strong><small>{note}</small></span>
+              <i aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+        {preview && <div className="pref-answer"><small>Так будет выглядеть ответ</small><div>{preview(current)}</div></div>}
+      </div>
+    </Row>
+  );
+}
+
 export function Toggle({ title, detail, checked, save, say, disabled }: {
   title: string; detail?: ReactNode; checked: boolean; save: (value: boolean) => Promise<unknown>; say: Say; disabled?: boolean;
 }) {

@@ -22,8 +22,8 @@ import { restartEvents, startEvents } from './state/events';
 import { surfaceShown, useSurface } from './state/surface';
 import { newChat, view } from './state/view';
 
-// медленный сайт не держит приложение закрытым: дальше спиннер в самой колонке
-const SPLASH_HOLD_MS = 8000;
+// медленный сайт не держит приложение закрытым: дальше спиннер в самой колонке, а меню уже со списком
+const SPLASH_HOLD_MS = 12_000;
 
 /** Колонка чата: в режиме чата - страница сайта, в режиме кода (или без поддержки на сервере) - свой чат приложения. */
 function Main() {
@@ -59,15 +59,22 @@ export function App() {
   const signedIn = useData((state) => state.account?.authenticated === true);
   const owner = useData((state) => String(state.account?.user?.id ?? ''));
   const scope = useUi((state) => state.scope);
-  const siteLoading = useSurface((state) => state.status === 'loading' && surfaceShown(state, scope));
+  // пока сервер не сказал, есть ли страница, статус ещё off: без этого между заставкой и страницей мелькала пустая оболочка
+  const siteLoading = useSurface((state) => scope !== 'development' && state.status !== 'failed' && (state.checking || (state.status === 'loading' && surfaceShown(state, scope))));
   // заставка держится, пока не загрузится и сайт режима чата: иначе после неё мелькал бы второй спиннер
   const [waited, setWaited] = useState(false);
   useEffect(() => {
-    if (!ready || !booted) return;
+    if (!ready || !booted || !signedIn) return;
     const timer = window.setTimeout(() => setWaited(true), SPLASH_HOLD_MS);
-    return () => window.clearTimeout(timer);
-  }, [ready, booted]);
-  const holding = ready && booted && siteLoading && !waited;
+    return () => { window.clearTimeout(timer); setWaited(false); };
+  }, [ready, booted, signedIn]);
+  // заставка закрывается один раз за вход: повторная проверка страницы (вернулась сеть, режим чата) идёт уже в открытом окне
+  const [released, setReleased] = useState(false);
+  const holding = ready && booted && signedIn && siteLoading && !waited && !released;
+  useEffect(() => {
+    if (!signedIn) setReleased(false);
+    else if (ready && booted && !holding) setReleased(true);
+  }, [signedIn, ready, booted, holding]);
 
   useEffect(() => {
     bindHostCallbacks();

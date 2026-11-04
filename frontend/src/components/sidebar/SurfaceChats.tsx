@@ -6,6 +6,7 @@ import {
   type SurfaceChat,
 } from '../../state/surface';
 import { useSidebarQuery } from '../../state/sidebarQuery';
+import { actionIcon } from '../ui/DokkyIcons';
 import { Popover } from '../ui/Popover';
 import { Sentinel } from '../ui/Sentinel';
 import { ChatState } from './ChatState';
@@ -32,7 +33,7 @@ const SurfaceRow = memo(function SurfaceRow({ chat, selected, host, onMenu }: { 
         onMenu({ chat, anchor: { x: event.clientX, y: event.clientY } });
       }}
     >
-      <button type="button" className="chat-item" title={chat.title} onClick={() => { void openSurfaceChat(chat.id); }}>
+      <button type="button" className="chat-item" data-offline={(chat.remote && !chat.remote.online) || undefined} title={chat.title} onClick={() => { void openSurfaceChat(chat.id); }}>
         <span>
           {chat.icon && <SurfaceIcon icon={chat.icon} fallback={null} />}
           {chat.title}
@@ -64,6 +65,7 @@ function ActionsMenu({ menu, onClose }: { menu: MenuState | null; onClose: () =>
           className={`menu-item${item.danger ? ' danger' : ''}`}
           onClick={() => { const id = menu.chat.id; onClose(); void surfaceChatAction(id, item.action); }}
         >
+          {actionIcon(item.action)}
           <span>{item.label}</span>
         </button>
       ))}

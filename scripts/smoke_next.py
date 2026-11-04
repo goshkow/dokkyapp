@@ -75,8 +75,9 @@ def scenario_boot_and_open():
     with browser_page(api) as page:
         page.wait_for_timeout(1200)
         page.wait_for_timeout(1400)
-        greeting = page.locator(".welcome h1").inner_text().strip()
-        check(len(greeting) > 8 and page.locator(".welcome .actions button").count() == 2, f"приветствие разработки печатается, кнопки проектов на месте: {greeting!r}")
+        check(page.locator("#main[data-home] .home-word").inner_text() == "Докки", "новый экран разработки")
+        check(page.locator(".home-stage svg.dokky-mascot").count() == 1, "маскот на новом экране")
+        check(page.locator(".home-row:has-text('Открыть проект')").count() == 1, "открыть проект с нового экрана")
         check(page.locator("#title").inner_text() == "", "у нового чата нет названия")
         open_chat(page)
         check(page.locator("#title").inner_text() == "Фризы при возврате из фона", "название чата")
@@ -197,7 +198,7 @@ def scenario_requests_queue_plan():
         page.click("#local-queue .queue-row button[aria-label='Выполнить сейчас']")
         page.wait_for_timeout(500)
         check(any(c[0] == "POST" and c[1] == "/api/chats/1/queue/1/promote" for c in api.calls) and any(c[0] == "POST" and c[1] == "/api/chats/1/queue/resume" for c in api.calls), "запрос из очереди не запущен сейчас")
-        check(page.locator("#live-plan .plan-list li").count() == 2, "план в ленте")
+        check(page.locator("#live-plan .live-plan-count").inner_text().endswith("из 2"), "план в ленте")
         check(page.locator("#plan-approval").count() == 1, "документ плана")
         page.click(".approval-panel .primary")
         page.wait_for_timeout(500)
@@ -570,7 +571,7 @@ def scenario_cloud():
     api = cloud_api()
     with browser_page(api) as page:
         page.wait_for_timeout(1300)
-        check(page.locator(".welcome h1").inner_text().strip() != "", "приветствие облака")
+        check(page.locator("#main[data-home] .home-word").inner_text() == "Докки", "новый экран без сайта")
         check(page.locator("#segmented-mode").is_visible(), "переключатель чат/поиск")
         page.click("text=Машины Атом")
         page.wait_for_timeout(1200)
@@ -820,7 +821,7 @@ def scenario_audit_items():
         page.reload()
         page.wait_for_timeout(1500)
         sizes = page.evaluate("[parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--base')), parseFloat(getComputedStyle(document.querySelector('.chat-item')).fontSize), parseFloat(getComputedStyle(document.querySelector('.section-title')).fontSize)]")
-        check(sizes[0] == 20 and sizes[1] == 21 and sizes[2] == 20, f"размер текста не применился ко всему: {sizes}")
+        check(sizes[0] == 20 and sizes[1] == 21 and sizes[2] == 17, f"размер текста не применился ко всему: {sizes}")
         check(not page.errors, f"ошибки страницы: {page.errors}")
 
 
@@ -915,7 +916,15 @@ def scenario_shell_rules():
         line = page.evaluate("(() => { const t = document.querySelector('#title').getBoundingClientRect(), b = document.querySelector('#toggle-left').getBoundingClientRect(), s = document.querySelector('.brand-word').getBoundingClientRect(); return [t.top + t.height / 2, b.top + b.height / 2, s.top + s.height / 2]; })()")
         check(abs(line[0] - line[1]) <= 2 and abs(line[2] - line[1]) <= 3, f"шапка не на одной линии: {line}")
         fade = page.evaluate("(() => { const f = document.querySelector('.chat-edge-fade-bottom'); const c = document.getElementById('composer'); return [getComputedStyle(f).opacity, f.getBoundingClientRect().height, c.getBoundingClientRect().height]; })()")
-        check(fade[0] == "1" and fade[1] >= fade[2] - 1, f"затемнение под полем ввода пропало у конца ленты: {fade}")
+        # у конца ленты затухания нет и текст ему не мешает, с прокруткой оно вырастает на всю высоту поля
+        check(fade[0] == "0", f"затухание закрывает текст у конца ленты: {fade}")
+        # лента стала длиннее экрана: ниже есть текст, и затухание выросло
+        page.evaluate("(() => { const s = document.createElement('div'); s.id = 'fade-spacer'; s.style.height = '1500px'; document.getElementById('feed').prepend(s); })()")
+        page.wait_for_timeout(500)
+        grown = page.evaluate("(() => { const f = document.querySelector('.chat-edge-fade-bottom'); const c = document.getElementById('composer'); return [getComputedStyle(f).opacity, f.getBoundingClientRect().height, c.getBoundingClientRect().height]; })()")
+        check(grown[0] == "1" and grown[1] >= grown[2] - 1, f"затухание под полем не вырастает при прокрутке: {grown}")
+        page.evaluate("document.getElementById('fade-spacer').remove()")
+        page.wait_for_timeout(150)
         check(page.evaluate("getComputedStyle(document.querySelector('.chat-edge-fade-top')).opacity") == "0" or page.evaluate("!document.getElementById('main').hasAttribute('data-at-top')"), "затухание сверху не выключается у начала ленты")
     cloud = cloud_api()
     with browser_page(cloud) as page:
@@ -1037,6 +1046,25 @@ def scenario_tiles_library_media_auth():
         page.click("#scope-toggle")
         page.wait_for_timeout(400)
         check(page.locator(".mode-badge").inner_text() == "Code" and page.locator("#side-more").count() == 1, "в разработке подпись Code и «Ещё»")
+        # плашка режима сама переключает режим
+        page.click(".mode-badge")
+        page.wait_for_timeout(400)
+        check(page.locator(".mode-badge").inner_text() == "Чат", "плашка режима не вернула в чат")
+        page.click(".mode-badge")
+        page.wait_for_timeout(400)
+        check(page.locator(".mode-badge").inner_text() == "Code", "плашка режима не включила разработку")
+        # полоса ширины горит только на самой ручке
+        resizer = page.locator(".panel-resizer[data-side=left]")
+        edge = resizer.bounding_box()
+        page.mouse.move(150, 400)
+        page.wait_for_timeout(300)
+        check(resizer.get_attribute("data-hot") is None, "полоса ширины горит, когда курсор просто на меню")
+        page.mouse.move(edge["x"] + edge["width"] / 2, 400)
+        page.wait_for_timeout(300)
+        check(resizer.get_attribute("data-hot") is not None, "полоса ширины не загорелась на ручке")
+        page.mouse.move(600, 400)
+        page.wait_for_timeout(100)
+        check(resizer.get_attribute("data-hot") is None, "полоса ширины осталась гореть после ухода курсора")
         check(not page.errors, f"ошибки страницы: {page.errors}")
     guest = cloud_api()
     guest.extra["/api/dokky/session"] = lambda m, p, b, q: {"authenticated": False, "internal_test": False}
@@ -1315,7 +1343,7 @@ def scenario_settings_overhaul():
         page.wait_for_timeout(500)
         groups = page.locator(".settings-group-title").all_inner_texts()
         sections = [x.strip() for x in page.locator(".settings-nav nav button").all_inner_texts()]
-        check(groups == ["Настройки", "Разработка", "Этот компьютер"] and sections == ["Общие", "Аккаунт", "Подписка и оплата", "Общение", "Разработка", "Доступ с телефона", "Система", "Обновления", "О приложении"], f"разделы настроек: {groups} {sections}")
+        check(groups == ["Настройки", "Разработка", "Этот компьютер"] and sections == ["Общие", "Аккаунт", "Подписка и оплата", "Общение", "Голос Докки", "Помощь", "Разработка", "Доступ с телефона", "Система", "Обновления", "О приложении"], f"разделы настроек: {groups} {sections}")
         # выпадающий список открывается поверх окна настроек и принимает щелчок
         page.click(".pref-row[data-setting='Поверхность'] .select-trigger")
         page.wait_for_selector(".popover[role=listbox] .menu-item", timeout=3000)
@@ -1352,10 +1380,9 @@ def scenario_settings_overhaul():
         # общение: настройки сайта
         page.click("[data-settings-section=conversation]")
         page.wait_for_selector(".pref-row[data-setting='Полнота ответов']")
-        page.click(".pref-row[data-setting='Полнота ответов'] .select-trigger")
-        page.click(".popover[role=listbox] .menu-item:has-text('Подробно')")
+        page.click(".pref-row[data-setting='Полнота ответов'] .pref-option:has-text('Подробно')")
         page.wait_for_timeout(400)
-        page.click(".pref-row[data-setting='Память Докки'] .pref-switch")
+        page.click(".pref-row[data-setting='Запоминать новое'] .pref-switch")
         page.wait_for_timeout(400)
         check(("PATCH", {"detail": "full"}) in saved and ("PATCH", {"memory_enabled": False}) in saved, f"настройки общения: {saved}")
         # разработка: личные инструкции

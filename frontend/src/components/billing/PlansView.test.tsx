@@ -33,4 +33,28 @@ describe('каталог подписок', () => {
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(first.id);
     expect(screen.getByRole('button', { name: 'Активно' }).hasAttribute('disabled')).toBe(true);
   });
+
+  it('галочки стоят только на планах до выбранного', () => {
+    const three = parseCatalog({
+      current: { plan: 'a', plan_name: 'A' },
+      plans: ['a', 'b', 'c'].map((id) => ({ id, name: id.toUpperCase(), action: id === 'a' ? 'current' : 'upgrade', features: [] })),
+    })!;
+    const { container } = render(<PlansView catalog={three} />);
+    const done = () => [...container.querySelectorAll('.plan-dot')].map((dot) => dot.hasAttribute('data-done'));
+    expect(done()).toEqual([false, false, false]);
+    fireEvent.click(screen.getByRole('tab', { name: 'C' }));
+    expect(done()).toEqual([true, true, false]);
+    fireEvent.click(screen.getByRole('tab', { name: 'A' }));
+    expect(done()).toEqual([false, false, false]);
+  });
+
+  it('подсказка функции внутри модального окна остаётся в нём, иначе её не видно', () => {
+    const detailed = parseCatalog({
+      current: { plan: 'a', plan_name: 'A' },
+      plans: [{ id: 'a', name: 'A', action: 'current', features: [{ id: 'one', label: 'Чаты', description: 'Все ваши чаты' }] }],
+    })!;
+    render(<dialog open><PlansView catalog={detailed} /></dialog>);
+    fireEvent.click(screen.getByRole('button', { name: 'Чаты: Все ваши чаты' }));
+    expect(screen.getByRole('tooltip').closest('dialog')).toBeTruthy();
+  });
 });

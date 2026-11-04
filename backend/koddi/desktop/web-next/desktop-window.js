@@ -6,7 +6,9 @@
     window.koddiWindowBridge = bridge;
     // на macOS кнопки окна системные (их ставит хост), своих не рисуем
     const mac = document.documentElement.classList.contains('platform-mac');
-    const controls = mac ? null : document.createElement('nav');
+    // окно выпадающего меню - не окно приложения: ни кнопок, ни перетаскивания, мост нужен только для связи
+    const popup = new URLSearchParams(location.search).get('role') === 'popup';
+    const controls = mac || popup ? null : document.createElement('nav');
     if (controls) {
       controls.className = 'desktop-window-controls';
       document.documentElement.dataset.captionMode = 'windows-caption-glyph';
@@ -25,7 +27,7 @@
     }
     // окно тянется за всю верхнюю полосу, кроме кнопок, полей, диалогов и меню
     const skip = 'button,a,input,select,textarea,label,summary,dialog,[role="button"],[role="combobox"],[role="tab"],[role="menu"],[role="dialog"],[contenteditable="true"],.popover,.ai-product-switch,.desktop-window-controls';
-    const isDrag = event => event.clientY < 46 && !event.target.closest?.(skip);
+    const isDrag = event => !popup && event.clientY < 46 && !event.target.closest?.(skip);
     // системное перетаскивание съедает отпускание кнопки, и страница считает мышь зажатой: пока не пришло
     // отпускание или новое нажатие, выделение текста под курсором запрещено
     let dragging = false;

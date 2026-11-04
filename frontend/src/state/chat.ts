@@ -28,8 +28,10 @@ import { surface } from './surface';
 import { closeViewers } from './viewers';
 import { openSettings } from './settingsUi';
 import { ui } from './ui';
-import { adoptChat, view } from './view';
+import { adoptChat, setChatLoadFailed, view } from './view';
 import { handlePlanRequired, requireDeveloper } from './access';
+
+setChatLoadFailed(() => chat.get().load === 'failed');
 
 interface TurnState {
   active: boolean;

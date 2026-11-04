@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { data } from '../../state/data';
 import { defaultSettings } from '../../lib/types';
 import { ui } from '../../state/ui';
-import { CARD_ORDER, normalizeOrder, placeCard, useCardOrder, type CardName } from './cardOrder';
+import { CARD_ORDER, dragSlot, normalizeOrder, placeCard, useCardOrder, type CardName } from './cardOrder';
 
 const save = vi.hoisted(() => vi.fn());
 vi.mock('../../state/remote', () => ({ saveInspectorOrder: save }));
@@ -32,6 +32,31 @@ beforeEach(() => {
   ui.set({ motion: 'reduced' });
 });
 afterEach(cleanup);
+
+describe('место блока при перетаскивании', () => {
+  const others = [{ top: 0, height: 40 }, { top: 48, height: 600 }, { top: 656, height: 40 }];
+
+  it('вверх меняется, едва зайдя на соседа, даже если сосед высокий', () => {
+    // блок стоит третьим, сосед выше занимает 48-648: хватает зайти на 32 пикселя от его низа
+    expect(dragSlot(2, -1, 620, 40, others)).toBe(2);
+    expect(dragSlot(2, -1, 610, 40, others)).toBe(1);
+  });
+  it('вниз меняется, едва зайдя на соседа', () => {
+    expect(dragSlot(1, 1, 30, 40, others)).toBe(1);
+    expect(dragSlot(1, 1, 50, 40, others)).toBe(2);
+  });
+  it('у низкого блока хватает половины высоты', () => {
+    expect(dragSlot(1, -1, 25, 40, others)).toBe(1);
+    expect(dragSlot(1, -1, 15, 40, others)).toBe(0);
+  });
+  it('быстрое движение проходит сразу несколько блоков', () => {
+    expect(dragSlot(3, -1, 5, 40, others)).toBe(0);
+    expect(dragSlot(0, 1, 700, 40, others)).toBe(3);
+  });
+  it('без направления блок стоит на месте', () => {
+    expect(dragSlot(1, 0, 0, 40, others)).toBe(1);
+  });
+});
 
 describe('порядок блоков правой панели', () => {
   it('отбрасывает неизвестное и повторы, новые блоки ставит рядом с соседями', () => {

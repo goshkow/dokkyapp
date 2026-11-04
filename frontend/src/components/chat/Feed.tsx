@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'rea
 import { buildFeed, type FeedItem } from '../../lib/feed';
 import { conciseStatus } from '../../lib/journal';
 import { reducedMotion } from '../../lib/motion';
+import { revealFeed } from '../../lib/feedReveal';
 import { createFollower, type Follower } from '../../lib/streamFollow';
 import { reloadChat, loadOlder } from '../../state/chat';
 import { chat, pinFeed, registerFeed, useChat } from '../../state/chatCore';
@@ -15,6 +16,7 @@ import { CloudWork } from './CloudExtras';
 import { Journal } from './Journal';
 import { MessageItem } from './MessageItem';
 import { LivePlan, PlanApproval } from './Plan';
+import { useHomeOn } from './Home';
 import { Welcome } from './Welcome';
 
 /** Узел начавшегося ответа: пока идёт одна работа, его нет и лента следует за концом. */
@@ -169,6 +171,7 @@ function ChatItems(): ReactNode {
   const olderCursor = useChat((s) => s.olderCursor);
   const olderBusy = useChat((s) => s.olderBusy);
   const open = useView((s) => s.chat !== null);
+  const home = useHomeOn();
   const development = useUi((s) => s.scope === 'development');
   const items = useItems();
   const seen = useRef({ epoch: -1, keys: new Set<string>(), armed: false });
@@ -207,7 +210,7 @@ function ChatItems(): ReactNode {
     if (!feed || reducedMotion() || items.length === 0) return;
     feed.dataset.opening = '';
     // после заглушки лента встаёт на её место сразу: второе проявление выглядело как повторная анимация текста
-    if (!skeleton) feed.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
+    if (!skeleton) revealFeed();
     window.setTimeout(() => { delete feed.dataset.opening; }, 320);
   }, [load, epoch]);
 
@@ -244,7 +247,7 @@ function ChatItems(): ReactNode {
           {olderBusy && <div className="older-busy" role="status">Загружаю предыдущие сообщения…</div>}
         </>
       )}
-      {!open && items.length === 0 && <Welcome epoch={epoch} />}
+      {!open && !home && items.length === 0 && <Welcome epoch={epoch} />}
       {items.map((item) => {
         const isNew = known.armed && !known.keys.has(item.key);
         switch (item.kind) {

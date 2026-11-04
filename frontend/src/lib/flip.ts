@@ -17,6 +17,7 @@ const TARGETS: ReadonlyArray<readonly [string, Anchor]> = [
   ['#feed', 'center'],
   ['#composer', 'center'],
   ['.message-rail', 'right'],
+  ['.branch-button', 'right'],
   ['#ai-search-surface', 'center'],
 ];
 

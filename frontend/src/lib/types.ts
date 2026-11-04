@@ -72,7 +72,7 @@ export interface AppSettings {
   ui_motion: 'system' | 'full' | 'reduced';
   chat_width: 'compact' | 'standard' | 'wide';
   text_size: number;
-  ui_surface: 'classic' | 'chat-dark' | 'side-dark';
+  ui_surface: 'one-color' | 'chat-dark' | 'side-dark';
   /** Отрисовка окна: программная нужна, когда оверлей видеокарты принимает приложение за игру. */
   render_mode: 'gpu' | 'software';
   code_font: string;
@@ -101,7 +101,7 @@ export const defaultSettings: AppSettings = {
   ui_motion: 'system',
   chat_width: 'standard',
   text_size: 14,
-  ui_surface: 'classic',
+  ui_surface: 'side-dark',
   render_mode: 'gpu',
   code_font: 'system',
   ui_font: 'inter',

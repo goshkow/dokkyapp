@@ -28,7 +28,7 @@ export function DevelopmentPage({ say }: { say: Say }) {
   useEffect(() => { loadRemote().catch(() => undefined); }, []);
   useEffect(() => {
     if (!project) return;
-    api<Recovery[]>(`/api/projects/${project.id}/write-recovery`).then(setRecovery).catch((reason: Error) => setError(reason.message));
+    api<Recovery[]>(`/api/projects/${project.id}/write-recovery`).then((value) => setRecovery(Array.isArray(value) ? value : [])).catch((reason: Error) => setError(reason.message));
   }, [project, attempt]);
   return (
     <>

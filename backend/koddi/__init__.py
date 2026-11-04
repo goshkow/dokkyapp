@@ -1,4 +1,4 @@
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # до любых запусков: на Windows дочерние процессы не открывают окон консоли
 from koddi import hidden_process as _hidden_process  # noqa: E402

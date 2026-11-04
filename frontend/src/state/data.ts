@@ -88,7 +88,7 @@ export function applySettings(settings: AppSettings, first = false): void {
   const reduced = settings.ui_motion === 'reduced' || (settings.ui_motion !== 'full' && matchMedia('(prefers-reduced-motion: reduce)').matches);
   ui.set({
     theme: resolveTheme(settings.theme),
-    surface: settings.ui_surface === 'side-dark' || settings.ui_surface === 'chat-dark' ? settings.ui_surface : 'classic',
+    surface: settings.ui_surface === 'one-color' || settings.ui_surface === 'chat-dark' ? settings.ui_surface : 'side-dark',
     baseSize: settings.text_size || 14,
     uiFont: settings.ui_font === 'system' ? 'system' : 'inter',
     codeFont: settings.code_font || 'system',
@@ -126,6 +126,8 @@ export async function loadLocal(includeModels = true): Promise<void> {
   applySettings({ ...defaultSettings, ...settings });
 }
 
+const cacheOwnerOf = (account: Account): string => String(account.user?.id ?? account.user?.display_name ?? 'user');
+
 /* облачные чаты */
 export async function loadCloud(cursor = ''): Promise<void> {
   const account = await api<Account>('/api/dokky/session');
@@ -134,7 +136,7 @@ export async function loadCloud(cursor = ''): Promise<void> {
     data.set({ cloudChats: [], cloudNext: null });
     return;
   }
-  setCacheOwner(String(account.user?.id ?? account.user?.display_name ?? 'user'));
+  setCacheOwner(cacheOwnerOf(account));
   const listMode = (scope: Scope) => (scope === 'search' ? 'chat' : scope);
   const requested = listMode(ui.get().scope);
   const name = `list:${requested}`;
@@ -269,30 +271,57 @@ export async function refreshAccount(): Promise<void> {
 
 const failureText = (error: unknown): string => (error as Error)?.message || 'Не удалось загрузить данные';
 
+/** Список моделей зависит от плана: после фонового bootstrap он мог поменяться. */
+async function refreshModels(account: Account): Promise<void> {
+  if (!account.authenticated) return;
+  const models = await api<ModelOption[]>('/api/models/options').catch(() => null);
+  // пока шёл запрос, могли выйти или сменить аккаунт
+  if (models && data.get().account?.user?.id === account.user?.id) data.set({ models });
+}
+
+let cloudBlocksStart: () => boolean = () => true;
+/** Страница сайта сама отдаёт список режима чата: state/surface.ts говорит, нужно ли при запуске ждать свой. */
+export const setCloudBlocksStart = (fn: () => boolean): void => { cloudBlocksStart = fn; };
+
+/** Сайт недоступен: локальные чаты и режим кода работают и без него. Отказ в сессии уже превратил аккаунт в выход. */
+async function refreshBootstrap(): Promise<Account> {
+  const before = data.get().account;
+  try {
+    await post('/api/dokky/bootstrap');
+    const next = await api<Account>('/api/dokky/session');
+    data.set({ account: next });
+    return next;
+  } catch (error) {
+    const current = data.get().account ?? before ?? { authenticated: false };
+    if (current.authenticated) notify(failureText(error), true);
+    return current;
+  }
+}
+
 /** Первичная загрузка: сессия, режим, настройки и списки. Сама не падает: экран всегда показывает, что делать дальше. */
 export async function bootApp(): Promise<void> {
   data.set({ bootFailed: '' });
   try {
     const account = await api<Account>('/api/dokky/session');
+    // кэш адреса страницы и чатов нужен сразу: подписка на аккаунт начинает открывать режим чата
+    if (account.authenticated) setCacheOwner(cacheOwnerOf(account));
     data.set({ account });
     const scope: Scope = storedScope() ?? (account.internal_test ? 'development' : 'chat');
     setScope(scope);
     let current = account;
     if (account.authenticated) {
-      try {
-        await post('/api/dokky/bootstrap');
-        current = await api<Account>('/api/dokky/session');
-        data.set({ account: current });
-      } catch (error) {
-        // сайт недоступен: локальные чаты и режим кода работают и без него. Отказ в сессии (401) уже закрыл вход
-        current = data.get().account ?? account;
-        if (current.authenticated) notify(failureText(error), true);
-      }
+      // bootstrap - поход на сервер. Если прошлый ответ сохранён, запуск его не ждёт: свежий план и модели придут фоном
+      if (Object.keys(account.bootstrap ?? {}).length) void refreshBootstrap().then(refreshModels);
+      else current = await refreshBootstrap();
     }
     if (isReady(current)) {
       await loadLocal();
       applySettings(data.get().settings, !data.get().booted);
-      if (scope !== 'development' && current.authenticated) await loadCloud().catch((error: unknown) => notify(failureText(error), true));
+      // при открытой странице сайта список режима чата приходит от неё: свой список подождёт фоном
+      if (scope !== 'development' && current.authenticated) {
+        const cloud = loadCloud().catch((error: unknown) => notify(failureText(error), true));
+        if (cloudBlocksStart()) await cloud;
+      }
     }
     // лимиты ждут в меню аккаунта заранее, а не грузятся после открытия
     if (data.get().account?.authenticated) void loadLimits();

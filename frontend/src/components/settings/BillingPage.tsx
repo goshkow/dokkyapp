@@ -1,5 +1,5 @@
 import { ExternalLink, RefreshCw } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import { numberText } from '../../lib/format';
 import { openExternal, SITE } from '../../lib/external';
 import { useChat } from '../../state/chatCore';
@@ -57,7 +57,12 @@ export function BillingPage({ say }: { say: Say }) {
   const reset = resetFromCatalog(catalog);
   const note = current?.unlimited ? 'Без ограничений' : current?.trial ? 'Пробный период' : current?.expires_at && current.paid_active ? `Действует до ${date(current.expires_at)}` : id === 'free' ? 'Бесплатный тариф' : undefined;
   return <>
-    {current && <div className="billing-current"><div>{name && <PlanName id={id} name={name} />}{note && <span>{note}</span>}</div></div>}
+    {current && (
+      <div className="billing-current">
+        <span className="billing-ring" style={{ '--p': Math.max(0, Math.min(100, left ?? 100)) } as CSSProperties} aria-hidden="true"><b>{left == null ? '∞' : `${Math.round(left)}%`}</b></span>
+        <div>{name && <PlanName id={id} name={name} />}<span>{note || (left == null ? '' : `Осталось ${Math.round(left)}%`)}</span></div>
+      </div>
+    )}
     <UsageSummary />
     {reset?.available && catalog && <Section><UsageResetPanel reset={reset} remaining={left} currency={catalog.currency} /></Section>}
     {catalog ? <Section><PlansView key={`${catalog.catalog_version}:${id}:${hint}`} catalog={catalog} initial={hint || undefined} /></Section>

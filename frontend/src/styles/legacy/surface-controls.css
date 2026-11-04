@@ -191,62 +191,12 @@ textarea {
   max-height:min(200px,40dvh);
   overflow:hidden;
 }
-.plan-document {
-  border:1px solid var(--line);
-  border-radius:8px;
-  margin:8px 0 22px;
-  overflow:hidden;
-  background:var(--panel);
-}
-.plan-document summary {
-  display:flex;
-  align-items:center;
-  gap:10px;
-  list-style:none;
-  padding:14px 16px;
-  cursor:pointer;
-}
-.plan-document summary::-webkit-details-marker {
-  display:none;
-}
-.plan-document summary > span {
-  flex:1;
-  min-width:0;
-  display:grid;
-  gap:2px;
-}
-.plan-document summary strong {
-  font-size:var(--fs-13);
-  font-weight:550;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.plan-document summary small {
-  color:var(--muted);
-  font-size:var(--fs-11);
-}
-.plan-document summary > svg:first-child {
-  width:15px;
-  transition:transform .2s var(--ease);
-}
-.plan-document details[open] summary > svg:first-child {
-  transform:rotate(90deg);
-}
 .plan-document-body {
   border-top:1px solid var(--line);
   padding:16px 20px;
   max-height:560px;
   overflow:auto;
   font-size:var(--fs-14);
-}
-.plan-document details:not([open]) + .plan-document-body {
-  max-height:112px;
-  overflow:hidden;
-  mask-image:linear-gradient(#000 45%,transparent);
-}
-.plan-document details[open] + .plan-document-body {
-  mask-image:none;
 }
 .plan-document-body h1 {
   font-size:var(--fs-18);
@@ -259,20 +209,6 @@ textarea {
 .plan-document-body h3 {
   font-size:var(--fs-14);
   margin:16px 0 8px;
-}
-.plan-document footer {
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  border-top:1px solid var(--line);
-  padding:10px 14px;
-  font-size:var(--fs-12);
-}
-.plan-document footer button {
-  min-height:32px;
-  font-size:var(--fs-12);
 }
 .inspector-heading h2 {
   font-size:var(--fs-13);

@@ -1,7 +1,7 @@
 import { useData, saveSettings } from '../../state/data';
 import type { AppSettings } from '../../lib/types';
 import hljs from 'highlight.js/lib/common';
-import { Pick, Row, Section, Segmented, Toggle, type Say } from './parts';
+import { Pick, PictureChoice, Row, Section, Segmented, Toggle, type Say } from './parts';
 import { glassActive, glassCapable, setGlassEnabled } from '../../lib/glass';
 import { hasWindowBridge } from '../../lib/bridge';
 import { isMac, osName } from '../../lib/platform';
@@ -32,7 +32,16 @@ export function GeneralPage({ say }: { say: Say }) {
   return (
     <>
       <Section title="Внешний вид">
-        <Segmented title="Оформление" detail={`«Как в системе» следует настройке ${osName()}.`} options={[['system', 'Как в системе'], ['dark', 'Тёмное'], ['light', 'Светлое']]} value={settings.theme ?? 'dark'} save={saveKey('theme')} say={say} />
+        <PictureChoice
+          title="Оформление"
+          detail={`«Как в системе» следует настройке ${osName()}.`}
+          className="pref-themes"
+          options={[['system', 'Как в системе'], ['dark', 'Тёмное'], ['light', 'Светлое']]}
+          value={settings.theme ?? 'dark'}
+          save={saveKey('theme')}
+          say={say}
+          picture={(id) => <span className={`pref-win ${id}`} aria-hidden="true"><u /><s><em /><em className="own" /><em /></s></span>}
+        />
         {glassCapable() && <Toggle
           title="Liquid Glass"
           detail="Нативное стекло macOS 26 для меню и панелей."
@@ -40,10 +49,18 @@ export function GeneralPage({ say }: { say: Say }) {
           save={async (value) => setGlassEnabled(value)}
           say={say}
         />}
-        <Pick title="Поверхность" detail="Цвет фона: как раньше, темнее чат или темнее боковое меню." options={[['classic', 'Как раньше'], ['chat-dark', 'Тёмный чат'], ['side-dark', 'Тёмное меню']]} value={settings.ui_surface} save={saveKey('ui_surface')} say={say} />
+        <Pick title="Поверхность" detail="Цвет фона: темнее боковое меню, темнее чат или всё одного цвета." options={[['one-color', 'Одного цвета'], ['chat-dark', 'Тёмный чат'], ['side-dark', 'Тёмное меню']]} value={settings.ui_surface} save={saveKey('ui_surface')} say={say} />
         <Segmented title="Шрифт интерфейса" detail="Для меню, панелей и сообщений." options={[['inter', 'Inter'], ['system', 'Как в системе']]} value={settings.ui_font ?? 'inter'} save={saveKey('ui_font')} say={say} />
         <Pick title="Размер текста" options={[8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20].map((size) => [size, `${size} px`] as [number, string])} value={settings.text_size} save={saveKey('text_size', (value: string) => Number(value))} say={say} />
-        <Segmented title="Ширина чата" options={[['compact', 'Узкая'], ['standard', 'Обычная'], ['wide', 'Широкая']]} value={settings.chat_width} save={saveKey('chat_width')} say={say} />
+        <PictureChoice
+          title="Ширина чата"
+          className="pref-widths"
+          options={[['compact', 'Узкая'], ['standard', 'Обычная'], ['wide', 'Широкая']]}
+          value={settings.chat_width}
+          save={saveKey('chat_width')}
+          say={say}
+          picture={(id) => <span className="pref-lines" data-width={id} aria-hidden="true"><i /><i /><i /></span>}
+        />
         <Pick title="Анимации" detail="Учитывается системная настройка уменьшения движения." options={[['system', 'Как в системе'], ['full', 'Включены'], ['reduced', 'Минимальные']]} value={settings.ui_motion} save={saveKey('ui_motion')} say={say} />
       </Section>
       <Section title="Код">

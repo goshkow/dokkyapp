@@ -83,6 +83,9 @@ main.chat-page {
   background: var(--user);
   color: #fff;
 }
+:root[data-theme="light"] .message.user .message-body {
+  color: var(--text);
+}
 .message-body p {
   margin: 0 0 7px;
 }

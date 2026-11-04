@@ -1,19 +1,21 @@
 import { Cloud, Monitor } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { atRest, LEAD, stepEdge, TRAIL, type SpringEdge } from '../../lib/spring';
+import { reducedMotion } from '../../lib/motion';
 import { createPortal } from 'react-dom';
 import { appColor, glassActive, nextFade, useNativeTiles, type GlassFade } from '../../lib/glass';
 import { useFieldHost } from '../../state/field';
 import { siteFieldHeight } from '../../state/siteField';
 import { useConnection } from '../../state/connection';
-import { bindFrame, command, openSurfaceWorkspace, reloadSurface, sendLayout, setLayoutProvider, setSurfaceProduct, surface, useSurface, type SurfaceBox } from '../../state/surface';
+import { bindFrame, closeSurfaceOverlay, command, openSurfaceWorkspace, pressSurfaceTab, reloadSurface, sendLayout, setLayoutProvider, setSurfaceProduct, surface, useSurface, type SiteTabs, type SurfaceBox } from '../../state/surface';
 
-/** Загрузка затянулась: заставка держится 8 с, поэтому подпись появляется чуть раньше, чем станет видна. */
+/** Загрузка затянулась: заставка держится 12 с, поэтому подпись появляется чуть раньше, чем станет видна. */
 function useSlow(loading: boolean): boolean {
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     setSlow(false);
     if (!loading) return;
-    const timer = window.setTimeout(() => setSlow(true), 6000);
+    const timer = window.setTimeout(() => setSlow(true), 10_000);
     return () => window.clearTimeout(timer);
   }, [loading]);
   return slow;
@@ -53,7 +55,7 @@ function OverlayScrim({ host, closing }: { host: HTMLElement; closing: boolean }
     const resize = new ResizeObserver(update);
     resize.observe(host);
     window.addEventListener('resize', update);
-    const keys = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); command('close-overlay'); } };
+    const keys = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); closeSurfaceOverlay(); } };
     document.addEventListener('keydown', keys, true);
     return () => {
       resize.disconnect();
@@ -64,7 +66,7 @@ function OverlayScrim({ host, closing }: { host: HTMLElement; closing: boolean }
   const { left, top, right, bottom } = hole;
   const clip = `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${left}px ${top}px, ${right}px ${top}px, ${right}px ${bottom}px, ${left}px ${bottom}px, ${left}px ${top}px)`;
   return createPortal(
-    <div className={`surface-scrim${closing ? ' is-closing' : ''}`} aria-hidden="true" style={{ clipPath: clip }} onClick={() => command('close-overlay')} />,
+    <div className={`surface-scrim${closing ? ' is-closing' : ''}`} aria-hidden="true" style={{ clipPath: clip }} onClick={closeSurfaceOverlay} />,
     document.body,
   );
 }
@@ -150,8 +152,108 @@ function SiteFieldSlots() {
   );
 }
 
+const PRESS_ANSWER_MS = 500;
+
+/**
+ * Новый экран чата: плитка повторяет невидимый переключатель страницы. Положение каждой вкладки и индикатора приходит
+ * кадр за кадром, поэтому морф из шапки к полю и обрастание режимами считает один код на сайте. Своё движение есть только
+ * у капсулы: страница называет цель, а едет капсула пружиной здесь, чтобы не зависеть от задержки моста.
+ */
+export function HomeTabs({ tabs }: { tabs: SiteTabs }) {
+  const capsule = useRef<HTMLSpanElement>(null);
+  const edges = useRef<{ left: SpringEdge; right: SpringEdge } | null>(null);
+  const frame = useRef(0);
+  // до страницы и обратно идти два кадра мостом: капсула едет сразу, ответ страницы приходит уже к той же цели
+  const [pressed, setPressed] = useState<string | null>(null);
+  const selectedId = tabs.items.find((tab) => tab.selected)?.id;
+  useEffect(() => {
+    if (pressed == null) return undefined;
+    if (pressed === selectedId) { setPressed(null); return undefined; }
+    const timer = window.setTimeout(() => setPressed(null), PRESS_ANSWER_MS);
+    return () => window.clearTimeout(timer);
+  }, [pressed, selectedId]);
+  const ahead = pressed == null ? undefined : tabs.items.find((tab) => tab.id === pressed);
+  const target = ahead ?? tabs.indicator;
+  const goalLeft = target?.x ?? 0;
+  const goalRight = goalLeft + (target?.w ?? 0);
+  useLayoutEffect(() => {
+    const node = capsule.current;
+    if (!node) return undefined;
+    const paint = (left: number, right: number) => {
+      node.style.transform = `translate3d(${left}px, 0, 0)`;
+      node.style.width = `${Math.max(0, right - left)}px`;
+    };
+    const known = edges.current;
+    // первый показ и перетекание из шапки: капсула стоит там, где её ставит страница
+    if (!known || tabs.morph || reducedMotion()) {
+      cancelAnimationFrame(frame.current);
+      edges.current = { left: { x: goalLeft, v: 0 }, right: { x: goalRight, v: 0 } };
+      paint(goalLeft, goalRight);
+      return undefined;
+    }
+    if (known.left.x === goalLeft && known.right.x === goalRight) return undefined;
+    const forward = goalRight + goalLeft > known.left.x + known.right.x;
+    let last = performance.now();
+    cancelAnimationFrame(frame.current);
+    const tick = (now: number) => {
+      const seconds = (now - last) / 1000;
+      last = now;
+      const state = edges.current;
+      if (!state) return;
+      state.left = stepEdge(state.left, goalLeft, forward ? TRAIL : LEAD, seconds);
+      state.right = stepEdge(state.right, goalRight, forward ? LEAD : TRAIL, seconds);
+      if (atRest(state.left, goalLeft) && atRest(state.right, goalRight)) {
+        edges.current = { left: { x: goalLeft, v: 0 }, right: { x: goalRight, v: 0 } };
+        paint(goalLeft, goalRight);
+        return;
+      }
+      paint(state.left.x, state.right.x);
+      frame.current = requestAnimationFrame(tick);
+    };
+    frame.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame.current);
+  }, [goalLeft, goalRight, tabs.morph]);
+  return (
+    <div className="ai-product-switch tile-product tile-home-tabs" role="tablist" aria-label="Режимы">
+      {tabs.indicator && (
+        <span ref={capsule} className="ai-product-indicator tile-capsule" aria-hidden="true" style={{ top: tabs.indicator.y, height: tabs.indicator.h }} />
+      )}
+      {tabs.items.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role={tab.id === 'more' ? undefined : 'tab'}
+          className="tile-home-tab"
+          aria-label={tab.label || tab.text}
+          aria-selected={tab.id === 'more' ? undefined : tab.selected}
+          aria-haspopup={tab.id === 'more' ? 'menu' : undefined}
+          aria-expanded={tab.id === 'more' ? tab.open : undefined}
+          tabIndex={tab.selected || tab.id === 'more' ? 0 : -1}
+          style={{ left: tab.x, top: tab.y, width: tab.w, height: tab.h, opacity: tab.o, fontSize: tab.font, gap: tab.gap, pointerEvents: tab.o < 0.05 ? 'none' : undefined }}
+          onClick={() => {
+            // выбранная задача по нажатию снимается, а куда уйдёт «ещё», знает только страница
+            if (tab.id !== 'more' && !tab.selected) setPressed(tab.id);
+            void pressSurfaceTab(tab.id);
+          }}
+        >
+          {tab.icon && tab.iconW > 0 && (
+            <span className="surface-icon" aria-hidden="true" style={{ '--icon': `url("${tab.icon}")`, width: tab.iconW, height: tab.iconW, opacity: tab.iconO } as CSSProperties} />
+          )}
+          {tab.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Вид плитки «Чат / Поиск» (роль product): переключатель страницы сайта внутри нативного стекла. */
 export function TileProduct() {
+  const tabs = useSurface((state) => state.siteField?.tabs ?? null);
+  if (tabs) return <HomeTabs tabs={tabs} />;
+  return <PlainProduct />;
+}
+
+function PlainProduct() {
   const choice = useSurface((state) => state.siteField?.choice ?? state.product);
   const items = [['chat', 'Чат'], ['search', 'Поиск']] as const;
   return (
@@ -212,6 +314,13 @@ export function SiteSurface({ shown }: { shown: boolean }) {
     const timer = window.setTimeout(() => setScrim(false), 180);
     return () => window.clearTimeout(timer);
   }, [dimmed]);
+
+  // фрейм живёт и в режиме кода, скрытым: страница не знает, что её снова показали, и не зажигает подсветку нового экрана
+  const wasShown = useRef(shown);
+  useEffect(() => {
+    if (shown && !wasShown.current && status === 'ready') command('home-shown');
+    wasShown.current = shown;
+  }, [shown, status]);
 
   useEffect(() => {
     bindFrame(frame.current);

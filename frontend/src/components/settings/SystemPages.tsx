@@ -19,7 +19,7 @@ function useBuild(): string {
   return build;
 }
 
-const APPEARANCE_DEFAULTS = { theme: 'dark', ui_surface: 'classic', ui_font: 'inter', text_size: 14, chat_width: 'standard', ui_motion: 'system', code_font: 'system' } as const;
+const APPEARANCE_DEFAULTS = { theme: 'dark', ui_surface: 'side-dark', ui_font: 'inter', text_size: 14, chat_width: 'standard', ui_motion: 'system', code_font: 'system' } as const;
 
 export function SystemPage({ say }: { say: Say }) {
   const settings = useData((s) => s.settings);

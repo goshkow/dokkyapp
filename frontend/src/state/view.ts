@@ -76,7 +76,14 @@ export function newChat(project: Project | null = null): void {
   record();
 }
 
+let chatLoadFailed: () => boolean = () => false;
+/** Чат не загрузился: повторный клик по нему - единственный способ попробовать ещё раз. Ответ даёт state/chat.ts. */
+export const setChatLoadFailed = (fn: () => boolean): void => { chatLoadFailed = fn; };
+
 export function openChat(chat: Chat): void {
+  const open = view.get();
+  // уже открытый чат заново не грузится: не мигает лента и не копится история «назад»
+  if (open.page === 'chat' && open.chat?.id === chat.id && open.chat.project_id === chat.project_id && !chatLoadFailed()) return;
   const project = data.get().projects.find((item) => item.id === chat.project_id) ?? null;
   rememberProject(project);
   view.set((state) => ({ page: 'chat', chat, project, version: state.version + 1 }));

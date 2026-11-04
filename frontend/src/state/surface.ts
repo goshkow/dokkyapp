@@ -4,11 +4,12 @@
  * меню (и его плитка на macOS) рисует разделы и чаты по состоянию, которое сайт сообщает о себе.
  */
 import { api, post } from '../lib/api';
+import { cacheGet, cacheSet } from '../lib/cache';
 import { connection } from './connection';
 import { kickGlass, setGlassSource, type GlassBlock, type GlassFade } from '../lib/glass';
 import { exposeStore, isMirror, mirrorStore, remote } from '../lib/mirror';
 import { createStore, useStore } from '../lib/store';
-import { data, isReady } from './data';
+import { data, isReady, setCloudBlocksStart } from './data';
 import { openBilling } from './settingsUi';
 import { ui } from './ui';
 import type { Project } from '../lib/types';
@@ -20,6 +21,9 @@ export const SITE_ESCAPE = 'koddi:site-escape';
 // сайт сам перезапрашивает токен при 401, а приложение меняет его заранее
 const RENEW_BEFORE_MS = 120_000;
 const HELLO_TIMEOUT_MS = 25_000;
+const OVERLAY_ANSWER_MS = 400;
+const CACHE_NAME = 'surface';
+const CACHE_DELAY_MS = 1500;
 
 export interface SurfaceSection { key: string; label: string; icon: string; active: boolean; badge: boolean }
 export interface SurfaceAction { action: string; label: string; danger: boolean }
@@ -45,6 +49,31 @@ export interface SurfaceChat {
 export interface SurfaceBox { x: number; y: number; w: number; h: number; r: number; o: number }
 /** Поле ввода и «Чат / Поиск» страницы, которые на macOS со стеклом рисует приложение (state/siteField.ts). */
 export interface SiteWorkspace { kind: 'remote' | 'cloud'; name: string; online: boolean }
+/** Режим на новом экране чата: положение внутри плитки меряет страница сайта, кадр за кадром. */
+export interface SiteTab {
+  id: string;
+  label: string;
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  o: number;
+  font: number;
+  gap: number;
+  selected: boolean;
+  open: boolean;
+  icon: string;
+  iconW: number;
+  iconO: number;
+}
+export interface SiteTabs {
+  items: SiteTab[];
+  indicator: { x: number; y: number; w: number; h: number } | null;
+  /** Вкладки перетекают из шапки к полю: капсула идёт за страницей кадр за кадром, без пружины. */
+  morph: boolean;
+}
+
 export interface SiteField {
   composer: SurfaceBox | null;
   product: SurfaceBox | null;
@@ -59,11 +88,19 @@ export interface SiteField {
   /** Рамка пилюли компьютера или облачного проекта; нет - пилюлю показывать не надо (нет её или она закрыта слоем). */
   pill: SurfaceBox | null;
   workspace: SiteWorkspace | null;
+  /** Новый экран чата: «Чат / Поиск» с режимами. Нет - обычный переключатель из двух вкладок. */
+  tabs: SiteTabs | null;
+  /** Поле сейчас ищет: вложений нет, слева значок поиска. */
+  search: boolean;
+  /** Растёт при смене режима: поле приложения вспыхивает, как поле на сайте. */
+  flash: number;
 }
 
 export interface SurfaceState {
   /** off - сервер не умеет или нет входа: работает свой чат приложения. */
   status: 'off' | 'loading' | 'ready' | 'failed';
+  /** Сервер ещё не ответил, есть ли страница: заставка держится и на это время. */
+  checking: boolean;
   url: string;
   origin: string;
   /** Этот компьютер в удалённом доступе: его чаты у нас и так свои. */
@@ -88,12 +125,13 @@ export interface SurfaceState {
 }
 
 export const surface = createStore<SurfaceState>({
-  status: 'off', url: '', origin: '', hostId: '', hostName: '', sections: [], chats: [], hasMore: false, multiChat: true,
+  status: 'off', checking: false, url: '', origin: '', hostId: '', hostName: '', sections: [], chats: [], hasMore: false, multiChat: true,
   product: 'chat', epoch: 0, remoteChat: null, overlay: false, features: [], field: false, siteField: null,
 });
 export const useSurface = <S,>(selector: (state: SurfaceState) => S): S => useStore(surface, selector);
 if (isMirror) mirrorStore('surface', surface);
 else exposeStore('surface', surface);
+setCloudBlocksStart(() => surface.get().status === 'off');
 
 /** Фрейм сайта виден: режим чата (или открыт чат другого компьютера), страница сайта поддерживается. */
 export const surfaceShown = (state: SurfaceState = surface.get(), scope = ui.get().scope): boolean =>
@@ -163,12 +201,18 @@ export function command(name: string, args: Record<string, unknown> = {}): void 
   if (delivered) send('command', { name, args });
 }
 
+const askToken = () => post<{ token: string; expires_in: number }>('/api/dokky/surface/session');
+// токен запрашивается вместе с открытием фрейма: страница получит его сразу, как только поздоровается
+let tokenAhead: ReturnType<typeof askToken> | null = null;
+
 /** Токен странице; после первого токена - тема, отступы и открытый чат: команды до токена страница не принимает. */
 async function sendSession(first = false): Promise<void> {
   const ticket = ++session;
   window.clearTimeout(renewTimer);
   try {
-    const value = await post<{ token: string; expires_in: number }>('/api/dokky/surface/session');
+    const ahead = tokenAhead;
+    tokenAhead = null;
+    const value = await (ahead ?? askToken());
     if (ticket !== session) return;
     send('session', { token: value.token });
     delivered = true;
@@ -208,6 +252,34 @@ function parseWorkspace(value: unknown): SiteWorkspace | null {
   return name ? { kind: item.kind === 'remote' ? 'remote' : 'cloud', name, online: flag(item.online) } : null;
 }
 
+const size = (value: unknown, max = 2000): number => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(-max, Math.min(max, number)) : 0;
+};
+
+export function parseTabs(value: unknown): SiteTabs | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = record(value);
+  const items = list(raw.items, 12).map((entry) => {
+    const item = record(entry);
+    return {
+      id: text(item.id, 48), label: text(item.label, 80), text: text(item.text, 80),
+      x: size(item.x), y: size(item.y), w: Math.max(0, size(item.w)), h: Math.max(0, size(item.h)),
+      o: Math.max(0, Math.min(1, size(item.o, 1))), font: Math.max(8, Math.min(24, size(item.font, 24))), gap: Math.max(0, size(item.gap, 24)),
+      selected: flag(item.selected), open: flag(item.open), icon: icon(item.icon),
+      iconW: Math.max(0, size(item.iconW, 32)), iconO: Math.max(0, Math.min(1, size(item.iconO, 1))),
+    };
+  }).filter((item, index, all) => /^(product:(chat|search)|task:[a-z][a-z0-9-]*|more)$/.test(item.id) && (item.label || item.text)
+    && all.findIndex((other) => other.id === item.id) === index);
+  if (!items.length) return null;
+  const mark = raw.indicator ? record(raw.indicator) : null;
+  return {
+    items,
+    indicator: mark ? { x: size(mark.x), y: size(mark.y), w: Math.max(0, size(mark.w)), h: Math.max(0, size(mark.h)) } : null,
+    morph: flag(raw.morph),
+  };
+}
+
 export function parseField(value: unknown): SiteField | null {
   if (!value || typeof value !== 'object') return null;
   const field = record(value);
@@ -221,6 +293,9 @@ export function parseField(value: unknown): SiteField | null {
     placeholder: text(field.placeholder, 200),
     pill: parseBox(field.pill),
     workspace: parseWorkspace(field.workspace),
+    tabs: parseTabs(field.tabs),
+    search: flag(field.search),
+    flash: Math.max(0, Math.floor(size(field.flash, 1_000_000))),
   };
 }
 
@@ -286,11 +361,13 @@ function onMessage(event: MessageEvent): void {
   if (message.dokkySurface !== PROTOCOL) return;
   switch (message.type) {
     case 'hello':
-      // страница перезагрузилась сама (новый выпуск сайта): заново токен, тема и отступы
+      // страница перезагрузилась сама (новый выпуск сайта): заново токен, тема и отступы.
+      // открытая новость пропала вместе со старой страницей, а новая об этом не сообщит: затемнение осталось бы навсегда
       delivered = false;
       surface.set({
         features: list(message.features, 8).map((item) => text(item, 32)).filter((item) => /^[a-z][a-z-]*$/.test(item)),
         siteField: null,
+        overlay: false,
       });
       window.clearTimeout(helloTimer);
       void sendSession(true);
@@ -303,6 +380,7 @@ function onMessage(event: MessageEvent): void {
       return;
     case 'state':
       surface.set(parseState(message.state));
+      rememberSurface();
       return;
     case 'billing':
       openBilling();
@@ -340,6 +418,12 @@ if (!isMirror) {
   setGlassSource(frameBlocks);
 }
 
+/** Нажатие на затемнение вне фрейма. Страница могла не ответить: окно не должно остаться закрытым. */
+export function closeSurfaceOverlay(): void {
+  command('close-overlay');
+  window.setTimeout(() => { if (surface.get().overlay) surface.set({ overlay: false }); }, OVERLAY_ANSWER_MS);
+}
+
 /** Компонент фрейма сообщает о своём элементе; новый элемент - новая загрузка страницы. */
 export function bindFrame(element: HTMLIFrameElement | null): void {
   frame = element;
@@ -348,56 +432,151 @@ export function bindFrame(element: HTMLIFrameElement | null): void {
   if (surface.get().overlay) surface.set({ overlay: false });
   kickGlass();
   delivered = false;
+  session += 1;
   window.clearTimeout(helloTimer);
   if (!element) {
-    session += 1;
+    tokenAhead = null;
     window.clearTimeout(renewTimer);
     return;
   }
+  tokenAhead = askToken();
+  // ошибку разберёт sendSession, если до него дойдёт: страница могла и не поздороваться
+  tokenAhead.catch(() => undefined);
   helloTimer = window.setTimeout(() => {
     if (frame === element && surface.get().status === 'loading') surface.set({ status: 'failed' });
   }, HELLO_TIMEOUT_MS);
 }
 
+/** Адрес страницы и список чатов с прошлого запуска: меню и фрейм появляются сразу, пока сервер отвечает в фоне. */
+interface SurfaceCache {
+  url: string;
+  origin: string;
+  hostId: string;
+  hostName: string;
+  sections: SurfaceSection[];
+  chats: SurfaceChat[];
+  hasMore: boolean;
+  multiChat: boolean;
+}
+
+let cacheTimer = 0;
+/** Список меняется часто: пишем не чаще раза в полторы секунды. Что шло и что открыто, в следующий запуск не переносим. */
+function rememberSurface(): void {
+  window.clearTimeout(cacheTimer);
+  cacheTimer = window.setTimeout(() => {
+    const { status, baseUrl, origin, hostId, hostName, sections, chats, hasMore, multiChat } = { ...surface.get(), baseUrl: frameBase };
+    // страница ещё не прислала список: на следующий запуск лучше прошлый, чем пустой
+    if (status === 'off' || !baseUrl || (!sections.length && !chats.length)) return;
+    cacheSet(CACHE_NAME, {
+      url: baseUrl, origin, hostId, hostName, sections: sections.map((item) => ({ ...item, active: false })),
+      chats: chats.map((chat) => ({ ...chat, active: false, working: false, asking: false })), hasMore, multiChat,
+    } satisfies SurfaceCache);
+  }, CACHE_DELAY_MS);
+}
+
+// адрес от сервера, как он есть: тема и новый экран дописываются при каждом открытии
+let frameBase = '';
+function frameUrl(base: string): string {
+  const url = new URL(base);
+  url.searchParams.set('theme', ui.get().theme);
+  // новый экран чата сайт отдаёт только тому приложению, которое умеет рисовать его режимы в своей плитке
+  url.searchParams.set('home', '1');
+  return url.toString();
+}
+
+/** Сохранённое доверия не добавляет: адрес проверяется так же, как ответ сервера, и фрейм не откроется на чужом. */
+function usableCache(value: SurfaceCache | undefined): SurfaceCache | null {
+  if (!value || typeof value.url !== 'string' || typeof value.origin !== 'string') return null;
+  try {
+    const url = new URL(value.url);
+    if (url.origin !== value.origin) return null;
+    if (url.protocol !== 'https:' && url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return null;
+  } catch {
+    return null;
+  }
+  const parsed = parseState({ sections: value.sections, chats: value.chats, hasMore: value.hasMore, multiChat: value.multiChat });
+  return { ...value, sections: parsed.sections, chats: parsed.chats, hasMore: parsed.hasMore, multiChat: parsed.multiChat };
+}
+
 let checking = 0;
 let checkedFor = '';
+let frameOwner = '';
+function closeFrame(): void {
+  frameBase = '';
+  frameOwner = '';
+  window.clearTimeout(cacheTimer);
+  surface.set({ status: 'off', checking: false, url: '', origin: '', hostId: '', hostName: '', sections: [], chats: [], remoteChat: null });
+}
+
 /** Есть ли на сервере страница для режима чата; вызывается после входа и при смене аккаунта. */
 export async function checkSurface(force = false): Promise<void> {
   if (isMirror) return;
   const account = data.get().account;
   const owner = account?.authenticated ? String(account.user?.id ?? '') : '';
   if (!owner) {
+    checking += 1;
     checkedFor = '';
-    surface.set({ status: 'off', sections: [], chats: [], remoteChat: null });
+    closeFrame();
     return;
   }
+  // страница живёт с сессией прошлого аккаунта: ни её чатов, ни нового токена ей не положено
+  if (frameOwner && frameOwner !== owner) closeFrame();
   if (!force && owner === checkedFor && surface.get().status !== 'failed') return;
   const ticket = ++checking;
   // без сети страница сайта не откроется: незачем ждать её полминуты
   if (!connection.get().online) {
     checkedFor = '';
-    surface.set({ status: 'failed' });
+    surface.set({ status: 'failed', checking: false });
     return;
   }
+  surface.set({ checking: true });
+  // при запуске фрейм начинает грузиться сразу с прошлым адресом: ждать сервер ради него незачем
+  let started = false;
+  const remembered = surface.get().status === 'off' ? cacheGet<SurfaceCache>(CACHE_NAME).then((value) => {
+    const cached = usableCache(value);
+    if (!cached || ticket !== checking || surface.get().status !== 'off') return;
+    started = true;
+    frameBase = cached.url;
+    frameOwner = owner;
+    surface.set((state) => ({
+      status: 'loading', url: frameUrl(cached.url), origin: cached.origin, hostId: cached.hostId, hostName: cached.hostName,
+      sections: cached.sections, chats: cached.chats, hasMore: cached.hasMore, multiChat: cached.multiChat, epoch: state.epoch + 1,
+    }));
+  }).catch(() => undefined) : Promise.resolve();
   try {
     const value = await api<{ available: boolean; url?: string; origin?: string; host_id?: string; host_name?: string }>('/api/dokky/surface');
+    await remembered;
     if (ticket !== checking) return;
     checkedFor = owner;
     if (!value.available || !value.url || !value.origin) {
-      surface.set({ status: 'off' });
+      closeFrame();
+      cacheSet(CACHE_NAME, null);
       return;
     }
-    const url = new URL(value.url);
-    url.searchParams.set('theme', ui.get().theme);
+    // адрес тот же: страница уже грузится с него, перезагружать её незачем
+    if (started && value.url === frameBase && value.origin === surface.get().origin) {
+      surface.set({ checking: false, hostId: value.host_id ?? '', hostName: value.host_name ?? '' });
+      rememberSurface();
+      return;
+    }
+    frameBase = value.url;
+    frameOwner = owner;
     surface.set((state) => ({
       // другой аккаунт - другие чаты: прежний список не показываем ни секунды
-      status: 'loading', url: url.toString(), origin: value.origin!, hostId: value.host_id ?? '', hostName: value.host_name ?? '',
+      status: 'loading', checking: false, url: frameUrl(value.url!), origin: value.origin!, hostId: value.host_id ?? '', hostName: value.host_name ?? '',
       sections: [], chats: [], epoch: state.epoch + 1,
     }));
+    rememberSurface();
   } catch {
+    await remembered;
     if (ticket !== checking) return;
     checkedFor = '';
-    surface.set({ status: 'failed' });
+    // страница уже грузится с прошлого адреса: откроется она или нет, решит таймер ответа страницы
+    if (started) {
+      surface.set({ checking: false });
+      return;
+    }
+    surface.set({ status: 'failed', checking: false });
   }
 }
 
@@ -420,6 +599,9 @@ export function startChat(project: Project | null = null): void {
 /* действия меню: в плитке macOS вызываются у главного вида */
 function realOpenSurfaceChat(id: number): void {
   if (ui.get().scope === 'development') surface.set({ remoteChat: id });
+  const { chats, sections, product } = surface.get();
+  // чат уже открыт: страница загрузила бы его заново, а лента мигнула бы. Из раздела сайта и из поиска в него всё же возвращаемся
+  if (product === 'chat' && chats.some((chat) => chat.id === id && chat.active) && !sections.some((section) => section.active)) return;
   command('open-chat', { id });
 }
 function realSurfaceNewChat(): void { command('new-chat'); }
@@ -429,6 +611,8 @@ function realLoadMore(): void { command('load-more'); }
 function realEnableMultiChat(): void { command('enable-multi-chat'); }
 function realSetProduct(product: 'chat' | 'search'): void { command('product', { product }); }
 function realOpenWorkspace(): void { command('open-workspace', {}); }
+function realPressTab(id: string): void { command('product-tab', { id }); }
+function realPressOutside(): void { command('outside-press', {}); }
 
 export const openSurfaceChat = remote('openSurfaceChat', realOpenSurfaceChat);
 export const surfaceNewChat = remote('surfaceNewChat', realSurfaceNewChat);
@@ -437,6 +621,8 @@ export const surfaceChatAction = remote('surfaceChatAction', realChatAction);
 export const surfaceLoadMore = remote('surfaceLoadMore', realLoadMore);
 export const surfaceEnableMultiChat = remote('surfaceEnableMultiChat', realEnableMultiChat);
 export const setSurfaceProduct = remote('setSurfaceProduct', realSetProduct);
+export const pressSurfaceTab = remote('pressSurfaceTab', realPressTab);
+export const pressOutsideSurface = remote('pressOutsideSurface', realPressOutside);
 export const openSurfaceWorkspace = remote('openSurfaceWorkspace', realOpenWorkspace);
 export const surfaceActions = {
   openSurfaceChat: realOpenSurfaceChat,
@@ -446,6 +632,8 @@ export const surfaceActions = {
   surfaceLoadMore: realLoadMore,
   surfaceEnableMultiChat: realEnableMultiChat,
   setSurfaceProduct: realSetProduct,
+  pressSurfaceTab: realPressTab,
+  pressOutsideSurface: realPressOutside,
   openSurfaceWorkspace: realOpenWorkspace,
 };
 

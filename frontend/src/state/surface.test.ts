@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsUi } from './settingsUi';
 import { connection } from './connection';
 import { data } from './data';
-import { bindFrame, checkSurface, chatModeChats, command, otherComputerChats, parseField, parseGlass, parseState, startChat, surface } from './surface';
+import { bindFrame, checkSurface, chatModeChats, command, otherComputerChats, parseField, parseGlass, parseState, parseTabs, startChat, surface } from './surface';
 import { ui } from './ui';
 import { view } from './view';
 
@@ -228,5 +228,27 @@ describe('страница сайта без связи', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'нет' }), { status: 503 })));
     await checkSurface(true);
     expect(surface.get().status).toBe('failed');
+  });
+});
+
+describe('режимы нового экрана от сайта', () => {
+  const tab = { id: 'task:deck', label: 'Презентация', text: 'Презентация', x: 10, y: 5, w: 120, h: 34, o: 1, font: 14, gap: 7, selected: true, open: false, icon: '', iconW: 16, iconO: 1 };
+
+  it('разбирает вкладки и индикатор', () => {
+    const parsed = parseTabs({ items: [tab], indicator: { x: 4, y: 4, w: 80, h: 36 } });
+    expect(parsed?.items[0]).toMatchObject({ id: 'task:deck', w: 120, selected: true });
+    expect(parsed?.indicator).toEqual({ x: 4, y: 4, w: 80, h: 36 });
+  });
+
+  it('чужие вкладки и иконки не проходят', () => {
+    expect(parseTabs({ items: [{ ...tab, id: 'javascript:alert(1)' }] })).toBeNull();
+    expect(parseTabs(null)).toBeNull();
+    const bad = parseTabs({ items: [{ ...tab, icon: 'https://evil.test/x.svg', x: 'x', w: 1e9 }] });
+    expect(bad?.items[0]).toMatchObject({ icon: '', x: 0, w: 2000 });
+  });
+
+  it('поле старого сайта без режимов остаётся рабочим', () => {
+    const field = parseField({ composer: null, product: null, choice: 'chat' });
+    expect(field).toMatchObject({ tabs: null, flash: 0 });
   });
 });

@@ -58,6 +58,34 @@ describe('запуск приложения', () => {
     expect(data.get().bootFailed).toBe('Сбой базы');
   });
 
+  it('сохранённый ответ bootstrap: запуск не ждёт сервер, модели обновляются, когда он ответит', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const models: string[] = [];
+    serve((url, init) => {
+      if (url.includes('/api/dokky/bootstrap')) return new Promise((resolve) => { answer = resolve; });
+      if (url.includes('/api/dokky/session')) return json({ ...session, bootstrap: { models: [{ id: 'x' }] } });
+      if (url.includes('/api/models/options')) { models.push(url); return json([{ id: 'fresh', name: 'Свежая', available: true }]); }
+      return local(url, init);
+    });
+    await bootApp();
+    expect(data.get().booted).toBe(true);
+    expect(models).toHaveLength(1);
+    answer(json({}));
+    await vi.waitFor(() => expect(models).toHaveLength(2));
+    await vi.waitFor(() => expect((data.get().models as unknown as Array<{ id: string }>).map((model) => model.id)).toEqual(['fresh']));
+  });
+
+  it('первый запуск без сохранённого ответа ждёт bootstrap', async () => {
+    let asked = false;
+    serve((url, init) => {
+      if (url.includes('/api/dokky/bootstrap')) { asked = true; return json({}); }
+      return local(url, init);
+    });
+    await bootApp();
+    expect(asked).toBe(true);
+    expect(data.get().booted).toBe(true);
+  });
+
   it('сессия закончилась: на экране входа есть объяснение, а обычный выход без него', async () => {
     serve(local);
     await bootApp();

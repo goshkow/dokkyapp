@@ -91,9 +91,9 @@ textarea,
   flex-direction: column;
   flex: 0 0 auto;
   min-height: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--fill-line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 35%, var(--bg));
+  background: var(--fill);
   overflow: hidden;
   transition: flex-grow 380ms var(--shell-ease), max-height 380ms var(--shell-ease), opacity 240ms ease, margin 380ms var(--shell-ease), border-color 240ms ease;
 }

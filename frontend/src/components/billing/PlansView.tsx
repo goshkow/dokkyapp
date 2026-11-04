@@ -1,9 +1,10 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { Check } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { reducedMotion } from '../../lib/motion';
 import { guarded } from '../../state/overlay';
 import { startPayment } from '../../state/payment';
 import { money, planButton, planName, type Catalog, type Plan } from '../../state/plans';
-import { FeatureList, PlanName, Price } from './planUi';
+import { FeatureList, PlanHero, PlanName } from './planUi';
 
 const day = (value?: string | null): string => {
   const date = value ? new Date(value) : null;
@@ -11,7 +12,7 @@ const day = (value?: string | null): string => {
 };
 
 // те же время и кривая, что у переключателя планов на сайте
-const SLIDE = { duration: 320, easing: 'cubic-bezier(.25,.75,.25,1)' };
+const SLIDE = { duration: 300, easing: 'cubic-bezier(.25,.75,.25,1)' };
 
 function PlanCard({ catalog, plan, active }: { catalog: Catalog; plan: Plan; active: boolean }) {
   const currentId = catalog.current.plan ?? '';
@@ -26,9 +27,7 @@ function PlanCard({ catalog, plan, active }: { catalog: Catalog; plan: Plan; act
     : '';
   return (
     <>
-      <h4><PlanName id={plan.id} name={plan.name} /></h4>
       {plan.tagline && <p className="plan-tagline">{plan.tagline}</p>}
-      <Price plan={plan} months={catalog.period_months} />
       <div className="plan-cta">
         <button
           type="button"
@@ -64,6 +63,8 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
   const indicator = useRef<HTMLSpanElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const panels = useRef<Array<HTMLElement | null>>([]);
+  const heroStage = useRef<HTMLDivElement>(null);
+  const heroes = useRef<Array<HTMLElement | null>>([]);
   const shown = useRef(-1);
   const running = useRef<Animation[]>([]);
   // каталог обновился (смена плана, сокращение списка): выбранная вкладка не уходит за его пределы
@@ -74,14 +75,20 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
   const place = (instant: boolean) => {
     const tab = tabs.current?.querySelectorAll<HTMLElement>('[role="tab"]')[selected];
     const bar = indicator.current;
-    if (tab && bar) {
+    const first = tabs.current?.querySelector<HTMLElement>('[role="tab"]');
+    if (tab && first && bar) {
       if (instant) bar.style.transition = 'none';
-      bar.style.width = `${tab.offsetWidth}px`;
-      bar.style.transform = `translateX(${tab.offsetLeft}px)`;
+      // линейка заполняется от первого плана до выбранного
+      const start = first.offsetLeft + first.offsetWidth / 2;
+      bar.style.left = `${start}px`;
+      bar.style.width = `${tab.offsetLeft + tab.offsetWidth / 2 - start}px`;
+      bar.style.transform = '';
       if (instant) requestAnimationFrame(() => { bar.style.transition = ''; });
     }
     const panel = panels.current[selected];
     if (panel && stage.current) stage.current.style.height = `${panel.offsetHeight}px`;
+    const hero = heroes.current[selected];
+    if (hero && heroStage.current) heroStage.current.style.height = `${hero.offsetHeight}px`;
   };
 
   useLayoutEffect(() => {
@@ -89,26 +96,35 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
     const initialRender = previous < 0;
     shown.current = selected;
     place(initialRender);
-    const next = panels.current[selected];
-    const old = previous >= 0 ? panels.current[previous] : null;
     running.current.forEach((animation) => animation.cancel());
     running.current = [];
-    panels.current.forEach((panel) => panel?.classList.remove('leaving', 'entering'));
+    const rows = [panels.current, heroes.current];
+    rows.forEach((row) => row.forEach((panel) => panel?.classList.remove('leaving', 'entering')));
+    const next = panels.current[selected];
+    const old = previous >= 0 ? panels.current[previous] : null;
     if (initialRender || !old || !next || old === next || typeof next.animate !== 'function' || reducedMotion()) return;
+    // как на сайте: цена с названием и карточка уезжают вместе, линейка планов стоит
     const direction = selected > previous ? 1 : -1;
     const distance = (stage.current?.clientWidth ?? 460) + 24;
-    old.classList.add('leaving');
-    next.classList.add('entering');
     const timing: KeyframeAnimationOptions = { ...SLIDE, fill: 'both' };
-    const animations = [
-      old.animate([{ transform: 'translate3d(0,0,0)' }, { transform: `translate3d(${-direction * distance}px,0,0)` }], timing),
-      next.animate([{ transform: `translate3d(${direction * distance}px,0,0)` }, { transform: 'translate3d(0,0,0)' }], timing),
-    ];
+    const animations: Animation[] = [];
+    const moved: HTMLElement[] = [];
+    for (const row of rows) {
+      const leaving = row[previous];
+      const entering = row[selected];
+      if (!leaving || !entering) continue;
+      leaving.classList.add('leaving');
+      entering.classList.add('entering');
+      moved.push(leaving, entering);
+      animations.push(
+        leaving.animate([{ transform: 'translate3d(0,0,0)' }, { transform: `translate3d(${-direction * distance}px,0,0)` }], timing),
+        entering.animate([{ transform: `translate3d(${direction * distance}px,0,0)` }, { transform: 'translate3d(0,0,0)' }], timing),
+      );
+    }
     running.current = animations;
     void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
       if (running.current !== animations) return;
-      old.classList.remove('leaving');
-      next.classList.remove('entering');
+      moved.forEach((node) => node.classList.remove('leaving', 'entering'));
       animations.forEach((animation) => animation.cancel());
       running.current = [];
     });
@@ -126,11 +142,19 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
 
   return (
     <div className="plans-view" data-testid="plans-view">
-      <div className="plans-head">
-        <h3>Откройте возможности Докки</h3>
-        <p>{currentName ? <>Ваш план: <PlanName id={currentId} name={currentName} /></> : 'Выберите подходящий план'}</p>
+      <div className="plan-hero-stage" ref={heroStage}>
+        {catalog.plans.map((plan, index) => (
+          <div
+            key={plan.id}
+            ref={(node) => { heroes.current[index] = node; }}
+            className={`plan-hero${index === selected ? ' active' : ''}`}
+            aria-hidden={index !== selected}
+          >
+            <PlanHero plan={plan} months={catalog.period_months} />
+          </div>
+        ))}
       </div>
-      <div className="plan-tabs" role="tablist" aria-label="Планы" ref={tabs}>
+      <div className="plan-tabs" role="tablist" aria-label="Планы" ref={tabs} style={{ '--plans': catalog.plans.length } as CSSProperties}>
         <span className="plan-tab-indicator" ref={indicator} aria-hidden="true" />
         {catalog.plans.map((item, index) => (
           <button key={item.id} type="button" role="tab" id={`${tabsId}-tab-${index}`} aria-controls={`${tabsId}-panel-${index}`} tabIndex={index === selected ? 0 : -1} aria-selected={index === selected} data-plan-tab={item.id} onClick={() => setSelected(index)} onKeyDown={(event) => {
@@ -140,7 +164,9 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
             setSelected(next);
             document.getElementById(`${tabsId}-tab-${next}`)?.focus();
           }}>
+            <i className="plan-dot" data-done={index < selected || undefined} aria-hidden="true"><Check /></i>
             <PlanName id={item.id} name={item.name} />
+            {item.usage_multiplier != null && <small>×{item.usage_multiplier}</small>}
           </button>
         ))}
       </div>
@@ -166,7 +192,7 @@ export function PlansView({ catalog, initial }: { catalog: Catalog; initial?: st
           );
         })}
       </div>
-      <p className="plan-foot">Возможности и лимиты зависят от выбранного плана.</p>
+      <p className="plan-foot">{currentName ? <>Ваш план: <PlanName id={currentId} name={currentName} />. </> : null}Возможности и лимиты зависят от выбранного плана.</p>
       <p className="plan-foot">Цены указаны с учётом комиссии сервиса Докки: отдельно она не начисляется.</p>
     </div>
   );

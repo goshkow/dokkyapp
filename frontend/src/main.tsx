@@ -29,6 +29,8 @@ import './styles/settings.css';
 import './styles/billing.css';
 import './styles/pages.css';
 import './styles/typography.css';
+import './styles/home.css';
+import './styles/plain.css';
 import './styles/glass.css';
 import './styles/surface.css';
 

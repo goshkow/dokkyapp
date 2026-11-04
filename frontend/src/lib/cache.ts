@@ -4,12 +4,15 @@
 const NAME = 'koddi-cache';
 const STORE = 'kv';
 const LIMIT = 80;
+const OPEN_LIMIT_MS = 1500;
 
 let opened: Promise<IDBDatabase | null> | null = null;
 let owner = '';
 
 function open(): Promise<IDBDatabase | null> {
   opened ??= new Promise((resolve) => {
+    // база иногда не отвечает вовсе: запуск без кэша лучше, чем заставка до упора
+    window.setTimeout(() => resolve(null), OPEN_LIMIT_MS);
     try {
       const request = indexedDB.open(NAME, 1);
       request.onupgradeneeded = () => request.result.createObjectStore(STORE);

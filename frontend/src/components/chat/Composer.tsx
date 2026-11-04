@@ -1,5 +1,7 @@
 import { ArrowDown, ChevronRight, Folder, ListTodo, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
+import { watchComposerBar } from '../../state/composerBar';
+import { useSurface } from '../../state/surface';
 import { useNativeTiles } from '../../lib/glass';
 import { PERMISSION_OPTIONS } from '../../lib/permissions';
 import { useFeedUi } from '../../state/feedUi';
@@ -47,6 +49,10 @@ export function Composer() {
   const slot = useRef<HTMLDivElement>(null);
   // со стеклом само поле живёт в отдельном виде над лентой, здесь остаётся пустая подложка того же размера
   const native = useNativeTiles();
+  const bar = useRef<HTMLElement>(null);
+  // страница сайта поверх занимает те же плитки своими пилюлями
+  const siteOver = useSurface((state) => state.status !== 'off' && (!development || state.remoteChat !== null));
+  const barGlass = native && !siteOver;
   const menu = useFieldHost((s) => s.menu);
   const expanded = useFieldHost((s) => s.expanded);
   const height = useFieldHost((s) => s.height);
@@ -80,8 +86,11 @@ export function Composer() {
   const models = !development && account ? cloudModels(scope) : [];
   const reasoningDisabled = running || busy || load !== 'ready' || (chatOpen && !hasSession);
 
+  const locked = development && access.locked;
+  useEffect(() => (barGlass && !locked && bar.current ? watchComposerBar(bar.current) : undefined), [barGlass, locked]);
+
   // у Free, пробного периода и Base Докки Code закрыт: вместо поля ввода приглашение, чат остаётся доступным для чтения
-  if (development && access.locked) return <LockedComposer />;
+  if (locked) return <LockedComposer />;
 
   return (
     <section id="composer" aria-label="Новое сообщение" className={`${expanded ? 'expanded' : ''}${dragging ? ' file-drop' : ''}${recording ? ' recording' : ''}${transcribing ? ' transcribing' : ''}`} inert={search} data-product-scope={scope}>
@@ -118,9 +127,9 @@ export function Composer() {
         aria-label="Выбрать файлы"
         onChange={(event) => { const picked = [...(event.target.files ?? [])]; event.target.value = ''; guarded(() => upload(picked, !development))(); }}
       />
-      <footer className="composer-toolbar">
+      <footer ref={bar} className="composer-toolbar">
         {development && (
-          <button id="workspace-selector" type="button" className="workspace-selector chat-control" title="Выбрать рабочую папку" aria-label="Выбрать рабочую папку" aria-haspopup="dialog" onClick={guarded(chooseWorkspace)}>
+          <button id="workspace-selector" type="button" className="workspace-selector chat-control" data-glass={barGlass ? 'pill' : undefined} title="Выбрать рабочую папку" aria-label="Выбрать рабочую папку" aria-haspopup="dialog" onClick={guarded(chooseWorkspace)}>
             <Folder size={15} aria-hidden="true" />
             <span>{project?.name || 'Выбрать проект'}</span>
             <ChevronRight size={12} aria-hidden="true" />
@@ -131,6 +140,7 @@ export function Composer() {
             <Select
               label="Разрешения действий"
               side="above"
+              glass={barGlass ? 'product' : undefined}
               value={settings.permission_profile === 'trusted' || settings.permission_profile === 'full' ? settings.permission_profile : 'ask'}
               disabled={planning}
               options={PERMISSION_OPTIONS}
@@ -141,6 +151,7 @@ export function Composer() {
             <Select
               label="Модель"
               side="above"
+              glass={barGlass ? 'product' : undefined}
               value={selectedCloudModel(scope, chatModel)}
               options={models.map((model) => ({ value: model.id, label: model.name.replaceAll('Dokky', 'Докки'), disabled: !model.available }))}
               onChange={(value) => guarded(() => changeChatModel(value))()}
@@ -150,6 +161,7 @@ export function Composer() {
             <Select
               label="Режим разработки"
               side="above"
+              glass={barGlass ? 'mode' : undefined}
               value={currentReasoningMode()}
               disabled={reasoningDisabled}
               options={[{ value: 'light', label: 'Light' }, { value: 'pro', label: 'Pro' }, { value: 'max', label: 'Max' }]}
