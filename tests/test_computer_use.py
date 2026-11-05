@@ -1,8 +1,10 @@
 import io
 import json
 import stat
+import subprocess
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -59,6 +61,8 @@ if command == "list-windows":
     out([{{"id": "w-7", "app_name": "Finder", "pid": 1, "title": "t"}}])
 if command == "snapshot":
     out({{"app": flag("app"), "snapshot_id": "snap1", "tree": {{}}}})
+if command == "type" and config.get("partial"):
+    out({{"details": {{"verification_reason": "postcondition_mismatch"}}, "disposition": {{"retry": "unsafe"}}}})
 if command == "screenshot":
     open(rest[-1], "wb").write(open(config["png"], "rb").read())
     out({{"path": rest[-1]}})
@@ -89,6 +93,14 @@ def computer(tmp_path, monkeypatch):
     binary = tmp_path / "agent-desktop"
     binary.write_text(FAKE.format(python=sys.executable))
     binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    if sys.platform == "win32":
+        def fake_popen(command, **kwargs):
+            return subprocess.Popen([sys.executable, str(binary), *command[1:]], **kwargs)
+
+        monkeypatch.setattr(service, "subprocess", SimpleNamespace(
+            Popen=fake_popen, PIPE=subprocess.PIPE, CREATE_NO_WINDOW=subprocess.CREATE_NO_WINDOW,
+        ))
+        monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
     log, config = tmp_path / "calls.jsonl", tmp_path / "config.json"
     monkeypatch.setenv("FAKE_LOG", str(log))
     monkeypatch.setenv("FAKE_CONFIG", str(config))
@@ -168,6 +180,8 @@ def test_default_enabled_and_actions_in_an_app_need_approval_even_when_trusted(c
         ({"command": "mouse-wheel", "x": 1, "y": -2, "options": {"dy": -3}}, ["--headed", "mouse-wheel", "--x=1", "--y=-2", "--dy=-3"]),
         ({"command": "drag", "ref": "@a:e1", "to_ref": "@a:e2"}, ["--headed", "drag", "--from=@a:e1", "--to=@a:e2"]),
         ({"command": "press", "combo": "cmd+c", "app": "Notes", "headed": True}, ["--headed", "press", "cmd+c", "--app=Notes"]),
+        ({"command": "get", "ref": "@a:e1", "value": "Value"}, ["get", "@a:e1", "--property=value"]),
+        ({"command": "is", "ref": "@a:e1", "value": " VISIBLE "}, ["is", "@a:e1", "--property=visible"]),
         ({"command": "move-window", "x": -10, "y": 5, "app": "Notes"}, ["move-window", "--app=Notes", "--x=-10", "--y=5"]),
         ({"command": "scroll", "ref": "@a:e1", "direction": "up", "amount": 5}, ["scroll", "@a:e1", "--direction=up", "--amount=5"]),
         ({"command": "launch", "app": "Notes", "options": {"arg": ["a b", "-x"], "activate": True}},
@@ -199,6 +213,8 @@ def test_arguments_become_whitelisted_flags(args, expected):
         {"command": "mouse-click", "x": 1, "y": True},
         {"command": "press", "combo": "cmd+c", "ref": "@a:e1"},
         {"command": "click", "ref": "@a:e1", "headed": "yes"},
+        {"command": "get", "ref": "@a:e1", "value": "unknown"},
+        {"command": "is", "ref": "@a:e1", "value": "text"},
         {"command": "list-apps", "options": {"x": 1}},
         {"command": "guide", "query": "other"},
         {"command": "snapshot", "app": "a\x00b"},
@@ -245,13 +261,27 @@ def test_text_goes_through_stdin_not_argv(computer):
         assert secret not in " ".join(call["argv"])
 
 
+def test_partial_text_is_not_reported_as_success_or_retried(computer):
+    runner = enable(computer)
+    computer["configure"](partial=True)
+    result = use(runner, command="type", ref="@a:e1", text="Привет, мир", headed=True)
+    assert result["ok"] is False and result["error_code"] == "ACTION_UNVERIFIED"
+    assert result["retry"] == "never" and "не повторяйте" in result["hint"]
+    assert sum("type" in item["argv"] for item in computer["calls"]()) == 1
+
+
 def test_state_home_is_private_and_foreign_variables_are_dropped(computer):
     runner = enable(computer)
     assert use(runner, command="list-apps")["ok"]
     call = computer["calls"]()[-1]
     home = computer["path"] / "data" / "agent-desktop"
+    if sys.platform == "win32":
+        home /= "windows-private"
     assert call["home"] == str(home.resolve()) and call["leak"] is None
-    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    if sys.platform == "win32":
+        assert not home.exists()
+    else:
+        assert stat.S_IMODE(home.stat().st_mode) == 0o700
 
 
 def test_chat_session_with_cursor_is_started_once_and_ended_on_revoke(computer):
@@ -335,7 +365,8 @@ def test_error_code_gets_actionable_hint(computer, code):
 def test_windows_elevation_error_points_to_restart(computer, monkeypatch):
     runner = enable(computer)
     computer["configure"](error={"code": "ACTION_FAILED", "message": "The target process runs at a higher integrity level than this process; UIPI blocks input"})
-    assert "администратора" not in str(use(runner, command="click", ref="@a:e1"))
+    if sys.platform != "win32":
+        assert "администратора" not in str(use(runner, command="click", ref="@a:e1"))
     monkeypatch.setattr(service.sys, "platform", "win32")
     monkeypatch.setattr(service.subprocess, "CREATE_NO_WINDOW", 0, raising=False)
     result = use(runner, command="click", ref="@a:e1")

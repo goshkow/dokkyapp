@@ -1,6 +1,6 @@
 """Меню значка в трее на Windows: своё окно без рамки вместо системного QMenu.
 
-Окно - всплывающее (Qt.Popup): без заголовка и кнопок окна, закрывается крестиком, кликом мимо, Esc
+Окно без активации: без заголовка и кнопок окна, закрывается крестиком, кликом мимо, Esc
 и когда курсор ушёл от меню и значка. Всё рисуется вручную: так подпись и знак стоят ровно по высоте
 (по высоте заглавных букв, а не по строке шрифта с её отступами), как в макете «Плитки».
 На macOS меню нативное (`macos_tray.py`) и этот модуль не используется.
@@ -9,10 +9,11 @@
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor, QCursor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap,
 )
@@ -26,6 +27,7 @@ PAD = 12
 # курсор дальше этого от меню и значка дольше LEAVE_MS - меню закрывается само
 LEAVE_GAP = 56
 LEAVE_MS = 450
+GAP = SHADOW + 8
 # свёрнутый список чатов: три строки, дальше строка «Ещё N» раскрывает остальные
 COLLAPSED = 3
 
@@ -98,13 +100,83 @@ def baseline_for(center_y: float, font: QFont) -> float:
     return center_y + QFontMetricsF(font).capHeight() / 2
 
 
+def panel_position(area: QRect, target: QRect, width: int, height: int, *, overflow: bool) -> QPoint:
+    """Сначала размещаем видимую карточку целиком рядом с целью, затем учитываем тень."""
+    def clamp(value: int, low: int, high: int) -> int:
+        return max(low, min(value, max(low, high)))
+
+    center = target.center()
+    x = clamp(center.x() - width // 2, area.left(), area.right() - width + 1)
+    y = clamp(center.y() - height // 2, area.top(), area.bottom() - height + 1)
+    left = QPoint(target.left() - GAP - width, y)
+    right = QPoint(target.right() + GAP + 1, y)
+    above = QPoint(x, target.top() - GAP - height)
+    below = QPoint(x, target.bottom() + GAP + 1)
+    vertical = [above, below] if center.y() >= area.center().y() else [below, above]
+    horizontal = [left, right] if center.x() >= area.center().x() else [right, left]
+    candidates = horizontal + vertical if overflow else vertical + horizontal
+    for point in candidates:
+        if area.contains(QRect(point.x(), point.y(), width, height)):
+            return point - QPoint(SHADOW, SHADOW)
+    point = candidates[0]
+    return QPoint(clamp(point.x(), area.left(), area.right() - width + 1) - SHADOW,
+                  clamp(point.y(), area.top(), area.bottom() - height + 1) - SHADOW)
+
+
+def overflow_rect(screen, point: QPoint) -> QRect | None:
+    """Границы открытого списка скрытых значков в координатах Qt, если курсор находится внутри."""
+    if sys.platform != "win32" or screen is None:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class MonitorInfo(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT), ("work", wintypes.RECT), ("flags", wintypes.DWORD)]
+
+    user = ctypes.windll.user32
+    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user.FindWindowW.restype = wintypes.HWND
+    user.IsWindowVisible.argtypes = [wintypes.HWND]
+    user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user.MonitorFromWindow.restype = wintypes.HANDLE
+    user.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+    for name in ("TopLevelWindowForOverflowXamlIsland", "NotifyIconOverflowWindow"):
+        window = user.FindWindowW(name, None)
+        if not window or not user.IsWindowVisible(window):
+            continue
+        rect, info = wintypes.RECT(), MonitorInfo()
+        info.size = ctypes.sizeof(info)
+        monitor = user.MonitorFromWindow(window, 2)
+        if not monitor or not user.GetWindowRect(window, ctypes.byref(rect)) or not user.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            continue
+        ratio, origin = screen.devicePixelRatio(), screen.geometry().topLeft()
+        bounds = QRect(origin.x() + round((rect.left - info.monitor.left) / ratio),
+                       origin.y() + round((rect.top - info.monitor.top) / ratio),
+                       round((rect.right - rect.left) / ratio), round((rect.bottom - rect.top) / ratio))
+        if bounds.contains(point):
+            return bounds
+    return None
+
+
+def key_down(key: int) -> bool:
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    return bool(ctypes.windll.user32.GetAsyncKeyState(key) & 0x8000)
+
+
 class TrayPanel(QWidget):
     """Плитки лимитов, статус чатов, «Открыть Докки» и ссылки; размеры считает `layout()`."""
 
     def __init__(self, owner) -> None:
-        super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        flags = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint
+                 | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
+        super().__init__(None, flags)
         self.owner = owner
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         self.setMouseTracking(True)
         self.setAccessibleName("Меню Докки")
@@ -114,12 +186,15 @@ class TrayPanel(QWidget):
         self.angle = 0.0
         self.mark = QPixmap(str(splash.mark_path()))
         self.anchor = QRect()
+        self.overflow = None
         self.away_ms = 0
+        self._escape_down = False
+        self._mouse_down = False
         self.spin = QTimer(self)
         self.spin.setInterval(33)
         self.spin.timeout.connect(self._tick)
         self.watch = QTimer(self)
-        self.watch.setInterval(150)
+        self.watch.setInterval(50)
         self.watch.timeout.connect(self._watch_cursor)
 
     # данные
@@ -152,26 +227,27 @@ class TrayPanel(QWidget):
         height += 38 + 8 + 30 + PAD
         return height
 
-    def popup_at(self, anchor: QRect) -> None:
+    def popup_at(self, anchor: QRect, *, preserve_target: bool = False) -> None:
         """Над значком в трее (или над курсором), не вылезая за рабочую область экрана."""
         self.anchor = anchor
-        size_w, size_h = WIDTH + 2 * SHADOW, math.ceil(self.content_height()) + 2 * SHADOW
-        self.resize(size_w, size_h)
-        point = anchor.center() if anchor.isValid() and not anchor.isEmpty() else QCursor.pos()
-        screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
-        area = screen.availableGeometry()
-        x = point.x() - size_w + SHADOW + 24
-        # панель задач снизу - меню над ней, сверху - под ней
-        y = area.bottom() - size_h + SHADOW - 4 if point.y() > area.center().y() else area.top() - SHADOW + 4
-        x = max(area.left() - SHADOW + 6, min(x, area.right() - size_w + SHADOW - 6))
-        self.move(x, y)
-        self.hot = None
-        self.away_ms = 0
         if not self.isVisible():
             self.expanded = False
+        size_w, size_h = WIDTH + 2 * SHADOW, math.ceil(self.content_height()) + 2 * SHADOW
+        self.resize(size_w, size_h)
+        cursor = QCursor.pos()
+        point = anchor.center() if anchor.isValid() and not anchor.isEmpty() else cursor
+        screen_point = self.overflow.center() if preserve_target and self.overflow else cursor
+        screen = QGuiApplication.screenAt(screen_point) or QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry()
+        self.overflow = self.overflow if preserve_target else overflow_rect(screen, cursor)
+        target = self.overflow or (anchor if anchor.isValid() and not anchor.isEmpty() else QRect(point, point))
+        self.move(panel_position(area, target, WIDTH, size_h - 2 * SHADOW, overflow=bool(self.overflow)))
+        self.hot = None
+        self.away_ms = 0
+        self._escape_down = key_down(0x1B)
+        self._mouse_down = key_down(0x01) or key_down(0x02)
         self.show()
         self.raise_()
-        self.activateWindow()
         self.watch.start()
         self._sync_spin()
 
@@ -188,7 +264,7 @@ class TrayPanel(QWidget):
 
     def refresh(self) -> None:
         if self.isVisible():
-            self.popup_at(self.anchor)
+            self.popup_at(self.anchor, preserve_target=True)
 
     def _tick(self) -> None:
         self.angle = (self.angle + 12) % 360
@@ -196,9 +272,19 @@ class TrayPanel(QWidget):
 
     def _watch_cursor(self) -> None:
         cursor = QCursor.pos()
+        escape = key_down(0x1B)
+        mouse = key_down(0x01) or key_down(0x02)
+        if (escape and not self._escape_down) or (mouse and not self._mouse_down
+                                                   and not self.frameGeometry().contains(cursor)
+                                                   and not self.anchor.contains(cursor)):
+            self.hide()
+            return
+        self._escape_down, self._mouse_down = escape, mouse
         zone = self.frameGeometry().adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
         if self.anchor.isValid():
             zone = zone.united(self.anchor)
+        if self.overflow:
+            zone = zone.united(self.overflow)
         dx = max(zone.left() - cursor.x(), 0, cursor.x() - zone.right())
         dy = max(zone.top() - cursor.y(), 0, cursor.y() - zone.bottom())
         if math.hypot(dx, dy) > LEAVE_GAP:
@@ -248,7 +334,7 @@ class TrayPanel(QWidget):
     def activate(self, target: str) -> None:
         if target == "more":
             self.expanded = True
-            self.popup_at(self.anchor)
+            self.popup_at(self.anchor, preserve_target=True)
             return
         self.hide()
         actions = self.owner.actions

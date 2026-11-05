@@ -316,14 +316,14 @@ def test_checkpoint_restores_only_agent_changes_and_keeps_user_work(env):
     assert view["conflicts"] == ["calc.py"] and {item["action"] for item in view["files"]} == {"restore", "delete"}
     refused = restore(env.turn_id, OWNER)
     assert not refused["restored"] and refused["conflicts"] == ["calc.py"]
-    assert (root / "notes.py").read_text() == "VALUE = 3  # правка пользователя до хода\n"  # ничего не тронуто
+    assert (root / "notes.py").read_text(encoding="utf-8") == "VALUE = 3  # правка пользователя до хода\n"  # ничего не тронуто
     done = restore(env.turn_id, OWNER, ["notes.py", "extra.py"])
     assert done["restored"] and set(done["paths"]) == {"notes.py", "extra.py"}
-    assert (root / "notes.py").read_text() == "VALUE = 2  # правка пользователя до хода\n"
-    assert not (root / "extra.py").exists() and (root / "scratch.txt").read_text() == "черновик пользователя\n"
-    assert "пользователь поправил" in (root / "calc.py").read_text()
+    assert (root / "notes.py").read_text(encoding="utf-8") == "VALUE = 2  # правка пользователя до хода\n"
+    assert not (root / "extra.py").exists() and (root / "scratch.txt").read_text(encoding="utf-8") == "черновик пользователя\n"
+    assert "пользователь поправил" in (root / "calc.py").read_text(encoding="utf-8")
     undone = rollback_change_set(done["change_set_id"])
-    assert undone["rolled_back"] and (root / "notes.py").read_text().startswith("VALUE = 3") and (root / "extra.py").exists()
+    assert undone["rolled_back"] and (root / "notes.py").read_text(encoding="utf-8").startswith("VALUE = 3") and (root / "extra.py").exists()
     with pytest.raises(LookupError):
         preview(env.turn_id, "someone-else")
 

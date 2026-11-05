@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import plistlib
 from pathlib import Path
 
@@ -51,6 +52,8 @@ def test_clean_up_unregisters_stale_copies_and_registers_itself(tmp_path, monkey
 
 
 def test_copy_from_disk_image_changes_nothing(monkeypatch, mac):
+    if os.name == "nt":
+        pytest.skip("пути /Volumes проверяются на macOS")
     monkeypatch.setattr(copies, "own_bundle", lambda: Path("/Volumes/Докки/Докки.app"))
     monkeypatch.setattr(copies, "registered_copies", lambda: pytest.fail("образ не должен чистить регистрацию"))
     assert copies.clean_up() == []

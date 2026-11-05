@@ -94,18 +94,18 @@ def test_outline_and_symbol_search_are_semantic(project):
 def test_rename_needs_decision_on_unknown_receivers_then_renames_family(project):
     pending = run(project, "refactor.rename", {"old": "pkg/models.py:Cart.total", "new": "grand_total"})
     assert not pending["ok"] and pending["error_code"] == "needs_review"
-    assert "grand_total" not in (project / "pkg/models.py").read_text()
+    assert "grand_total" not in (project / "pkg/models.py").read_text(encoding="utf-8")
 
     preview = run(project, "refactor.rename", {"old": "pkg/models.py:Cart.total", "new": "grand_total",
                                                "include_candidates": False, "preview": True})
     assert preview["ok"] and "+    def grand_total(self):" in preview["diff"]
-    assert "grand_total" not in (project / "pkg/models.py").read_text()
+    assert "grand_total" not in (project / "pkg/models.py").read_text(encoding="utf-8")
 
     done = run(project, "refactor.rename", {"old": "pkg/models.py:Cart.total", "new": "grand_total",
                                             "include_candidates": False})
     assert done["ok"] and done["accuracy"] == "verified" and done["change_set_id"]
-    models = (project / "pkg/models.py").read_text()
-    app = (project / "app.py").read_text()
+    models = (project / "pkg/models.py").read_text(encoding="utf-8")
+    app = (project / "app.py").read_text(encoding="utf-8")
     # переопределение в наследнике и super() переименованы, метод другого класса - нет
     assert models.count("def grand_total") == 2 and "super().grand_total()" in models
     assert "class Order:\n    def total(self)" in models
@@ -116,12 +116,12 @@ def test_rename_needs_decision_on_unknown_receivers_then_renames_family(project)
 def test_rename_class_updates_imports_and_all(project):
     result = run(project, "refactor.rename", {"old": "Cart", "new": "Basket", "glob": "**/*"})
     assert result["ok"], result
-    assert "from .models import Basket, Order" in (project / "pkg/__init__.py").read_text()
-    assert "__all__ = ['Basket', 'Order']" in (project / "pkg/__init__.py").read_text()
-    assert "def checkout(cart: Basket, order: Order)" in (project / "app.py").read_text()
-    assert "class BigCart(Basket)" in (project / "pkg/models.py").read_text()
+    assert "from .models import Basket, Order" in (project / "pkg/__init__.py").read_text(encoding="utf-8")
+    assert "__all__ = ['Basket', 'Order']" in (project / "pkg/__init__.py").read_text(encoding="utf-8")
+    assert "def checkout(cart: Basket, order: Order)" in (project / "app.py").read_text(encoding="utf-8")
+    assert "class BigCart(Basket)" in (project / "pkg/models.py").read_text(encoding="utf-8")
     rollback = ToolRunner(project).rollback_changes(result["change_set_id"])
-    assert rollback.get("ok") and "class Cart:" in (project / "pkg/models.py").read_text()
+    assert rollback.get("ok") and "class Cart:" in (project / "pkg/models.py").read_text(encoding="utf-8")
 
 
 def test_rename_refuses_text_and_capture(project):
@@ -130,7 +130,7 @@ def test_rename_refuses_text_and_capture(project):
     write(project, {"pkg/extra.py": "def helper():\n    value = 1\n    other = 2\n    return value + other\n"})
     capture = run(project, "refactor.rename", {"old": "pkg/extra.py:2:5", "new": "other"})
     assert not capture["ok"]
-    assert (project / "pkg/extra.py").read_text().startswith("def helper():\n    value = 1")
+    assert (project / "pkg/extra.py").read_text(encoding="utf-8").startswith("def helper():\n    value = 1")
 
 
 def test_extract_function_computes_inputs_and_outputs(project):
@@ -144,7 +144,7 @@ def test_extract_function_computes_inputs_and_outputs(project):
     )})
     result = run(project, "refactor.extract", {"path": "calc.py", "selection": "2-4", "name": "sum_items"})
     assert result["ok"], result
-    text = (project / "calc.py").read_text()
+    text = (project / "calc.py").read_text(encoding="utf-8")
     assert "def sum_items(items, factor):" in text and "total = sum_items(items, factor)" in text
     namespace: dict = {}
     exec(compile(text, "calc.py", "exec"), namespace)
@@ -160,14 +160,14 @@ def test_extract_refuses_return_inside_selection(project):
 def test_symbol_edit_reindents_checks_syntax_and_deletes(project):
     result = run(project, "code.symbol_edit", {"symbol": "Order.total", "new_text": "def total(self):\n    return 20\n"})
     assert result["ok"], result
-    assert "class Order:\n    def total(self):\n        return 20\n" in (project / "pkg/models.py").read_text()
+    assert "class Order:\n    def total(self):\n        return 20\n" in (project / "pkg/models.py").read_text(encoding="utf-8")
     broken = run(project, "code.symbol_edit", {"symbol": "Order.total", "new_text": "def total(self:\n"})
     assert not broken["ok"] and "does not parse" in broken["error"]
     stale = run(project, "code.symbol_edit", {"symbol": "Order.total", "new_text": "def total(self): pass",
                                               "expected_text": "def total(self):\n    return 2"})
     assert not stale["ok"] and "expected_text" in stale["error"]
     removed = run(project, "code.symbol_edit", {"symbol": "loose", "new_text": ""})
-    assert removed["ok"] and "def loose" not in (project / "app.py").read_text()
+    assert removed["ok"] and "def loose" not in (project / "app.py").read_text(encoding="utf-8")
 
 
 def test_crlf_and_bom_are_preserved(project):
@@ -202,7 +202,7 @@ def test_typescript_without_language_service_is_marked_approximate(project):
         ("web/util.ts", 1), ("web/main.ts", 1), ("web/main.ts", 2)}
     rename = run(project, "refactor.rename", {"old": "price", "new": "cost"})
     assert not rename["ok"] and "unavailable" in rename["error"]
-    assert "price" in (project / "web/util.ts").read_text()
+    assert "price" in (project / "web/util.ts").read_text(encoding="utf-8")
 
 
 def test_typescript_7_native_reports_missing_api(project):
@@ -251,7 +251,7 @@ def test_typescript_references_rename_and_type_rollback(ts_project):
         ("web/util.ts", 1), ("web/main.ts", 1), ("web/main.ts", 3)}
     done = run(ts_project, "refactor.rename", {"old": "web/util.ts:1:17", "new": "cost"})
     assert done["ok"], done
-    main = (ts_project / "web/main.ts").read_text()
+    main = (ts_project / "web/main.ts").read_text(encoding="utf-8")
     assert "import { cost, Shop }" in main and "cost(1), new Shop().price, 'price'" in main and "// price" in main
     # правка тела с ошибкой типов показывается, а не откатывается
     edited = run(ts_project, "code.symbol_edit", {"symbol": "web/util.ts:cost",
@@ -262,7 +262,7 @@ def test_typescript_references_rename_and_type_rollback(ts_project):
 def test_typescript_extract_uses_requested_name(ts_project):
     result = run(ts_project, "refactor.extract", {"path": "web/util.ts", "selection": "2-2", "name": "twice"})
     assert result["ok"], result
-    text = (ts_project / "web/util.ts").read_text()
+    text = (ts_project / "web/util.ts").read_text(encoding="utf-8")
     assert "function twice(" in text and "newFunction" not in text
 
 

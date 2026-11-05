@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -117,7 +118,8 @@ def test_project_hook_blocks_tool_only_after_trust(project):
     project_id, root = project
     from koddi.plugins import hooks
 
-    command = f'"{sys.executable}" -c "import sys; sys.stderr.write(\'не трогай git\'); sys.exit(2)"'
+    prefix = "& " if os.name == "nt" else ""
+    command = f'{prefix}"{sys.executable}" -X utf8 -c "import sys; sys.stderr.write(\'не трогай git\'); sys.exit(2)"'
     write(root, ".claude/settings.json", json.dumps({"hooks": {"PreToolUse": [
         {"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}))
     assert hooks.pre_tool(project_id, root, None, "shell.run", {"command": "git push"}) is None
@@ -133,7 +135,8 @@ def test_project_session_start_runs_once_per_chat(project):
     from koddi.plugins import hooks
 
     counter = root / "count.txt"
-    command = (f'"{sys.executable}" -c "import pathlib; p=pathlib.Path(r\'{counter}\'); '
+    prefix = "& " if os.name == "nt" else ""
+    command = (f'{prefix}"{sys.executable}" -X utf8 -c "import pathlib; p=pathlib.Path(r\'{counter}\'); '
                "p.write_text(str(int(p.read_text() if p.exists() else 0)+1)); print('правила проекта')\"")
     write(root, ".claude/settings.json", json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": command}]}]}}))
     trust(project_id, root, ".claude/settings.json")

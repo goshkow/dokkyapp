@@ -89,6 +89,8 @@ def main() -> None:
     parser.add_argument("setup", type=Path)
     args = parser.parse_args()
     setup = args.setup.resolve()
+    if registry() is not None or registry(winreg.HKEY_LOCAL_MACHINE) is not None or LINK.exists() or COMMON_LINK.exists():
+        raise SystemExit("Тестовая установка уже существует")
     # resolve раскрывает короткие имена вроде RUNNER~1: в реестр установщик пишет полный путь
     work = Path(tempfile.gettempdir()).resolve() / f"dokky-installer-smoke-{uuid.uuid4().hex[:8]}"
     target = work / "Докки с пробелом"
@@ -146,7 +148,9 @@ def main() -> None:
                 winreg.DeleteKey(root, KEY)
         LINK.unlink(missing_ok=True)
         COMMON_LINK.unlink(missing_ok=True)
-        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", str(work)], capture_output=True)
+        cleanup = work.resolve()
+        assert cleanup.parent == Path(tempfile.gettempdir()).resolve() and cleanup.name.startswith("dokky-installer-smoke-")
+        shutil.rmtree(cleanup, ignore_errors=True)
 
 
 def machine_scope(setup: Path, log: Path) -> None:
@@ -164,7 +168,9 @@ def machine_scope(setup: Path, log: Path) -> None:
         assert not COMMON_LINK.exists(), "общий ярлык остался"
         print("установщик: Program Files для всех пользователей прошёл")
     finally:
-        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", str(target)], capture_output=True)
+        cleanup = target.resolve()
+        assert cleanup.parent == Path(os.environ["ProgramFiles"]).resolve() and cleanup.name.startswith("DokkySmoke-")
+        shutil.rmtree(cleanup, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,10 @@ SETTINGS_LINKS = {
 
 # команды без побочных действий над чужими приложениями
 READ_COMMANDS = frozenset({"status", "list-apps", "list-windows", "list-displays", "guide"})
+PROPERTIES = {
+    "get": frozenset({"text", "value", "title", "bounds", "role", "states"}),
+    "is": frozenset({"visible", "enabled", "checked", "focused", "expanded", "selected"}),
+}
 
 REF_RE = re.compile(r"^@([A-Za-z0-9_-]{1,64}):e\d{1,9}$")
 WINDOW_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
@@ -398,7 +402,12 @@ def build_invocation(args: dict) -> Invocation:
                 argv.append(_positional(_checked_field(name, args[name]), name))
     for name, flag in spec.flags.items():
         if name in args and name not in spec.pos:
-            argv.append(f"--{flag}={_checked_field(name, args[name])}")
+            value = _checked_field(name, args[name])
+            if name == "value" and command in PROPERTIES:
+                value = value.strip().casefold()
+                if value not in PROPERTIES[command]:
+                    raise ValueError(f"value: допустимо {', '.join(sorted(PROPERTIES[command]))}")
+            argv.append(f"--{flag}={value}")
     if command in {"mouse-click", "mouse-move", "hover"} and ("x" in args or "y" in args):
         if "x" not in args or "y" not in args:
             raise ValueError("Нужны обе координаты x и y")
@@ -442,9 +451,11 @@ def binary_path() -> Path:
 
 def state_home() -> Path:
     home = (data_dir() / "agent-desktop").resolve()
+    if sys.platform == "win32":
+        # отдельная папка помогает и после прежней попытки с наследованным DACL
+        return home / "windows-private"
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if sys.platform != "win32":
-        os.chmod(home, 0o700)
+    os.chmod(home, 0o700)
     return home
 
 
@@ -821,6 +832,18 @@ class ComputerSession:
                 result["retry"] = disposition["retry"]
             return result
         data = reply.get("data")
+        if command in {"type", "set-value"} and isinstance(data, dict):
+            details = data.get("details")
+            if isinstance(details, dict) and details.get("verification_reason") == "postcondition_mismatch":
+                return {
+                    "ok": False,
+                    "command": command,
+                    "error_code": "ACTION_UNVERIFIED",
+                    "error": "Текст мог быть введён не полностью.",
+                    "hint": "Прочитайте текущее значение поля и исправьте только недостающую часть; не повторяйте ввод целиком.",
+                    "retry": "never",
+                    "data": data,
+                }
         result = {"ok": True, "command": command, "data": data}
         if isinstance(data, (dict, list)):
             self._learn(command, data, args, chat_id)

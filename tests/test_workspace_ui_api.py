@@ -102,7 +102,6 @@ def test_open_in_editor_only_opens_project_files(tmp_path, monkeypatch):
     (root / "src" / "main.py").write_text("x = 1\n", encoding="utf-8")
     (root / "Tool.app").mkdir()
     (tmp_path / "secret.txt").write_text("s", encoding="utf-8")
-    (root / "link.txt").symlink_to(tmp_path / "secret.txt")
     opened = []
     monkeypatch.setattr(api_app, "open_file", lambda path, line=None: opened.append((path, line)) or {"ok": True})
     client = TestClient(create_app())
@@ -110,13 +109,34 @@ def test_open_in_editor_only_opens_project_files(tmp_path, monkeypatch):
     url = f"/api/projects/{project['id']}/open-in-editor"
     assert client.post(url, json={"path": "src/main.py", "line": 3}).json() == {"ok": True}
     assert opened == [(str((root / "src" / "main.py").resolve()), 3)]
-    for bad in ({"path": "../secret.txt"}, {"path": "link.txt"}, {"path": "Tool.app"}, {"path": str(tmp_path / "secret.txt")}):
+    for bad in ({"path": "../secret.txt"}, {"path": "Tool.app"}, {"path": str(tmp_path / "secret.txt")}):
         assert client.post(url, json=bad).status_code == 404
     for bad in ({}, {"path": ""}, {"path": "src/main.py\0"}, {"path": "src/main.py", "line": 0}, {"path": "src/main.py", "line": True}):
         assert client.post(url, json=bad).status_code == 422
     assert len(opened) == 1
     monkeypatch.setattr(api_app, "open_file", lambda path, line=None: {"ok": False, "errors": ["нет"]})
     assert client.post(url, json={"path": "src/main.py"}).status_code == 409
+
+
+def test_editor_rejects_symlink_outside_project(tmp_path, monkeypatch):
+    import importlib
+    import pytest
+
+    api_app = importlib.import_module("koddi.api.app")
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("s", encoding="utf-8")
+    try:
+        (root / "link.txt").symlink_to(outside)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows не разрешает создавать символьные ссылки")
+        raise
+    monkeypatch.setattr(api_app, "open_file", lambda *_args, **_kwargs: pytest.fail("внешний файл открыт"))
+    client = TestClient(create_app())
+    project = client.post("/api/projects", json={"path": str(root)}).json()
+    assert client.post(f"/api/projects/{project['id']}/open-in-editor", json={"path": "link.txt"}).status_code == 404
 
 
 def test_editor_fallback_never_launches_the_file(monkeypatch, tmp_path):

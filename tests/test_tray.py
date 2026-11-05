@@ -6,7 +6,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QPoint, QRect, QUrl
+from PySide6.QtCore import QPoint, QRect, QSize, QUrl
 from PySide6.QtWidgets import QApplication
 
 from koddi.desktop import tray, tray_panel, web_host
@@ -124,10 +124,14 @@ def test_windows_panel_opens_on_right_click_and_runs_commands(app, monkeypatch):
         icon._activated(tray.QSystemTrayIcon.ActivationReason.Context)
         assert icon.panel.isVisible()
         pixmap = tray_panel.grab(icon.panel)
-        assert not pixmap.isNull() and pixmap.width() == tray_panel.WIDTH + 2 * tray_panel.SHADOW
-        # окно без рамки и кнопок окна: всплывающее, закрывается кликом мимо
+        assert not pixmap.isNull()
+        assert pixmap.width() / pixmap.devicePixelRatio() == tray_panel.WIDTH + 2 * tray_panel.SHADOW
+        # окно не забирает фокус у списка значков Windows
         flags = icon.panel.windowFlags()
-        assert flags & tray.Qt.WindowType.Popup and flags & tray.Qt.WindowType.FramelessWindowHint
+        assert flags & tray.Qt.WindowType.WindowType_Mask == tray.Qt.WindowType.Tool
+        assert flags & tray.Qt.WindowType.FramelessWindowHint
+        assert flags & tray.Qt.WindowType.WindowDoesNotAcceptFocus
+        assert icon.panel.testAttribute(tray.Qt.WidgetAttribute.WA_ShowWithoutActivating)
         # четыре чата помещаются целиком, без строки «Ещё»
         assert {"close", "open", "usage", "quit", "chat:5", "chat:3", "chat:8", "chat:9"} <= set(icon.panel.targets)
         assert "more" not in icon.panel.targets
@@ -143,6 +147,7 @@ def test_windows_panel_opens_on_right_click_and_runs_commands(app, monkeypatch):
 
 
 def test_panel_closes_when_cursor_goes_away(app, monkeypatch):
+    monkeypatch.setattr(tray_panel, "key_down", lambda _: False)
     calls = []
     icon = tray.QtTray(actions(calls))
     try:
@@ -150,7 +155,7 @@ def test_panel_closes_when_cursor_goes_away(app, monkeypatch):
         icon.panel.popup_at(QRect(500, 500, 20, 20))
         far = icon.panel.frameGeometry().topLeft() - QPoint(400, 400)
         monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: far))
-        for _ in range(4):
+        for _ in range(tray_panel.LEAVE_MS // icon.panel.watch.interval() + 1):
             icon.panel._watch_cursor()
         assert not icon.panel.isVisible()
         # рядом с меню - остаётся открытым
@@ -160,6 +165,59 @@ def test_panel_closes_when_cursor_goes_away(app, monkeypatch):
         for _ in range(10):
             icon.panel._watch_cursor()
         assert icon.panel.isVisible()
+    finally:
+        icon.remove()
+
+
+@pytest.mark.parametrize(("area", "target", "overflow"), [
+    (QRect(0, 0, 1920, 1040), QRect(1640, 800, 230, 180), True),
+    (QRect(0, 0, 1920, 1040), QRect(20, 800, 230, 180), True),
+    (QRect(-1080, -312, 1080, 1880), QRect(-1080, 1200, 220, 170), True),
+    (QRect(0, 40, 1920, 1040), QRect(1800, 0, 25, 25), False),
+    (QRect(0, 0, 1920, 1040), QRect(1800, 1050, 25, 25), False),
+])
+def test_panel_position_avoids_target_and_stays_on_screen(area, target, overflow):
+    width, height = tray_panel.WIDTH, 360
+    pos = tray_panel.panel_position(area, target, width, height, overflow=overflow)
+    card = QRect(pos + QPoint(tray_panel.SHADOW, tray_panel.SHADOW), QSize(width, height))
+    assert area.contains(card)
+    assert not card.intersects(target)
+
+
+def test_overflow_remains_target_when_panel_refreshes(app, monkeypatch):
+    monkeypatch.setattr(tray_panel, "key_down", lambda _: False)
+    screen = app.primaryScreen().availableGeometry()
+    overflow = QRect(screen.right() - 250, screen.bottom() - 200, 200, 150)
+    monkeypatch.setattr(tray_panel, "overflow_rect", lambda *_: overflow)
+    icon = tray.QtTray(actions([]))
+    try:
+        icon.panel.popup_at(overflow)
+        initial = icon.panel.pos()
+        monkeypatch.setattr(tray_panel, "overflow_rect", lambda *_: None)
+        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: icon.panel.frameGeometry().center()))
+        icon.panel.refresh()
+        assert icon.panel.pos() == initial
+        assert icon.panel.overflow == overflow
+        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: overflow.center()))
+        for _ in range(tray_panel.LEAVE_MS // icon.panel.watch.interval() + 1):
+            icon.panel._watch_cursor()
+        assert icon.panel.isVisible()
+    finally:
+        icon.remove()
+
+
+@pytest.mark.parametrize("key", [0x1B, 0x01, 0x02])
+def test_panel_closes_on_escape_or_outside_click(app, monkeypatch, key):
+    pressed = set()
+    monkeypatch.setattr(tray_panel, "key_down", lambda value: value in pressed)
+    icon = tray.QtTray(actions([]))
+    try:
+        icon.panel.popup_at(QRect(500, 500, 20, 20))
+        far = icon.panel.frameGeometry().topLeft() - QPoint(400, 400)
+        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: far))
+        pressed.add(key)
+        icon.panel._watch_cursor()
+        assert not icon.panel.isVisible()
     finally:
         icon.remove()
 

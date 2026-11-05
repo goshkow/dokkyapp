@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 import time
@@ -25,7 +26,8 @@ def isolated_storage(tmp_path, monkeypatch):
 
 
 def python_command(code: str) -> str:
-    return f'"{sys.executable}" -c "{code}"'
+    prefix = "& " if os.name == "nt" else ""
+    return f'{prefix}"{sys.executable}" -X utf8 -c "{code}"'
 
 
 def test_command_output_reaches_listener_before_the_command_ends(tmp_path: Path):

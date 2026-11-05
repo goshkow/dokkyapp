@@ -52,7 +52,8 @@ def check_default_ui(exe, output, workspace):
     """Основной интерфейс поставки (React): страница загрузилась, кнопки окна на месте, ошибок нет, выход штатный."""
     port, debug_port = free_port(), free_port()
     env = isolated_env(output, "profile-next", port, debug_port)
-    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QT_QPA_PLATFORM"] = "windows" if os.name == "nt" else "offscreen"
+    env["KODDI_WEBENGINE_GPU"] = "0"
     env["KODDI_UI"] = "legacy"
     with (output / "next-stdout.log").open("wb") as stdout, (output / "next-stderr.log").open("wb") as stderr:
         process = subprocess.Popen(
@@ -68,11 +69,11 @@ def check_default_ui(exe, output, workspace):
                 page = browser.contexts[0].pages[0]
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                deadline = time.monotonic() + 30
-                ready = "() => !document.body.classList.contains('booting') && document.documentElement.dataset.windowControls === 'ready' && document.querySelector('#root')?.childElementCount > 0"
+                deadline = time.monotonic() + 60
+                ready = "() => !document.body.classList.contains('booting') && document.documentElement.dataset.windowControls === 'ready' && !!document.querySelector('#shell #composer')"
                 while not page.evaluate(ready):
                     if time.monotonic() > deadline:
-                        raise RuntimeError("React-интерфейс не загрузился")
+                        raise RuntimeError("React-интерфейс не загрузился: " + str(page.evaluate("({url: location.href, body: document.body?.className, controls: document.documentElement.dataset.windowControls, shell: !!document.querySelector('#shell'), composer: !!document.querySelector('#composer'), text: document.body?.innerText?.slice(0, 300)})")) + "; errors: " + str(errors))
                     page.wait_for_timeout(100)
                 assert page.title() == "Докки"
                 assert page.locator(".desktop-window-controls button").count() == 3
@@ -100,6 +101,8 @@ def check_default_ui(exe, output, workspace):
                 assert request(base + "/file?path=../outside.txt")["status"] == 422
                 page.screenshot(path=str(output / "next-home.png"))
                 assert not errors, errors
+                settings = request("/api/settings", "PUT", {"close_to_tray": False})
+                assert settings["status"] == 200, settings
                 page.locator('[data-window-action="close"]').click()
                 process.wait(timeout=20)
                 assert process.returncode == 0, "Нештатное завершение приложения"

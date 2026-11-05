@@ -110,6 +110,7 @@ def test_background_window_notifies_and_click_opens_that_chat(app, monkeypatch):
 
 
 def test_dock_bounces_only_for_questions_on_mac(app, monkeypatch):
+    pytest.importorskip("objc", reason="уведомления Dock требуют macOS")
     from koddi.desktop import macos_notices
 
     alerts = []

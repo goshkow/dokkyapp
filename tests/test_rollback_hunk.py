@@ -36,7 +36,7 @@ def change(tmp_path, monkeypatch):
     storage.init_db()
     root = tmp_path / "proj"
     root.mkdir()
-    (root / "a.txt").write_text(AFTER, encoding="utf-8")
+    (root / "a.txt").write_text(AFTER, encoding="utf-8", newline="\n")
     project = add_project(str(root))
     change_id = create_change_set(project_id=project["id"], turn_id=None, workspace=root, relative_path="a.txt",
                                   before=BEFORE, after=AFTER, description="правка")
@@ -59,7 +59,7 @@ def test_hunks_roll_back_one_by_one_and_can_be_undone(change):
 
 def test_shifted_hunk_is_found_by_content(change):
     change_id, path = change
-    path.write_text("новая шапка\n\n" + AFTER, encoding="utf-8")
+    path.write_text("новая шапка\n\n" + AFTER, encoding="utf-8", newline="\n")
     assert rollback_hunk(change_id, "a.txt", headers(BEFORE, AFTER)[1])["rolled_back"]
     assert path.read_text(encoding="utf-8").startswith("новая шапка\n\n") and "строка 25\n" in path.read_text(encoding="utf-8")
 
@@ -71,7 +71,7 @@ def test_shifted_hunk_is_found_by_content(change):
 def test_changed_place_is_a_clear_refusal_and_file_is_untouched(change, damage, reason):
     change_id, path = change
     changed = damage(AFTER)
-    path.write_text(changed, encoding="utf-8")
+    path.write_text(changed, encoding="utf-8", newline="\n")
     result = rollback_hunk(change_id, "a.txt", headers(BEFORE, AFTER)[1])
     assert not result["rolled_back"] and result["reason"] == reason and "не тронут" in result["error"]
     assert path.read_text(encoding="utf-8") == changed
@@ -89,7 +89,7 @@ def test_second_rollback_of_same_hunk_says_already_done(change):
 def test_ambiguous_place_is_refused(tmp_path, change):
     change_id, path = change
     block = "".join(f"строка {number}\n" for number in range(22, 29)).replace("строка 25\n", "строка двадцать пять\n")
-    path.write_text("повтор\n" + block + "между\n" + AFTER.replace("строка 1\n", ""), encoding="utf-8")
+    path.write_text("повтор\n" + block + "между\n" + AFTER.replace("строка 1\n", ""), encoding="utf-8", newline="\n")
     result = rollback_hunk(change_id, "a.txt", headers(BEFORE, AFTER)[1])
     assert not result["rolled_back"] and "нескольких местах" in result["error"]
 
@@ -101,7 +101,7 @@ def test_same_text_far_from_its_place_is_refused(change):
     tail = AFTER[len(head):]
     damaged = "другое начало\n" + "".join(f"другая {number}\n" for number in range(5)) + tail + head
     # длина файла почти та же: сдвиг объяснить нечем
-    path.write_text(damaged, encoding="utf-8")
+    path.write_text(damaged, encoding="utf-8", newline="\n")
     result = rollback_hunk(change_id, "a.txt", headers(BEFORE, AFTER)[0])
     assert not result["rolled_back"] and "не тронут" in result["error"] and path.read_text(encoding="utf-8") == damaged
 

@@ -34,7 +34,7 @@ def write(root: Path, relative: str, text: str) -> Path:
 
 
 def git(root: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
 
 def git_repo(root: Path) -> Path:
@@ -256,7 +256,12 @@ def test_overlay_removal_unlinks_links_without_entering_them(tmp_path):
     (outside / "pkg" / "index.js").write_text("x")
     overlay = tmp_path / "overlay"
     overlay.mkdir()
-    (overlay / "node_modules").symlink_to(outside, target_is_directory=True)
+    try:
+        (overlay / "node_modules").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows не разрешает создавать символьные ссылки")
+        raise
     mutation._remove(overlay)
     assert not overlay.exists() and (outside / "pkg" / "index.js").is_file()
 
