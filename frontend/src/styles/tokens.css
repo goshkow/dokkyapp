@@ -67,7 +67,7 @@
 }
 :root[data-surface="chat-dark"] { --bg: #0e0e0e; --side: #141414; }
 /* под стеклом цвет меню задаёт плитка: там оттенок остаётся прежним */
-:root[data-surface="side-dark"]:not(.glass) { --bg: #141414; --side: #090909; }
+:root[data-surface="side-dark"]:not(.glass) { --bg: #141414; --side: #0f0f0f; }
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #ffffff;

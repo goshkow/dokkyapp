@@ -10,3 +10,10 @@ export function openExternal(url: string): boolean {
   else window.open(safe.href, '_blank', 'noopener,noreferrer');
   return true;
 }
+
+/** Открывает раздел «Конфиденциальность» Системных настроек macOS (только в окне приложения). */
+export function openPrivacySettings(pane: 'accessibility' | 'screen_recording'): boolean {
+  if (!window.koddiDesktop) return false;
+  window.location.href = `koddi://open-privacy-settings?pane=${pane}`;
+  return true;
+}

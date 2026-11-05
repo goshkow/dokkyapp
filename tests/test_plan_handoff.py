@@ -288,3 +288,30 @@ async def test_stale_plan_gets_reminder_in_tool_result(project_chat):
     reminders = [index for index, result in enumerate(model.seen) if "plan_reminder" in result]
     # первый результат - сам plan.update, напоминание приходит ровно на восьмом вызове после него
     assert reminders == [PLAN_REMINDER_EVERY]
+
+
+def test_resume_continues_only_a_failed_turn(project_chat, monkeypatch):
+    chat, _ = project_chat
+    captured = []
+
+    async def run(self, **kwargs):
+        captured.append(kwargs)
+        yield "event: turn.completed\ndata: {}\n\n"
+
+    monkeypatch.setattr(AgentOrchestrator, "run", run)
+    client = TestClient(create_app())
+    # ни одного хода - продолжать нечего
+    assert client.post(f"/api/chats/{chat}/resume").status_code == 409
+    with storage.db() as conn:
+        conn.execute("INSERT INTO turns(chat_id,status) VALUES (?,'completed')", (chat,))
+    assert client.post(f"/api/chats/{chat}/resume").status_code == 409
+    with storage.db() as conn:
+        conn.execute(
+            "INSERT INTO turns(chat_id,status,error_json) VALUES (?,'failed',?)",
+            (chat, json.dumps({"code": "ai_unavailable"})),
+        )
+    response = client.post(f"/api/chats/{chat}/resume")
+    assert response.status_code == 200
+    assert captured[0]["display_message"] == "Продолжи с того места, где остановился"
+    assert "do not repeat finished steps" in captured[0]["user_message"]
+    assert client.post("/api/chats/999999/resume").status_code == 404

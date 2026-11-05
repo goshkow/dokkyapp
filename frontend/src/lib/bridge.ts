@@ -112,10 +112,15 @@ export function announceComposerFocus(): void {
 }
 
 export interface TrayLimit { remaining: number; resets_at: number | null }
+export interface TrayChat { id: number; title: string; mark: 'working' | 'question' | 'done' }
 export interface TrayPayload {
   plan: string | null;
   window: (TrayLimit & { hours: number }) | null;
   total: TrayLimit | null;
+  /** Тема меню трея на Windows; на macOS меню системное. */
+  theme?: 'dark' | 'light';
+  /** Чаты, которые работают, ждут ответа или закончили, пока их не открыли: щелчок в меню открывает чат. */
+  chats?: TrayChat[];
 }
 
 /** Передаёт хосту лимиты для меню значка в трее; false - моста ещё нет, отправить позже. */
@@ -130,8 +135,17 @@ export function announceTray(payload: string): boolean {
   }
 }
 
-/** Уведомление о работе агента; показывать ли его, решает хост по состоянию окна. */
-export function announceAgentNotice(chatId: number, kind: 'done' | 'question', title: string): void {
+export type AgentNoticeKind = 'done' | 'question' | 'approval' | 'stalled' | 'limit';
+
+// настройка «уведомления» живёт в хранилище данных, а оно мост не импортирует: хранилище вешает проверку сюда
+let noticesAllowed: () => boolean = () => true;
+export function setNoticeGate(allowed: () => boolean): void {
+  noticesAllowed = allowed;
+}
+
+/** Уведомление о работе агента (в том числе stalled и limit из плашек чата); показывать ли его, решает хост по состоянию окна. */
+export function announceAgentNotice(chatId: number, kind: AgentNoticeKind, title: string): void {
+  if (!noticesAllowed()) return;
   try {
     window.koddiWindowBridge?.agentNotice?.(JSON.stringify({ chat_id: chatId, kind, title }));
   } catch {

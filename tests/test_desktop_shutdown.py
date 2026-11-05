@@ -312,7 +312,8 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
         about_to_quit.callback()
         return 7
 
-    app = SimpleNamespace(setApplicationName=lambda name: None, aboutToQuit=about_to_quit, exec=execute, quit=lambda: None)
+    app = SimpleNamespace(setApplicationName=lambda name: None, aboutToQuit=about_to_quit, exec=execute, quit=lambda: None,
+                          installEventFilter=lambda watch: None, commitDataRequest=Signal())
     timer = SimpleNamespace(timeout=Signal(), start=lambda interval: None, stop=lambda: calls.append("timer-stop"))
 
     class Backend:
@@ -336,12 +337,13 @@ def test_main_always_joins_before_releasing_profile_broker(tmp_path, monkeypatch
         if failure == "window":
             raise RuntimeError("window creation failed")
         return SimpleNamespace(restore_geometry=lambda: None, show=lambda: None, bring_to_front=lambda: None, tray=None,
-                               install_notices=lambda: None, quit_app=lambda: None)
+                               install_notices=lambda: None, quit_app=lambda: None, open_notice_chat=lambda chat_id: None)
 
     monkeypatch.setattr(web_host, "QApplication", lambda args: app)
     monkeypatch.setattr(web_host, "QTimer", lambda parent: timer)
     monkeypatch.setattr(web_host, "DesktopBackend", Backend)
     monkeypatch.setattr(web_host, "WebHost", window)
+    monkeypatch.setattr(web_host, "QuitWatch", lambda host: None)
     monkeypatch.setattr(web_host, "_api_port", lambda: 12345)
     monkeypatch.setattr(tray, "install", lambda actions, parent: None)
     monkeypatch.setattr(session, "activation_server", lambda: broker)

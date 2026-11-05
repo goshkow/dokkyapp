@@ -7,7 +7,19 @@ from dataclasses import dataclass
 
 APP_NAME = "Докки"
 
-BODIES = {"done": "Агент закончил работу", "question": "Агент ждёт вашего ответа"}
+# виды, которые присылает страница
+PAGE_KINDS = ("done", "question", "approval", "stalled", "limit")
+BODIES = {
+    "done": "Агент закончил работу",
+    "question": "Докки задал вопрос",
+    "approval": "Нужно подтвердить действие",
+    "stalled": "Докки временно не отвечает - работа на паузе",
+    "limit": "Лимит восстановился - можно продолжить работу",
+    # служебное, только от хоста: страница его прислать не может
+    "tray": "Докки работает в трее - агент продолжит задачу. Открыть или выйти можно из значка",
+}
+# о чём человека стоит оповестить звуком и подпрыгиванием: агент ждёт его
+URGENT = frozenset({"question", "approval"})
 TITLE_LIMIT = 120
 
 
@@ -37,7 +49,7 @@ def parse(payload: str) -> Notice | None:
     if not isinstance(data, dict):
         return None
     chat_id, kind, title = data.get("chat_id"), data.get("kind"), data.get("title", "")
-    if type(chat_id) is not int or chat_id <= 0 or kind not in BODIES or not isinstance(title, str):
+    if type(chat_id) is not int or chat_id <= 0 or kind not in PAGE_KINDS or not isinstance(title, str):
         return None
     # переводы строк и управляющие символы в заголовке системного уведомления не нужны
     title = " ".join("".join(ch if ch.isprintable() else " " for ch in title).split())

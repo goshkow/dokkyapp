@@ -1,5 +1,6 @@
 /* Журнал работы агента: чистые функции. Публичные сообщения и действия хода собираются в этапы «Работал…». */
 
+import { toolTitles } from './toolTitles';
 import { serverTime } from './format';
 
 export interface ToolEventData {
@@ -480,7 +481,10 @@ export function actionText(event: ActionEvent): string {
     'task.complete': ['Подвожу итог', 'Задача завершена'],
     'task.ask_user': ['Ожидаю уточнения', reply ? `Ответ пользователя: ${reply}` : 'Уточнение получено'],
   };
-  const known = titles[data.name ?? ''];
+  const known = titles[data.name ?? ''] ?? toolTitles(data.name ?? '', args);
+  // без git агент просто обходится без этого шага: это не сбой работы
+  if (!pending && result.git_missing) return 'Git не установлен - шаг пропущен';
+  if (!pending && result.not_a_repository) return 'Папка проекта без git - шаг пропущен';
   if (!pending && result.ok === false) return `Не выполнено: ${known?.[1] ?? displayName}`;
   return (known ?? [`Выполняю: ${displayName}`, `Выполнено: ${displayName}`])[pending ? 0 : 1];
 }
@@ -528,7 +532,7 @@ export function liveLabel(event: ActionEvent): string {
     'task.complete': 'Подвожу итог',
     'task.ask_user': 'Ожидаю уточнения',
   };
-  const known = labels[name];
+  const known = labels[name] ?? toolTitles(name, args)?.[0];
   if (known) return known;
   const display = String(data.display_name || name || '').replaceAll('__', '.');
   return display ? `Выполняю ${clip(display, 32)}` : 'Выполняю действие';

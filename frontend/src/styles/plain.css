@@ -4,10 +4,10 @@
   --line: color-mix(in srgb, var(--text) 13%, transparent);
   --solid: var(--fill);
   --solid-hover: color-mix(in srgb, var(--text) 12%, var(--bg));
-  /* поле и таблетки стоят над лентой: лёгкая тень отделяет их от текста под ними */
-  --float-shadow: 0 2px 14px rgb(0 0 0 / 0.34), 0 0 0 1px rgb(255 255 255 / 0.03);
+  /* поле и таблетки стоят над лентой: тень едва заметная (около 5%), только чтобы край не сливался с текстом */
+  --float-shadow: 0 2px 12px rgb(0 0 0 / 0.05), 0 0 0 1px rgb(255 255 255 / 0.03);
 }
-:root[data-theme="light"]:not(.glass) { --float-shadow: 0 2px 12px rgb(0 0 0 / 0.1), 0 0 0 1px rgb(0 0 0 / 0.04); }
+:root[data-theme="light"]:not(.glass) { --float-shadow: 0 2px 12px rgb(0 0 0 / 0.05), 0 0 0 1px rgb(0 0 0 / 0.04); }
 
 /* поле ввода */
 html:not(.glass) .composer-field, html:not(.glass) .composer-field:focus-within {

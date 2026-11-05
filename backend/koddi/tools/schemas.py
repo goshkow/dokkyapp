@@ -8,8 +8,8 @@ COMMAND_BYTES = 8 * 1024
 
 
 TOOL_DEFINITIONS: list[dict] = [
-    ("computer.status", "Check availability and OS permissions without capturing the desktop or requesting system permissions.", {}),
-    ("computer.use", "Control one local application after account consent and approval of every exact call. action: list_windows([query]) -> visible windows with pid/process/title/window_id, query filters by title or process name (use it: the user's other windows are private); launch(application[,arguments,working_directory]) -> pid; observe(pid[,window_id]); focus(pid,snapshot_id); screenshot(pid,snapshot_id,window_id); press/focus_window(pid,snapshot_id,element_id); click_element(pid,snapshot_id,element_id[,button,clicks]) clicks the centre of an element; type_element(pid,snapshot_id,element_id,text); type(pid,snapshot_id,text); hotkey(pid,snapshot_id,keys); click(pid,snapshot_id,x,y[,button,clicks]) / move / scroll(...,delta_y). Observe again after an action; snapshots expire in 30s. Prefer press/type_element/click_element over raw coordinates; on failure read error_code and hint. If an app is not found after launch, use list_windows. Apps started with administrator rights need the user to restart Dokky as administrator. Screenshots are private attachments; vision transport is not yet confirmed. Never use it to send messages, publish, pay or delete without explicit user authorization.", {"action":"string", "pid":"integer", "snapshot_id":"string", "element_id":"string", "x":"integer", "y":"integer", "delta_y":"integer", "text":"string", "keys":"array", "application":"string", "window_id":"integer", "arguments":"array", "working_directory":"string", "button":"string", "clicks":"integer", "query":"string"}),
+    ("computer.status", "Check agent-desktop availability and OS permissions (macOS Accessibility, Screen Recording) without capturing the desktop or requesting permissions. If a permission is missing, ask the user to enable it in System Settings - Privacy and Security.", {}),
+    ("computer.use", "Control local desktop apps through agent-desktop after account consent and approval of every exact call. Before first use call command=guide (usage rules for the snapshot/ref loop and this OS). Loop: snapshot app (or window_id from list-windows) -> act on a ref like @abc:e3 -> snapshot again; refs expire when the UI changes. command: guide, status, list-apps, list-windows, list-displays, snapshot, find, get, is, screenshot, list-surfaces, click, double-click, right-click, type, set-value, clear, focus, select, toggle, check, uncheck, expand, collapse, scroll, scroll-to, press, hover, drag, mouse-click, mouse-move, mouse-wheel, launch, close-app, focus-window, resize-window, move-window, minimize, maximize, restore, wait, clipboard-get, clipboard-set, list-notifications, batch. Fields: app, ref, text (type, clipboard-set), value (set-value, select, get/is property), combo (press, e.g. cmd+c), window_id, query/role/name (find), direction/amount (scroll), x/y, to_ref (drag target), headed (physical input), options (extra flags allowed for that command, e.g. max_depth, interactive_only, timeout_ms), items (batch: up to 64 ref actions as {command,ref,...}, no text commands, no nesting). On failure read error_code and hint. Screenshots are private attachments. Never use it to send messages, publish, pay or delete without explicit user authorization.", {"command":"string", "app":"string", "ref":"string", "text":"string", "combo":"string", "window_id":"string", "query":"string", "role":"string", "name":"string", "direction":"string", "amount":"integer", "x":"integer", "y":"integer", "to_ref":"string", "value":"string", "headed":"boolean", "options":"object", "items":"array"}),
     (
         "project.map",
         "Read the always-updated project map instead of listing folders or opening many files: folders, files with "
@@ -274,6 +274,62 @@ TOOL_DEFINITIONS: list[dict] = [
         {"message": "string", "paths": "array", "body": "string"},
     ),
     ("git.restore_file", "Restore file from git.", {"path": "string"}),
+    (
+        "git.push",
+        "Push a branch to its remote (never --force). Default: current branch to its own remote; the upstream is set on the first push.",
+        {"branch": "string", "remote": "string"},
+    ),
+    (
+        "git.pull",
+        "Pull from the remote: fast-forward only unless rebase=true. Fails instead of creating a merge commit.",
+        {"remote": "string", "branch": "string", "rebase": "boolean"},
+    ),
+    ("git.fetch", "Fetch from a remote (default: the current branch's remote) and prune deleted branches.", {"remote": "string"}),
+    (
+        "git.stash",
+        "Stash local changes: action = push (optional message, include_untracked), pop (apply the latest) or list.",
+        {"action": "string", "message": "string", "include_untracked": "boolean"},
+    ),
+    (
+        "git.merge",
+        "Merge a branch into the current one. On conflicts nothing is committed: the result lists the conflicted files. "
+        "abort=true cancels an unfinished merge; ff_only=true refuses a real merge.",
+        {"branch": "string", "abort": "boolean", "ff_only": "boolean"},
+    ),
+    ("git.remote", "List configured git remotes with their URLs.", {}),
+    ("github.status", "Check the GitHub CLI (gh): installed, signed in, and which GitHub repository the project is.", {}),
+    (
+        "github.pr_list",
+        "List pull requests of the project's GitHub repository (state open/closed/merged/all).",
+        {"state": "string", "limit": "integer", "author": "string", "base": "string", "head": "string"},
+    ),
+    (
+        "github.pr_view",
+        "Show a pull request (number, or the current branch's one) with its CI checks summary.",
+        {"number": "integer"},
+    ),
+    (
+        "github.pr_create",
+        "Create a pull request from the current, already pushed branch.",
+        {"title": "string", "body": "string", "base": "string", "draft": "boolean"},
+    ),
+    ("github.pr_checks", "List CI checks of a pull request (number, or the current branch's one).", {"number": "integer"}),
+    (
+        "github.issue_list",
+        "List issues of the project's GitHub repository.",
+        {"state": "string", "limit": "integer", "label": "string", "assignee": "string", "author": "string"},
+    ),
+    ("github.issue_view", "Show an issue with its latest comments.", {"number": "integer"}),
+    (
+        "github.run_list",
+        "List recent GitHub Actions runs (optionally of one branch or status).",
+        {"limit": "integer", "branch": "string", "status": "string"},
+    ),
+    (
+        "github.run_view",
+        "Show a GitHub Actions run (run_id, or the latest of the current branch): jobs, failed steps and the tail of the failed log.",
+        {"run_id": "integer", "log": "boolean", "max_chars": "integer"},
+    ),
     ("test.detect", "Detect test commands.", {}),
     ("test.run", "Run test command.", {"command": "string"}),
     ("build.detect", "Detect build commands.", {}),
@@ -398,6 +454,15 @@ TOOL_DEFINITIONS: list[dict] = [
 ]
 
 
+# git и GitHub, которые ходят наружу или сливают ветки; обязательные аргументы, остальные необязательны
+REMOTE_REQUIRED = {"github.pr_create": {"title"}, "github.issue_view": {"number"}}
+REMOTE_TOOLS = {
+    "git.push", "git.pull", "git.fetch", "git.stash", "git.merge", "git.remote", "github.status", "github.pr_list",
+    "github.pr_view", "github.pr_create", "github.pr_checks", "github.issue_list", "github.issue_view",
+    "github.run_list", "github.run_view",
+}
+
+
 def _json_type(kind: str) -> dict:
     if kind == "array":
         return {"type": "array", "items": {"type": "string"}}
@@ -410,15 +475,27 @@ def _schema(name: str, description: str, params: dict[str, str]) -> dict:
     properties = {key: _json_type(value) for key, value in params.items()}
     optional = {"limit", "glob", "timeout_seconds", "description", "max_bytes", "max_depth"}
     if name == "computer.use":
-        optional.update(set(params) - {"action"})
-        properties["action"]["enum"] = ["launch", "list_windows", "observe", "focus", "screenshot", "press", "click_element", "focus_window", "type_element", "type", "hotkey", "click", "move", "scroll"]
-        properties["text"]["maxLength"] = 2000
-        properties["keys"].update(minItems=1, maxItems=5)
-        properties["arguments"].update(items={"type": "string", "maxLength": 500}, maxItems=20)
-        properties["button"]["enum"] = ["left", "right"]
-        properties["clicks"].update(minimum=1, maximum=2)
-        for key in ("snapshot_id", "element_id"):
-            properties[key]["pattern"] = "^[a-f0-9]{32}$"
+        from koddi.computer_use.service import COMMAND_NAMES, DIRECTIONS, REF_RE, WINDOW_RE
+
+        optional.update(set(params) - {"command"})
+        properties["command"]["enum"] = list(COMMAND_NAMES)
+        properties["text"]["maxLength"] = 20000
+        for key in ("app", "combo", "query", "role", "name", "value"):
+            properties[key]["maxLength"] = 500
+        for key in ("ref", "to_ref"):
+            properties[key].update(pattern=REF_RE.pattern, maxLength=100)
+        properties["window_id"].update(pattern=WINDOW_RE.pattern, maxLength=64)
+        properties["direction"]["enum"] = sorted(DIRECTIONS)
+        properties["amount"].update(minimum=0, maximum=60000)
+        for key in ("x", "y"):
+            properties[key].update(minimum=-100000, maximum=100000)
+        properties["options"]["additionalProperties"] = True
+        properties["items"] = {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {"type": "object", "required": ["command"], "properties": {"command": {"type": "string"}}},
+        }
     if name.startswith("browser."):
         required_params = {"browser.open": {"url"}, "browser.type": {"text"}, "browser.press": {"key"}, "browser.select": {"value"}, "browser.eval": {"expression"}}
         optional.update(set(params) - required_params.get(name, set()))
@@ -519,6 +596,27 @@ def _schema(name: str, description: str, params: dict[str, str]) -> dict:
         properties["timeout_seconds"].update(minimum=30, maximum=1800)
         properties["expect"]["enum"] = ["pass", "fail"]
         properties["reason"]["maxLength"] = 500
+    if name in REMOTE_TOOLS:
+        optional.update(set(params) - REMOTE_REQUIRED.get(name, set()))
+        for key in ("branch", "remote", "base", "head", "author", "assignee", "label", "status", "message"):
+            if key in properties:
+                properties[key]["maxLength"] = 250
+        for key in ("title",):
+            if key in properties:
+                properties[key].update(minLength=1, maxLength=250)
+        if "body" in properties:
+            properties["body"]["maxLength"] = 20000
+        for key in ("number", "run_id"):
+            if key in properties:
+                properties[key]["minimum"] = 1
+        if "limit" in properties:
+            properties["limit"].update(minimum=1, maximum=50)
+        if "max_chars" in properties:
+            properties["max_chars"].update(minimum=500, maximum=20000)
+        if "state" in properties:
+            properties["state"]["enum"] = ["open", "closed", "merged", "all"] if name == "github.pr_list" else ["open", "closed", "all"]
+        if name == "git.stash":
+            properties["action"]["enum"] = ["push", "pop", "list"]
     if name == "git.commit":
         optional.update({"paths", "body"})
         properties["paths"].update(minItems=1, maxItems=200)
@@ -810,6 +908,21 @@ MODE_TOOL_NAMES = {
         "git.add",
         "git.commit",
         "git.restore_file",
+        "git.fetch",
+        "git.merge",
+        "git.pull",
+        "git.push",
+        "git.remote",
+        "git.stash",
+        "github.issue_list",
+        "github.issue_view",
+        "github.pr_checks",
+        "github.pr_create",
+        "github.pr_list",
+        "github.pr_view",
+        "github.run_list",
+        "github.run_view",
+        "github.status",
         "test.detect",
         "test.run",
         "build.detect",
@@ -900,6 +1013,21 @@ MODE_TOOL_NAMES = {
         "lint.run",
         "diagnostics.collect",
         "git.diff",
+        "git.fetch",
+        "git.merge",
+        "git.pull",
+        "git.push",
+        "git.remote",
+        "git.stash",
+        "github.issue_list",
+        "github.issue_view",
+        "github.pr_checks",
+        "github.pr_create",
+        "github.pr_list",
+        "github.pr_view",
+        "github.run_list",
+        "github.run_view",
+        "github.status",
         "devserver.detect",
         "devserver.start",
         "devserver.stop",

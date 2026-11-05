@@ -55,7 +55,7 @@ def test_local_history_is_paginated_without_losing_export(journal_chat):
 
 
 @pytest.mark.asyncio
-async def test_completed_empty_response_is_not_retried():
+async def test_completed_empty_response_is_retried_once():
     storage.init_db()
     requests = []
 
@@ -74,7 +74,8 @@ async def test_completed_empty_response_is_not_retried():
         _ = [part async for part in client.stream(model="test", messages=[], tools=[])]
     assert error.value.code == "empty_response"
     assert error.value.request_id == "request-empty"
-    assert len(requests) == 1
+    # один автоматический повтор, затем понятная ошибка модели
+    assert len(requests) == 2
 
 
 @pytest.mark.asyncio

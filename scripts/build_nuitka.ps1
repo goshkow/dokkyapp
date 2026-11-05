@@ -28,6 +28,9 @@ if ($Clean) {
   Remove-Item -Recurse -Force (Join-Path $OutputDir "web_host.build") -ErrorAction SilentlyContinue
 }
 Remove-Item -Recurse -Force (Join-Path $OutputDir "web_host.dist") -ErrorAction SilentlyContinue
+
+& $Python (Join-Path $PSScriptRoot "fetch_agent_desktop.py")
+if ($LASTEXITCODE -ne 0) { throw "Не удалось получить agent-desktop" }
 Remove-Item -Force (Join-Path $OutputDir "DokkyApp.exe") -ErrorAction SilentlyContinue
 
 # версия одна на всё - из pyproject.toml; в ресурс exe идёт числовая часть без -beta.N
@@ -100,6 +103,10 @@ $standaloneExe = Get-ChildItem -Path $OutputDir -Filter "DokkyApp.exe" -Recurse 
 $oneFileExe = Join-Path $OutputDir "DokkyApp.exe"
 if ($standaloneExe -or (Test-Path $oneFileExe)) {
   if ($standaloneExe -and !$OneFile) {
+    # exe из data-dir Nuitka может не перенести: кладём agent-desktop сами
+    $agentTarget = Join-Path (Split-Path -Parent $standaloneExe) "koddi\computer_use\native\agent-desktop"
+    New-Item -ItemType Directory -Force -Path $agentTarget | Out-Null
+    Copy-Item -Force (Join-Path $Root "backend\koddi\computer_use\native\agent-desktop\*") $agentTarget
     & $Python (Join-Path $PSScriptRoot "bundle_browser.py") (Split-Path -Parent $standaloneExe)
     if ($LASTEXITCODE -ne 0) { throw "Не удалось включить браузер агента" }
   }

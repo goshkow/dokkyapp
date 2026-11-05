@@ -452,28 +452,33 @@ def test_hooks_do_not_run_in_read_only(env, monkeypatch):
     assert turn_context(OWNER, None, workspace, 1, "hi") == [] and not marker.exists()
 
 
-def test_plugin_script_needs_approval_even_in_full_access(env, monkeypatch):
+@pytest.mark.parametrize("profile", ["ask", "trusted"])
+def test_plugin_script_needs_the_user_without_full_access(env, monkeypatch, profile):
     from koddi.policy.engine import decide
 
-    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: "full")
+    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: profile)
     workspace = env / "proj"
     workspace.mkdir()
     root = store.plugins_root()
     assert decide("shell.run", {"command": "ls"}, workspace).action == "allow"
     for command in (f"python '{root}/abc/tools/run.py'", "bash ${CLAUDE_PLUGIN_ROOT}/x.sh",
                     str(root).replace(" ", "\\ ") + "/abc/x.sh"):
+        # автопроверка не решает за человека: скрипт скачанного плагина спрашивается и в автоматическом режиме
         assert decide("shell.run", {"command": command}, workspace).action == "ask", command
+    # «Разрешить всё» человек выбрал сам, с предупреждением: там вопросов нет совсем
+    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: "full")
+    assert decide("shell.run", {"command": "bash ${CLAUDE_PLUGIN_ROOT}/x.sh"}, workspace).action == "allow"
 
 
 @pytest.mark.parametrize("tool", ["test.run", "build.run", "lint.run", "format.run", "devserver.start"])
 def test_plugin_script_through_any_command_tool_needs_approval(env, monkeypatch, tool):
     from koddi.policy.engine import decide
 
-    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: "full")
+    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: "trusted")
     workspace = env / "proj"
     workspace.mkdir()
     data = store.plugins_root().parent
-    assert decide(tool, {"command": "pytest -q"}, workspace).action == "allow"
+    assert decide(tool, {"command": "pytest -q"}, workspace).action == "review"
     for command in (f"python {store.plugins_root()}/abc/x.py", f"cd '{data}' && sh plugins/abc/tools/x.sh",
                     "node ${CLAUDE_PLUGIN_ROOT}/run.js"):
         assert decide(tool, {"command": command}, workspace).action == "ask", (tool, command)

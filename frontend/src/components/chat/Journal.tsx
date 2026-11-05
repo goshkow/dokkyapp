@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Check, Clock, FileCode2, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Check, Clock, FileCode2, MousePointer2, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { playX, snapshotX } from '../../lib/flip';
 import {
@@ -88,6 +88,54 @@ export function SubagentLive({ id }: { id: string }) {
   );
 }
 
+interface ComputerState { app: string; steps: number; current: string; image: string }
+
+/** Сводка работы с приложением в этапе: какое приложение, что делается сейчас, последний снимок окна. */
+export function computerState(entries: JournalEntry[]): ComputerState | null {
+  let state: ComputerState | null = null;
+  for (const entry of [...entries].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))) {
+    const event = entry.event as ActionEvent | undefined;
+    if (entry.type !== 'action' || event?.data?.name !== 'computer.use') continue;
+    const args = (event.data.arguments ?? event.data.args ?? {}) as { app?: unknown };
+    const result = event.data.result as { data?: { image_url?: unknown } } | undefined;
+    state ??= { app: '', steps: 0, current: '', image: '' };
+    state.steps += 1;
+    if (typeof args.app === 'string' && args.app.trim()) state.app = args.app.trim();
+    state.current = event.event === 'tool.call' ? journalLiveLabel(event) : actionText(event);
+    const image = result?.data?.image_url;
+    // снимок только из своих вложений: внешний адрес в ленту не попадает
+    if (typeof image === 'string' && image.startsWith('/api/attachments/')) state.image = image;
+  }
+  return state;
+}
+
+/** Идёт работа с приложением: тихая карточка, как у Codex и Claude, с остановкой хода. */
+export function ComputerLive({ state }: { state: ComputerState }) {
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    setStopping(true);
+    try {
+      const { stopRun } = await import('../../state/chat');
+      await stopRun();
+    } catch (error) {
+      setStopping(false);
+      notify((error as Error).message || 'Не удалось остановить работу', true);
+    }
+  };
+  return (
+    <div className="computer-live" role="status" aria-live="polite">
+      {state.image && <img className="computer-live-shot" src={state.image} alt={state.app ? `Окно ${state.app}` : 'Окно приложения'} />}
+      <div className="computer-live-copy">
+        <b><MousePointer2 size={13} aria-hidden="true" />{state.app ? `Докки работает в ${state.app}` : 'Докки работает с приложением'}</b>
+        <span title={state.current}>{state.current}{state.steps > 1 ? ` · шагов: ${state.steps}` : ''}</span>
+      </div>
+      <button type="button" className="command-stop" disabled={stopping} onClick={() => void stop()} title="Остановить работу агента">
+        <span className="command-stop-mark" aria-hidden="true" />{stopping ? 'Останавливаю…' : 'Остановить'}
+      </button>
+    </div>
+  );
+}
+
 function ActionRow({ entry, canOpen }: { entry: JournalEntry; canOpen: boolean }) {
   const event = entry.event as ActionEvent;
   const result = event.data?.result;
@@ -160,6 +208,7 @@ function Segment({ block, live, status, canOpen, open, onToggle }: {
   else if (lastEntry.type === 'action') copy = actionText(lastEntry.event as ActionEvent);
   else copy = (lastEntry.text ?? '').startsWith('Думаю') ? 'Думал' : 'Работал';
   const showBadge = !running && summary.edits > 0 && (summary.added > 0 || summary.removed > 0);
+  const computer = useMemo(() => (running && live ? computerState(block.entries) : null), [block.entries, running, live]);
   const elapsed = useElapsed(journalTime(block.created_at), running);
   const time = running ? elapsed : (journalDuration({ created_at: block.created_at, completed_at: block.end }) ?? '');
   // подпись меняется на другую по длине: счётчик и стрелка плавно переезжают, а не прыгают
@@ -174,6 +223,7 @@ function Segment({ block, live, status, canOpen, open, onToggle }: {
     if (before && !matchMedia('(prefers-reduced-motion: reduce)').matches) playX(before, 240, 'cubic-bezier(0.22, 1, 0.36, 1)');
   }, [copy]);
   return (
+    <>
     <Disclosure
       innerRef={details}
       className={`activity turn-journal journal-segment${running ? ' is-running' : ''}`}
@@ -201,6 +251,8 @@ function Segment({ block, live, status, canOpen, open, onToggle }: {
         </div>
       </div>
     </Disclosure>
+    {computer && <ComputerLive state={computer} />}
+    </>
   );
 }
 

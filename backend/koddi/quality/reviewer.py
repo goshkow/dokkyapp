@@ -185,7 +185,7 @@ async def review_changes(client, *, model: str, responsive: Callable, task: str,
         text = ""
         async for chunk in responsive(
             client.stream(model=model, messages=messages, tools=[],
-                          options={"response_format": SCHEMA, "max_tokens": 3000, "temperature": 0})
+                          options={"response_format": SCHEMA, "max_tokens": 12000, "temperature": 0})
         ):
             if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):
                 text += chunk["content"]

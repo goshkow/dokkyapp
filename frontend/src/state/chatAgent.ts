@@ -15,7 +15,7 @@ export async function showRequests(): Promise<void> {
 
 export async function respondRequest(
   request: AgentRequest,
-  payload: { approved?: boolean; answer?: string; answers?: { selected: string[]; text: string }[] },
+  payload: { approved?: boolean; scope?: 'project_edits'; answer?: string; answers?: { selected: string[]; text: string }[] },
 ): Promise<void> {
   await post(`/api/agent/requests/${request.id}/respond`, request.turn_id == null ? payload : { ...payload, turn_id: request.turn_id });
   chat.set({ requests: chat.get().requests.filter((item) => item.id !== request.id) });

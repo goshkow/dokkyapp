@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 
 from koddi.dokky.client import API, DokkyError, dokky
 
@@ -58,6 +59,7 @@ async def watch_account(client=None, on_revoked=None):
 
     had_session = False
     cursor = "0"
+    failures = 0
     while True:
         if not client.store.load():
             if had_session:
@@ -81,6 +83,7 @@ async def watch_account(client=None, on_revoked=None):
                     if response.is_error:
                         await response.aread()
                     client.check(response)
+                    failures = 0
                     kind = ""
                     async for line in response.aiter_lines():
                         if client.store.load().get("access_token") != token:
@@ -111,6 +114,24 @@ async def watch_account(client=None, on_revoked=None):
         except DokkyError as exc:
             if exc.status == 401 and not client.store.load():
                 await on_revoked()
-        except Exception:
-            pass
-        await asyncio.sleep(3)
+            else:
+                failures += 1
+                _note_failure(failures, exc.code, exc.status)
+        except Exception as exc:
+            failures += 1
+            _note_failure(failures, type(exc).__name__, None)
+        # без связи опрос не долбит сервер: 3, 6, 12, 24 и не больше 30 секунд с разбросом
+        await asyncio.sleep(min(30.0, 3.0 * 2 ** min(max(failures - 1, 0), 4)) * random.uniform(0.85, 1.15) if failures else 3)
+
+
+def _note_failure(failures: int, code: str, status: int | None) -> None:
+    """В журнал - первый сбой и далее раз в 20, чтобы долгий обрыв связи не засорял его."""
+    if failures != 1 and failures % 20:
+        return
+    try:
+        from koddi.logs import log_event
+
+        log_event("WARNING", "dokky.events", "Нет связи с потоком событий Докки", {"failures": failures, "code": code, "status": status})
+    except Exception:
+        # журнал не должен ронять наблюдатель
+        pass

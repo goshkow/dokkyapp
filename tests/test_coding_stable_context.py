@@ -469,25 +469,28 @@ async def test_limit_or_expired_session_is_reported_without_new_session_or_synth
 
 
 @pytest.mark.asyncio
-async def test_truncated_answer_stays_partial_and_waits_for_real_user(context):
-    model = Model(context, [{"content": "Частичная реализация", "finish_reason": "length"}])
+async def test_truncated_answer_gets_two_nudges_then_stops_softly(context):
+    partial = {"content": "Частичная реализация", "finish_reason": "length"}
+    model = Model(context, [partial, partial, partial])
     events = await run(context, model)
-    assert "response_truncated" in events[-1] and len(model.requests) == 1
+    assert "turn.completed" in events[-1] and len(model.requests) == 3
+    assert "Лимит ответа ушёл на рассуждение" in model.requests[1]["messages"][-1]["content"]
     assert records(context)[-1] == {"role": "assistant", "content": "Частичная реализация"}
     with storage.db() as conn:
         row = conn.execute("SELECT content,metadata_json FROM messages WHERE role='assistant' ORDER BY id DESC LIMIT 1").fetchone()
-    assert row[0] == "Частичная реализация" and json.loads(row[1])["status"] == "truncated"
+    assert row[0].startswith("Частичная реализация") and "Лимит ответа" in row[0]
+    assert json.loads(row[1])["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_incomplete_plan_does_not_inject_an_automatic_user(context):
+async def test_incomplete_plan_nudges_model_then_stops_softly(context):
     with storage.db() as conn:
         turn = conn.execute("INSERT INTO turns(chat_id,status) VALUES (?,'completed')", (context["chat"],)).lastrowid
         conn.execute("INSERT INTO agent_plans(turn_id,steps_json) VALUES (?,?)", (turn, json.dumps([{"title": "Unfinished", "status": "pending"}])))
-    model = Model(context, [final("Ещё не всё готово.")])
+    model = Model(context, [final("Ещё не всё готово.")] * 3)
     events = await run(context, model)
-    assert "turn.failed" in events[-1] and len(model.requests) == 1
-    assert len([record for record in records(context) if record.get("role") == "user"]) == 2
+    assert "turn.completed" in events[-1] and len(model.requests) == 3
+    assert "незавершённые шаги" in model.requests[1]["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -547,3 +550,24 @@ def test_import_tools_before_remote_does_not_cycle(tmp_path):
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "backend")
     result = subprocess.run([sys.executable, "-c", "import koddi.tools; import koddi.remote.client; import koddi.agents.prompts"], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_chats_of_one_project_share_the_head_of_the_first_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "head.sqlite3")
+    storage.init_db()
+    # снимки двух чатов одного проекта: разные режим работы, план, память и подсказки
+    project_map = {"overview": "backend/ - сервер"}
+    first = compose_coding_context(mode="development", workspace=tmp_path, project_id=None, depth="light",
+                                   project_map=project_map, plan=[], memory=[], hints={"skill_suggestions": {"a": 1}})
+    second = compose_coding_context(mode="development", workspace=tmp_path, project_id=None, depth="max",
+                                    project_map=project_map, plan=[{"title": "шаг"}], memory=[{"content": "x"}],
+                                    hints={"skill_suggestions": {"b": 2}})
+    a, b = first["content"], second["content"]
+    common = 0
+    while common < min(len(a), len(b)) and a[common] == b[common]:
+        common += 1
+    # общее начало доходит до конца карты проекта: всё до ключей чата читается из кэша другого чата
+    assert a.index('"project_map"') < common
+    assert common >= a.index('"work_depth"') - 2
+    keys = list(json.loads(a[len(CONTEXT_PREFIX):]))
+    assert keys.index("project_instructions") < keys.index("work_depth") < keys.index("plan")

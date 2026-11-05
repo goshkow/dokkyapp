@@ -134,6 +134,9 @@ class Api:
         # открытие проекта запускает сборку карты на сервере; ответ окну не нужен
         if method == "GET" and path.startswith("/api/projects/") and path.endswith("/map/state"):
             return {"status": "ready", "version": 1, "files": 0, "truncated": False, "built_at": None, "watch": None}
+        # нет gh или репозиторий не на GitHub: карточка PR просто не показывается
+        if method == "GET" and path.startswith("/api/projects/") and path.endswith("/github"):
+            return {"available": False}
         # проект без git: шапка и «Изменения» просто не показывают его блоки
         if method == "GET" and path.startswith("/api/projects/") and path.endswith("/git"):
             return {"repo": False}

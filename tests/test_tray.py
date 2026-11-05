@@ -6,11 +6,10 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QPushButton, QWidgetAction
+from PySide6.QtCore import QPoint, QRect, QUrl
+from PySide6.QtWidgets import QApplication
 
-from koddi import __version__
-from koddi.desktop import tray, web_host
+from koddi.desktop import tray, tray_panel, web_host
 
 NOW = 1_800_000_000.0
 
@@ -89,60 +88,88 @@ def test_hours_text(count, text):
     assert tray.hours_text(count) == text
 
 
-def menu_layout(menu):
-    """Пункты меню Qt: виджеты, разделы, команды."""
-    result = []
-    for action in menu.actions():
-        if isinstance(action, QWidgetAction):
-            widget = action.defaultWidget()
-            bars = widget.findChildren(QProgressBar)
-            texts = [label.text() for label in widget.findChildren(QLabel)]
-            buttons = [button.text() for button in widget.findChildren(QPushButton)]
-            result.append(("widget", texts, buttons, [bar.value() for bar in bars]))
-        elif action.isSeparator():
-            result.append(("section", action.text()) if action.text() else ("separator",))
-        else:
-            result.append(("action", action.text()))
-    return result
+def panel_state(**patch):
+    data = json.loads(payload())
+    data.update({"theme": "dark", "chats": [
+        {"id": 3, "title": "Фризы", "mark": "working"},
+        {"id": 5, "title": "Настройки", "mark": "question"},
+        {"id": 8, "title": "Карта", "mark": "done"},
+        {"id": 9, "title": "Лишний", "mark": "done"},
+    ]})
+    data.update(patch)
+    return tray.parse(json.dumps(data))
 
 
-def test_windows_menu_matches_layout(app, monkeypatch):
+def test_chats_are_validated_sorted_and_capped():
+    state = panel_state()
+    assert [(chat.id, chat.mark) for chat in state.chats] == [(5, "question"), (3, "working"), (8, "done"), (9, "done")]
+    many = panel_state(chats=[{"id": n, "title": str(n), "mark": "done"} for n in range(1, 30)])
+    assert len(many.chats) == tray.MAX_CHATS
+    bad = panel_state(chats=[{"id": True, "mark": "done"}, {"id": -1, "mark": "done"}, {"id": "7", "mark": "done"},
+                             {"id": 4, "mark": "evil"}, {"id": 6, "title": "Ок\u0000" + "x" * 200, "mark": "done"}, "x"])
+    assert [(chat.id, len(chat.title)) for chat in bad.chats] == [(6, 80)]
+    assert panel_state(theme="light").theme == "light"
+    assert panel_state(theme="<script>").theme == "dark"
+    assert tray.parse(payload()).chats == ()
+
+
+def test_windows_panel_opens_on_right_click_and_runs_commands(app, monkeypatch):
     monkeypatch.setattr(tray.time, "time", lambda: NOW)
     calls = []
-    icon = tray.QtTray(actions(calls))
+    acts = tray.Actions(open=lambda: calls.append("open"), usage=lambda: calls.append("usage"),
+                        quit=lambda: calls.append("quit"), open_chat=lambda chat: calls.append(("chat", chat)))
+    icon = tray.QtTray(acts)
     try:
-        icon.update(tray.parse(payload()))
-        assert menu_layout(icon.menu) == [
-            ("widget", ["Докки", f"Версия {__version__}"], ["Нажмите, чтобы открыть"], []),
-            ("separator",),
-            ("section", "Лимиты использования плана · Plus"),
-            ("widget", ["Лимит на 5 часов", "осталось 80 % · сброс через 2 ч"], [], [80]),
-            ("widget", ["Подписка · все модели", "осталось 72 % · ещё 5 д."], [], [72]),
-            ("separator",),
-            ("action", "Настройки использования…"),
-            ("separator",),
-            ("action", "Завершить Докки"),
-        ]
-        assert not any(action.text() == "Обновить" for action in icon.menu.actions())
-        icon.update(tray.parse(json.dumps({"plan": "Free", "window": None, "total": None})))
-        assert [item[0] for item in menu_layout(icon.menu)] == ["widget", "separator", "action", "separator", "action"]
+        icon.update(panel_state())
+        icon._activated(tray.QSystemTrayIcon.ActivationReason.Context)
+        assert icon.panel.isVisible()
+        pixmap = tray_panel.grab(icon.panel)
+        assert not pixmap.isNull() and pixmap.width() == tray_panel.WIDTH + 2 * tray_panel.SHADOW
+        # окно без рамки и кнопок окна: всплывающее, закрывается кликом мимо
+        flags = icon.panel.windowFlags()
+        assert flags & tray.Qt.WindowType.Popup and flags & tray.Qt.WindowType.FramelessWindowHint
+        # четыре чата помещаются целиком, без строки «Ещё»
+        assert {"close", "open", "usage", "quit", "chat:5", "chat:3", "chat:8", "chat:9"} <= set(icon.panel.targets)
+        assert "more" not in icon.panel.targets
+        for target in ("chat:5", "usage", "quit", "open"):
+            icon.panel.activate(target)
+        assert calls == [("chat", 5), "usage", "quit", "open"]
+        assert not icon.panel.isVisible()
+        # левый щелчок по значку открывает окно
+        icon._activated(tray.QSystemTrayIcon.ActivationReason.Trigger)
+        assert calls[-1] == "open"
     finally:
         icon.remove()
 
 
-def test_windows_menu_commands(app):
+def test_panel_closes_when_cursor_goes_away(app, monkeypatch):
     calls = []
     icon = tray.QtTray(actions(calls))
     try:
-        icon.menu.actions()[0].defaultWidget().findChild(QPushButton).click()
-        commands = [action for action in icon.menu.actions() if not action.isSeparator() and not isinstance(action, QWidgetAction)]
-        for action in commands:
-            action.trigger()
-        icon._activated(tray.QSystemTrayIcon.ActivationReason.Trigger)
-        icon._activated(tray.QSystemTrayIcon.ActivationReason.Context)
-        assert calls == ["open", "usage", "quit", "open"]
+        icon.update(panel_state())
+        icon.panel.popup_at(QRect(500, 500, 20, 20))
+        far = icon.panel.frameGeometry().topLeft() - QPoint(400, 400)
+        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: far))
+        for _ in range(4):
+            icon.panel._watch_cursor()
+        assert not icon.panel.isVisible()
+        # рядом с меню - остаётся открытым
+        icon.panel.popup_at(QRect(500, 500, 20, 20))
+        near = icon.panel.frameGeometry().center()
+        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: near))
+        for _ in range(10):
+            icon.panel._watch_cursor()
+        assert icon.panel.isVisible()
     finally:
         icon.remove()
+
+
+def test_title_is_centered_by_cap_height(app):
+    font = tray_panel.make_font(15, tray_panel.QFont.Weight.Bold)
+    metrics = tray_panel.QFontMetricsF(font)
+    base = tray_panel.baseline_for(100, font)
+    # заглавные буквы от базовой линии вверх на capHeight: середина ровно на 100
+    assert abs((base - metrics.capHeight() / 2) - 100) < 0.01
 
 
 def test_windows_icon_has_tray_sizes(app):
@@ -224,3 +251,27 @@ def test_mac_bridge_exposes_focus_view():
     from koddi.desktop import native_web
 
     assert "focusView" in native_web.BRIDGE_METHODS
+
+
+def test_long_chat_list_folds_under_more(app):
+    calls = []
+    icon = tray.QtTray(actions(calls))
+    try:
+        icon.update(panel_state(chats=[{"id": n, "title": f"Чат {n}", "mark": "done"} for n in range(1, 8)]))
+        icon.panel.popup_at(QRect(500, 500, 20, 20))
+        tray_panel.grab(icon.panel)
+        assert {f"chat:{n}" for n in (1, 2, 3)} <= set(icon.panel.targets) and "chat:4" not in icon.panel.targets
+        assert "more" in icon.panel.targets
+        folded = icon.panel.height()
+        icon.panel.activate("more")
+        # список раскрывается в том же окне, меню не закрывается
+        assert icon.panel.isVisible() and icon.panel.height() > folded
+        tray_panel.grab(icon.panel)
+        assert {f"chat:{n}" for n in range(1, 8)} <= set(icon.panel.targets) and "more" not in icon.panel.targets
+        assert calls == []
+    finally:
+        icon.remove()
+
+
+def test_chats_word():
+    assert [tray_panel.chats_word(n) for n in (1, 2, 5, 11, 21, 22)] == ["чат", "чата", "чатов", "чатов", "чат", "чата"]

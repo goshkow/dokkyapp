@@ -1,3 +1,4 @@
+import { RecoveryBanner } from './RecoveryBanner';
 import { ArrowDown, ChevronRight, Folder, ListTodo, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { watchComposerBar } from '../../state/composerBar';
@@ -109,6 +110,7 @@ export function Composer() {
       >
         <ArrowDown aria-hidden="true" />
       </button>
+      <RecoveryBanner />
       <RequestPanel />
       <SkillChips />
       <AttachmentStrip />

@@ -196,6 +196,7 @@ function Question({ request }: { request: AgentRequest }) {
       <p className="approval-scope">{action?.target || summary.scope[0]}{!action?.target && summary.scope.length > 1 ? ` · ещё ${summary.scope.length - 1}` : ''}</p>
       {action?.dangerous && <p className="approval-note warn">Команда может удалить данные или изменить систему.</p>}
       {Boolean(action?.outside_project?.length) && <p className="approval-note">Файл вне папки проекта; изменение сохранится для отката.</p>}
+      {action?.scope && <p className="approval-note approval-grant">Дальше без вопросов в этом чате: {action.scope}</p>}
       {payload.review?.reason && <p className="approval-note approval-review">{payload.review.available ? 'Докки: ' : ''}{payload.review.reason}</p>}
       <details className="approval-details" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary>{expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}<span>Что будет сделано</span></summary>
@@ -206,6 +207,11 @@ function Question({ request }: { request: AgentRequest }) {
       </details>
       <div className="actions">
         <button type="button" className="secondary" onClick={guarded(() => respondRequest(request, { approved: false }))}><X aria-hidden="true" /><span>Отклонить</span></button>
+        {action?.project_edits && (
+          <button type="button" className="secondary" title="Дальше в этом чате Докки правит файлы проекта без вопросов, как «принимать правки» в Claude Code. Всё откатывается в «Изменениях»." onClick={guarded(() => respondRequest(request, { approved: true, scope: 'project_edits' }))}>
+            <Check aria-hidden="true" /><span>Все правки в проекте</span>
+          </button>
+        )}
         <button type="button" className="primary" onClick={guarded(() => respondRequest(request, { approved: true }))}><Check aria-hidden="true" /><span>Разрешить</span></button>
       </div>
     </section>

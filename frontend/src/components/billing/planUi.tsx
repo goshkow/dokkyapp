@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { useState, type CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { money, usePlans, type Plan, type PlanFeature, type PlanPrice } from '../../state/plans';
 
@@ -51,15 +51,42 @@ export function PlanHero({ plan, months }: { plan: Plan; months: number }) {
 }
 
 /** Состав плана в порядке сервера: сначала то, что добавляет план, затем под заголовком то, что есть в предыдущих. Описание - подсказкой, как на сайте: высота плана при этом не меняется. */
+const TIP_GAP = 8;
+const TIP_EDGE = 10;
+
+/** Подсказка функции плана: в верхнем слое страницы и целиком внутри окна - над строкой, а если места нет, под ней. */
+function PlanTip({ text, anchor }: { text: string; anchor: DOMRect }) {
+  const node = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties>({ left: TIP_EDGE, top: TIP_EDGE, visibility: 'hidden' });
+  useLayoutEffect(() => {
+    const panel = node.current;
+    if (!panel) return;
+    // верхний слой не зависит от прокрутки и трансформаций модального окна настроек и не обрезается им
+    try {
+      if (!panel.matches(':popover-open')) panel.showPopover();
+    } catch {
+      /* старый движок без Popover API: остаётся fixed */
+    }
+    const { width, height } = panel.getBoundingClientRect();
+    const left = Math.max(TIP_EDGE, Math.min(anchor.left, window.innerWidth - width - TIP_EDGE));
+    const above = anchor.top - TIP_GAP - height;
+    const below = anchor.bottom + TIP_GAP;
+    const top = above >= TIP_EDGE || below + height > window.innerHeight - TIP_EDGE
+      ? Math.max(TIP_EDGE, above)
+      : below;
+    setPlace({ left, top });
+  }, [text, anchor]);
+  return <div ref={node} popover="manual" className="plan-tip" role="tooltip" style={place}>{text}</div>;
+}
+
 export function FeatureList({ plan, heading }: { plan: Plan; heading: string }) {
-  const [tip, setTip] = useState<{ text: string; left: number; bottom: number; host: Element } | null>(null);
+  const [tip, setTip] = useState<{ text: string; anchor: DOMRect; host: Element } | null>(null);
   const fresh = plan.features.filter((feature) => !feature.from_previous_plan);
   const inherited = plan.features.filter((feature) => feature.from_previous_plan);
   const show = (node: HTMLElement, text: string | null | undefined) => {
     if (!text) return;
-    const box = node.getBoundingClientRect();
-    // настройки - модальный <dialog>: в верхнем слое подсказку из body не видно
-    setTip({ text, left: Math.max(10, Math.min(box.left, window.innerWidth - 300)), bottom: window.innerHeight - box.top + 8, host: node.closest('dialog') ?? document.body });
+    // настройки - модальный <dialog>: всё вне него инертно, подсказка остаётся его частью
+    setTip({ text, anchor: node.getBoundingClientRect(), host: node.closest('dialog') ?? document.body });
   };
   const hide = () => setTip(null);
   const row = (feature: PlanFeature, muted: boolean) => (
@@ -85,7 +112,7 @@ export function FeatureList({ plan, heading }: { plan: Plan; heading: string }) 
       {fresh.map((feature) => row(feature, false))}
       {inherited.length > 0 && <li className="plan-included-heading">{heading}</li>}
       {inherited.map((feature) => row(feature, true))}
-      {tip && createPortal(<div className="plan-tip" role="tooltip" style={{ left: tip.left, bottom: tip.bottom }}>{tip.text}</div>, tip.host)}
+      {tip && createPortal(<PlanTip text={tip.text} anchor={tip.anchor} />, tip.host)}
     </ul>
   );
 }

@@ -273,6 +273,19 @@ html[data-theme="light"] .project-map {
   background: var(--map-bg); box-shadow: inset 0 0 0 1px var(--line-soft); font-size: var(--fs-12);
 }
 .map-canvas { display: block; touch-action: none; }
+.map-graph { cursor: grab; outline: none; }
+.map-graph:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* переключатель вида карты: те же сегменты, что в настройках, только компактнее */
+.map-modes { display: inline-flex; align-self: flex-start; margin-bottom: 8px; padding: 2px; gap: 2px; border-radius: 10px; background: color-mix(in srgb, var(--text) 7%, transparent); }
+.map-modes button { min-height: 26px; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: var(--fs-12); font-weight: 550; transition: background-color 160ms ease, color 160ms ease; }
+.map-modes button:hover { color: var(--text); }
+.map-modes button[aria-selected="true"] { background: var(--hover); color: var(--text); box-shadow: 0 1px 2px #0004; }
+.map-modes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.map-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 2px; padding: 2px; border-radius: 10px; background: var(--map-float); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.map-zoom button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--muted); }
+.map-zoom button:hover { background: var(--hover); color: var(--text); }
+.map-zoom button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .map-tip {
   position: absolute; z-index: 2; width: max-content; max-width: 236px; display: flex; flex-direction: column; gap: 3px;
@@ -358,6 +371,7 @@ li[data-open] > .context-row .context-chevron { transform: rotate(90deg); }
 .quality-actions button { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 10px; font-size: var(--fs-12); }
 .quality-actions button svg { width: 13px; height: 13px; }
 .quality-actions button[aria-pressed="true"] { background: var(--hover); color: var(--text); }
+.quality-actions .quality-heat { padding: 0 8px; margin-left: auto; }
 .quality-actions .spin { animation: spin 900ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .quality-actions .spin { animation: none; } }
 .quality-section { display: flex; flex-direction: column; gap: 6px; }

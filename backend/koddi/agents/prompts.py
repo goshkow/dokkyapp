@@ -100,7 +100,7 @@ HARNESS_POLICY = (
     "a block is the user's rule - change the approach instead of retrying. "
     "Between your turns the user may undo your changes or parts of them, switch the git branch, commit and push from the app "
     "window, and find text in the chat: after a pause reread a file before editing it, and do not reapply what the user undid "
-    "unless asked. Publishing is the user's: do not push unless asked. When you call task.complete after changing files, pass "
+    "unless asked. Publishing is the user's: use git.push and github.pr_create only when asked (gh does the GitHub work: github.pr_view/pr_checks/run_view show CI; if gh is missing or not signed in, tell the user to run gh auth login). git.merge stops on conflicts and lists the files. When you call task.complete after changing files, pass "
     "commit_message: one line in the project's style saying what changed, not that checks pass. The app offers it in the "
     "commit box; a plain final report works too, then the app takes the first item under its changes heading, so keep it specific. "
     "Project files in Claude Code format - .claude/skills/*/SKILL.md, .claude/commands/*.md, .claude/agents/*.md, hooks in "
@@ -215,34 +215,38 @@ def compose_coding_context(
 
     normalized_mode = "development" if mode == "build" else mode
     custom = next((item for item in get_setting("custom_modes", []) if item["id"] == normalized_mode), None)
+    # порядок ключей - порядок байтов первого снимка: сначала общее для всех чатов, потом проект, в конце чат и ход.
+    # Сервер кладёт сессии с одинаковыми инструкциями и схемами в одну полосу кэша, и новый чат проекта читает
+    # из кэша не только инструкции, но и всё начало снимка до первого ключа, который у чатов разный
     context = {
-        "mode": normalized_mode,
-        "work_depth": depth if depth in DEPTH_FILES else "light",
-        # новый снимок доставляет политику старым сессиям без изменения закреплённого system
         "execution_focus_policy": EXECUTION_FOCUS_POLICY,
         "plan_policy": PLAN_POLICY,
         "harness_policy": HARNESS_POLICY,
+        "memory_policy": MEMORY_POLICY,
+        "environment": environment_info(),
+        "mode": normalized_mode,
         "active_mode_instructions": custom["instructions"] if custom else read_prompt(
             MODE_FILES.get(normalized_mode, MODE_FILES["chat"]), f"Mode: {normalized_mode}"
         ),
-        "workspace": str(workspace.resolve()) if workspace else None,
-        "workspace_note": workspace_note(workspace),
-        "environment": environment_info(),
-        "policy_profile": permission_profile(project_id),
         "context_budget": get_setting("context_budget", "medium"),
-        "project_instructions": redact(project_instructions(workspace)),
-        "memory": [redact(str(item.get("content", ""))) for item in (memory or [])[-12:]],
-        "memory_policy": MEMORY_POLICY,
-        "user_memory": (profile or {}).get("user", []),
-        "project_memory": (profile or {}).get("project", []),
-        **({"memory_erased": profile["memory_erased"]} if profile and "memory_erased" in profile else {}),
-        "plan": plan or [],
         # пустая строка тоже входит в снимок: удаление инструкций доходит до модели обычной дельтой
         "user_instructions": user_instructions(),
+        "user_memory": (profile or {}).get("user", []),
+        "workspace": str(workspace.resolve()) if workspace else None,
+        "workspace_note": workspace_note(workspace),
+        "policy_profile": permission_profile(project_id),
+        "project_instructions": redact(project_instructions(workspace)),
+        "project_memory": (profile or {}).get("project", []),
     }
     if project_map:
         # обзор карты меняется только при новых папках или заметках, поэтому дельта снимка редкая
         context["project_map"] = redact(project_map)
+    # дальше своё у каждого чата и хода
+    context["work_depth"] = depth if depth in DEPTH_FILES else "light"
+    context["memory"] = [redact(str(item.get("content", ""))) for item in (memory or [])[-12:]]
+    if profile and "memory_erased" in profile:
+        context["memory_erased"] = profile["memory_erased"]
+    context["plan"] = plan or []
     # подсказки хода: пустое значение тоже входит, чтобы прошлые подсказки снимались дельтой
     if hints is not None:
         context["skill_suggestions"] = hints.get("skill_suggestions") or {}

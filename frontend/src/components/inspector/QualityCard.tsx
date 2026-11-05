@@ -1,12 +1,62 @@
-import { Bug, Check, Flame, Play, RefreshCw, Trash2, Wrench } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Bug, Check, Flame, Lightbulb, Play, Search, Trash2, Wrench } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { focusComposer, setText } from '../../state/composer';
 import { guarded } from '../../state/overlay';
 import {
-  applyProposal, decide, deleteProposal, GATE_LABELS, gateDetail, latestByGate, loadQuality, runQuality, STAGE_LABELS, STATUS_LABELS,
+  applyProposal, decide, deleteProposal, GATE_LABELS, gateDetail, latestByGate, loadQuality, STAGE_LABELS, STATUS_LABELS,
   toggleHeat, useQuality, type Finding, type GateRun,
 } from '../../state/quality';
+import { attachSkill, loadSkills, skillsStore } from '../../state/skills';
 import { useView } from '../../state/view';
 import { openFile } from '../../state/workspace';
+
+/* кнопки не гоняют проверки молча, а дают агенту задачу: он сам прогонит гейты, разберёт итог и исправит */
+interface QualityPrompt { label: string; title: string; icon: ReactNode; skills: string[]; text: string }
+const QUALITY_PROMPTS: QualityPrompt[] = [
+  {
+    label: 'Проверить',
+    title: 'Агент прогонит гейты качества, линтер, типы и тесты, сделает ревью и исправит найденное',
+    icon: <Play aria-hidden="true" />,
+    skills: ['Инженерное качество (UB-mode principles)', 'Ревью кода'],
+    text: 'Проверь качество изменений в проекте. Прогони quality.run (сигналы, CRAP, дубли, слои) и qa.run (линтер, типы, тесты), '
+      + 'сделай ревью изменений с опорой на карту проекта (project.map) и исправь найденное. В конце кратко: что нашёл, что исправил, что осталось.',
+  },
+  {
+    label: 'Мутации',
+    title: 'Агент проведёт мутационное тестирование и допишет тесты на выживших мутантов',
+    icon: <Bug aria-hidden="true" />,
+    skills: ['Написание тестов', 'Инженерное качество (UB-mode principles)'],
+    text: 'Проведи мутационное тестирование изменённого кода: quality.run с gates=["mutation"]. На каждого выжившего мутанта допиши тест, '
+      + 'который его убивает, или объясни, почему мутант эквивалентный. Повтори прогон и покажи итог.',
+  },
+  {
+    label: 'Исследовать',
+    title: 'Агент изучит проект по карте и коду и опишет, как он устроен',
+    icon: <Search aria-hidden="true" />,
+    skills: [],
+    text: 'Исследуй проект: начни с карты (project.map), затем прочитай ключевые файлы. Опиши архитектуру, модули и их связи, поток данных, '
+      + 'как запускать и тестировать, слабые места. Сохрани важное заметками в карту проекта (project.map_update). Код не меняй.',
+  },
+  {
+    label: 'Улучшения',
+    title: 'Агент предложит улучшения с приоритетом, пользой и риском, ничего не меняя',
+    icon: <Lightbulb aria-hidden="true" />,
+    skills: ['Безопасный рефакторинг'],
+    text: 'Изучи проект по карте (project.map), отчётам качества и коду и предложи улучшения: архитектура, дубли, сложные места, '
+      + 'надёжность, производительность, тесты. Ничего не меняй, пока я не выберу: дай список с приоритетом, пользой и риском каждого пункта.',
+  },
+];
+
+async function askAgent(prompt: QualityPrompt): Promise<void> {
+  await loadSkills();
+  const items = skillsStore.get().items;
+  for (const name of prompt.skills) {
+    const skill = items.find((item) => item.name === name && item.enabled !== false);
+    if (skill) attachSkill(skill);
+  }
+  setText(prompt.text);
+  focusComposer();
+}
 
 type DecidableGate = 'dry' | 'mutation' | 'architecture';
 const DECIDABLE = new Set<string>(['dry', 'mutation', 'architecture']);
@@ -158,14 +208,13 @@ export function QualityView({ active }: { active: boolean }) {
   return (
     <div className="quality-card">
       <div className="quality-actions">
-        <button type="button" className="secondary" disabled={running} title="Сигналы, CRAP, дубли и слои по незакоммиченным изменениям" onClick={guarded(() => runQuality(['signals', 'crap', 'dry', 'architecture']))}>
-          {running ? <RefreshCw className="spin" aria-hidden="true" /> : <Play aria-hidden="true" />}<span>Проверить</span>
-        </button>
-        <button type="button" className="secondary" disabled={running} title="Мутационное тестирование изменённых строк в изолированной копии проекта: запускает тесты проекта" onClick={guarded(() => runQuality(['mutation']))}>
-          <Bug aria-hidden="true" /><span>Мутации</span>
-        </button>
-        <button type="button" className="secondary" aria-pressed={heatOn} title="Подсветить на карте проекта файлы с долгом качества" onClick={guarded(toggleHeat)}>
-          <Flame aria-hidden="true" /><span>На карте</span>
+        {QUALITY_PROMPTS.map((item) => (
+          <button key={item.label} type="button" className="secondary" disabled={running} title={item.title} onClick={guarded(() => askAgent(item))}>
+            {item.icon}<span>{item.label}</span>
+          </button>
+        ))}
+        <button type="button" className="secondary quality-heat" aria-pressed={heatOn} aria-label="Подсветить на карте проекта файлы с долгом качества" title="Подсветить на карте проекта файлы с долгом качества" onClick={guarded(toggleHeat)}>
+          <Flame aria-hidden="true" />
         </button>
       </div>
       {load === 'failed' && <p className="quality-alert">{error || 'Не удалось загрузить данные качества'}</p>}
@@ -174,7 +223,7 @@ export function QualityView({ active }: { active: boolean }) {
       {latest.length ? (
         <ul className="quality-gates">{latest.map((run) => <GateRow key={run.id} run={run} />)}</ul>
       ) : load === 'ready' ? (
-        <p className="muted">Гейты ещё не запускались. Докки прогоняет их сам после правок кода, или нажми «Проверить».</p>
+        <p className="muted">Гейты ещё не запускались. Докки прогоняет их сам после правок кода, или нажми «Проверить» - агент прогонит их в чате.</p>
       ) : null}
       <Proposals />
       {decisions.length > 0 && (

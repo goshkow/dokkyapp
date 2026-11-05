@@ -341,14 +341,25 @@ class DokkyClient:
                 409: "Данные изменились. Обновите страницу",
                 422: "Докки отклонил параметры запроса",
             }
+            code = str(error.get("code") or codes.get(response.status_code, "upstream_unavailable"))
+            details = dict(error)
+            # сбои шлюза и перегрузка проходят сами: приложение повторяет запрос, а не показывает ошибку
+            if "retryable" not in details and (
+                response.status_code in {408, 502, 503, 504}
+                or (response.status_code == 429 and code not in {"agent_loop_limit", "quota_exceeded"})
+            ):
+                details["retryable"] = True
+            header = response.headers.get("retry-after", "").strip()
+            if not details.get("retry_after_seconds") and header.isdecimal():
+                details["retry_after_seconds"] = min(int(header), 90)
             raise DokkyError(
                 str(
                     error.get("message")
                     or messages.get(response.status_code, "Докки временно недоступен")
                 )[:1000],
                 response.status_code,
-                str(error.get("code") or codes.get(response.status_code, "upstream_unavailable")),
-                details=error,
+                code,
+                details=details,
             )
 
     @staticmethod
@@ -487,7 +498,10 @@ class DokkyClient:
                     method, API + path, headers=headers, json=json, params=params, files=files, data=data
                 )
         except httpx.TransportError as exc:
-            raise DokkyError("Не удалось связаться с Докки. Проверьте подключение к интернету") from exc
+            raise DokkyError(
+                "Не удалось связаться с Докки. Проверьте подключение к интернету",
+                details={"retryable": True},
+            ) from exc
         if account_identity() != identity:
             raise DokkyError("Аккаунт изменился. Повторите действие", 409, "session_changed")
         # 401 от прокси или балансировщика приходит HTML-страницей: это не истёкший токен, обновлять нечего

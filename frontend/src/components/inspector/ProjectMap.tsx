@@ -1,5 +1,5 @@
 import { Network } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { buildTree, layoutTree, tileAt, type Tile, type TreeFile } from '../../lib/treemap';
 import { guarded } from '../../state/overlay';
 import { loadMap, setMapActive, useProjectMap } from '../../state/projectMap';
@@ -7,8 +7,20 @@ import { useQuality, type HeatItem } from '../../state/quality';
 import { useView } from '../../state/view';
 import { openFile, openFolder } from '../../state/workspace';
 import { MissingFolder, useFolderMissing } from './MissingFolder';
+import { ProjectGraph } from './ProjectGraph';
 
 const HUES = 8;
+const MODES = [['tiles', 'Мозаика'], ['graph', 'Граф']] as const;
+type Mode = (typeof MODES)[number][0];
+const MODE_KEY = 'dokky.mapMode';
+
+const savedMode = (): Mode => {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'graph' ? 'graph' : 'tiles';
+  } catch {
+    return 'tiles';
+  }
+};
 
 interface Palette { hues: string[]; neutral: string; text: string; muted: string; out: string; into: string; heat: string; font: string }
 
@@ -109,6 +121,26 @@ export function ProjectMapView({ active }: { active: boolean }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<Hover | null>(null);
   const [theme, setTheme] = useState(0);
+  const [mode, setMode] = useState<Mode>(savedMode);
+  const tabs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const chooseMode = (next: Mode, focus = false) => {
+    setMode(next);
+    setHover(null);
+    try {
+      localStorage.setItem(MODE_KEY, next);
+    } catch { /* без хранилища выбор живёт до закрытия карточки */ }
+    if (focus) tabs.current[MODES.findIndex(([id]) => id === next)]?.focus();
+  };
+  // стрелки переключают вид, Home и End - первый и последний
+  const onModeKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const at = MODES.findIndex(([id]) => id === mode);
+    const next = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? at + 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? at - 1
+      : event.key === 'Home' ? 0 : event.key === 'End' ? MODES.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    chooseMode((MODES[(next + MODES.length) % MODES.length] as (typeof MODES)[number])[0], true);
+  };
 
   useEffect(() => {
     setMapActive(active);
@@ -151,7 +183,7 @@ export function ProjectMapView({ active }: { active: boolean }) {
 
   useEffect(() => {
     const element = canvas.current;
-    if (!element || !size.width || !size.height) return;
+    if (!element || !size.width || !size.height || mode !== 'tiles') return;
     const ratio = window.devicePixelRatio || 1;
     if (element.width !== Math.round(size.width * ratio)) element.width = Math.round(size.width * ratio);
     if (element.height !== Math.round(size.height * ratio)) element.height = Math.round(size.height * ratio);
@@ -262,7 +294,7 @@ export function ProjectMapView({ active }: { active: boolean }) {
       }
     }
     context.globalAlpha = 1;
-  }, [tiles, hover, files, importers, tileOfFile, heat, size.width, size.height, theme]);
+  }, [tiles, hover, files, importers, tileOfFile, heat, size.width, size.height, theme, mode]);
 
   const point = (event: { clientX: number; clientY: number }) => {
     const box = canvas.current?.getBoundingClientRect();
@@ -291,16 +323,35 @@ export function ProjectMapView({ active }: { active: boolean }) {
   const empty = Boolean(tree && !tree.files.length && !tree.rest.length);
   return (
     <div className="project-map">
-      <div className="map-stage" ref={stage} onPointerLeave={() => setHover(null)}>
-        <canvas
-          ref={canvas}
-          className="map-canvas"
-          role="img"
-          aria-label={tree ? `Карта проекта мозаикой: ${plural(tree.totals.files, 'файл', 'файла', 'файлов')}. Те же файлы есть в карточке «Файлы».` : 'Карта проекта'}
-          style={{ width: size.width || '100%', height: size.height || '100%' }}
-          onPointerMove={onPointerMove}
-          onClick={onClick}
-        />
+      <div className="map-modes" role="tablist" aria-label="Вид карты" onKeyDown={onModeKey}>
+        {MODES.map(([id, label], index) => (
+          <button
+            key={id}
+            ref={(node) => { tabs.current[index] = node; }}
+            type="button"
+            role="tab"
+            id={`map-tab-${id}`}
+            aria-selected={mode === id}
+            aria-controls="map-view"
+            tabIndex={mode === id ? 0 : -1}
+            onClick={() => chooseMode(id)}
+          >{label}</button>
+        ))}
+      </div>
+      <div className="map-stage" id="map-view" role="tabpanel" aria-labelledby={`map-tab-${mode}`} ref={stage} onPointerLeave={() => setHover(null)}>
+        {mode === 'tiles' ? (
+          <canvas
+            ref={canvas}
+            className="map-canvas"
+            role="img"
+            aria-label={tree ? `Карта проекта мозаикой: ${plural(tree.totals.files, 'файл', 'файла', 'файлов')}. Те же файлы есть в карточке «Файлы».` : 'Карта проекта'}
+            style={{ width: size.width || '100%', height: size.height || '100%' }}
+            onPointerMove={onPointerMove}
+            onClick={onClick}
+          />
+        ) : stage.current && size.width ? (
+          <ProjectGraph files={files} width={size.width} height={size.height} colors={colors.current ?? (colors.current = palette(stage.current))} theme={theme} />
+        ) : null}
         {missing && project ? (
           <div className="map-empty"><MissingFolder project={project} /></div>
         ) : load === 'failed' && !tree ? (
@@ -313,7 +364,7 @@ export function ProjectMapView({ active }: { active: boolean }) {
         ) : empty ? (
           <div className="map-empty"><strong>На карте пока пусто</strong><p>В папке нет файлов исходного кода или документации.</p></div>
         ) : null}
-        {hover && tree ? <Tooltip hover={hover} files={files} importers={importers} heat={heat} width={size.width} height={size.height} /> : null}
+        {mode === 'tiles' && hover && tree ? <Tooltip hover={hover} files={files} importers={importers} heat={heat} width={size.width} height={size.height} /> : null}
       </div>
     </div>
   );

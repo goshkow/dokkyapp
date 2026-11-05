@@ -40,4 +40,6 @@ async def discover_agent_tools() -> tuple[list[dict], dict[str, tuple[str, str]]
             )
         except (ValueError, KeyError, TypeError, SchemaError) as exc:
             errors.append({"server": item.get("server"), "error": str(exc)})
+    # серверы отвечают в разном порядке; схемы - часть отпечатка, по которому сервер делит кэш между чатами
+    schemas.sort(key=lambda item: item["function"]["name"])
     return schemas, bindings, errors

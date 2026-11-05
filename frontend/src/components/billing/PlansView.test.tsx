@@ -55,6 +55,32 @@ describe('каталог подписок', () => {
     })!;
     render(<dialog open><PlansView catalog={detailed} /></dialog>);
     fireEvent.click(screen.getByRole('button', { name: 'Чаты: Все ваши чаты' }));
-    expect(screen.getByRole('tooltip').closest('dialog')).toBeTruthy();
+    // jsdom не умеет Popover API: подсказка для него скрыта, в приложении она в верхнем слое
+    const tip = screen.getByRole('tooltip', { hidden: true });
+    expect(tip.closest('dialog')).toBeTruthy();
+    expect(tip.textContent).toBe('Все ваши чаты');
+  });
+
+  it('подсказка у края окна не выходит за него: при нехватке места сверху встаёт под строку', () => {
+    const detailed = parseCatalog({
+      current: { plan: 'a', plan_name: 'A' },
+      plans: [{ id: 'a', name: 'A', action: 'current', features: [{ id: 'one', label: 'Ранний доступ', description: 'Новые функции раньше всех' }] }],
+    })!;
+    render(<PlansView catalog={detailed} />);
+    const button = screen.getByRole('button', { name: 'Ранний доступ: Новые функции раньше всех' });
+    button.getBoundingClientRect = () => ({ left: window.innerWidth - 20, top: 4, right: window.innerWidth, bottom: 24, width: 20, height: 20, x: window.innerWidth - 20, y: 4, toJSON: () => ({}) });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function box(this: HTMLElement) {
+      if (this.getAttribute('role') === 'tooltip') return { left: 0, top: 0, right: 200, bottom: 60, width: 200, height: 60, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+      return original.call(this);
+    };
+    try {
+      fireEvent.click(button);
+      const tip = screen.getByRole('tooltip', { hidden: true });
+      expect(parseFloat(tip.style.left) + 200).toBeLessThanOrEqual(window.innerWidth - 10);
+      expect(parseFloat(tip.style.top)).toBe(32);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = original;
+    }
   });
 });

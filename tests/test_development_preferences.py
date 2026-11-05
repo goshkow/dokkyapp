@@ -147,11 +147,20 @@ def test_new_account_choice_overrides_legacy_read_only(profile):
 def test_full_access_left_on_the_account_does_not_reach_a_project(profile):
     client, project, other, _, _ = profile
     # так значение попадало в аккаунт раньше, при выборе в любом проекте
-    assert client.put('/api/settings', json={'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
+    storage.set_setting('permission_profile:owner-a', 'full')
     assert permission_profile(None) == 'full'
     assert permission_profile(project) == 'trusted'
     assert client.put('/api/settings', json={'project_id': other, 'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
     assert permission_profile(other) == 'full'
+
+
+def test_full_access_chosen_without_project_reaches_new_projects(profile):
+    client, project, _, _, _ = profile
+    # «Разрешить всё» выбрано в чате до выбора папки: чат с новым проектом не должен тихо перейти на автопроверку
+    assert client.put('/api/settings', json={'permission_profile': 'full', 'confirm_full_access': True}).status_code == 200
+    assert permission_profile(project) == 'full'
+    assert client.put('/api/settings', json={'permission_profile': 'trusted'}).status_code == 200
+    assert permission_profile(project) == 'trusted'
 
 
 def test_setting_updates_keep_the_captured_owner_on_account_switch(profile, monkeypatch):

@@ -99,3 +99,21 @@ def test_answer_for_another_turn_does_not_reach_a_reused_request_id():
     with db() as conn:
         stored = json.loads(conn.execute("SELECT response_json FROM agent_requests WHERE id=?", (request,)).fetchone()[0])
     assert "turn_id" not in stored and stored["answer"].endswith("8080")
+
+
+def test_approval_keeps_only_the_project_edits_scope():
+    client = TestClient(create_app())
+    chat = client.post("/api/chats", json={"title": "Правки", "mode": "development", "model": "test"}).json()
+    stored = []
+    for body in ({"approved": True, "scope": "everything"}, {"approved": False, "scope": "project_edits"},
+                 {"approved": True, "scope": "project_edits"}):
+        with db() as conn:
+            turn = conn.execute("INSERT INTO turns(chat_id,status) VALUES (?, 'running')", (chat["id"],)).lastrowid
+            request = conn.execute(
+                "INSERT INTO agent_requests(turn_id,kind,payload_json) VALUES (?, 'approval', '{}')", (turn,)
+            ).lastrowid
+        assert client.post(f"/api/agent/requests/{request}/respond", json=body).status_code == 200
+        with db() as conn:
+            stored.append(json.loads(conn.execute("SELECT response_json FROM agent_requests WHERE id=?", (request,)).fetchone()[0]))
+    # шире одного объекта можно только «все правки проекта» и только при согласии
+    assert stored == [{"approved": True}, {"approved": False}, {"approved": True, "scope": "project_edits"}]

@@ -60,8 +60,9 @@ koddi-backend
 - Разрешения, остановка задачи, журнал действий, просмотр изменений и откат.
 - Правила `AGENTS.md`, MCP, навыки, память проекта, сжатие длинной истории.
 - Computer Use: включается отдельно в Настройки -> Система, каждое действие подтверждается.
-  На macOS нужна версия 14+ и разрешения Accessibility и Screen Recording для нативного
-  помощника (собрать его: `python scripts/build_computer_helper.py`). Linux не поддерживается.
+  Работает через agent-desktop (Apache-2.0, `python scripts/fetch_agent_desktop.py`
+  скачивает его для этой платформы). На macOS нужны разрешения Accessibility и Screen Recording.
+  Linux не поддерживается.
 
 Ограничения контекста и генерации задаёт сервер Докки.
 

@@ -7,7 +7,7 @@ DMG. Developer ID и нотаризации нет, поэтому скачан�
 ## Как собирается
 
 - `scripts/build_macos.sh` собирает standalone `.app` через Nuitka с плагином PySide6 и
-  кладёт внутрь Swift-помощник, интерфейс, переводы, промпты и миграции.
+  кладёт внутрь agent-desktop, интерфейс, переводы, промпты и миграции.
 - `scripts/finalize_macos_app.py` дописывает `Info.plist`, включает headless Chromium для
   Playwright и подписывает bundle. Без `SIGN_IDENTITY` подпись ad-hoc (`-`), с ним добавляются
   `--options runtime --timestamp`. Тип сертификата скрипт не проверяет.
@@ -21,13 +21,13 @@ DMG. Developer ID и нотаризации нет, поэтому скачан�
 1. Нет Developer ID Application и нотаризации. Для раздачи нужен платный аккаунт Apple
    Developer Program, без него Gatekeeper не пустит приложение без ручного разрешения в
    настройках: начиная с Sequoia Control-click это уже не обходит.
-2. Подпись идёт одним `codesign --force --deep`, и все вложенные процессы (main, Node, Swift
+2. Бинарники agent-desktop подписываются отдельно (Developer ID, hardened runtime), затем бандл одним
+   `codesign --force --deep`, и все вложенные процессы (main, Node, agent-desktop,
    helper, QtWebEngineProcess) получают одинаковые entitlements. У Chromium из
    `Contents/Resources/playwright-browsers/` остаётся родная ad-hoc подпись без entitlements.
    Для релиза нужна подпись изнутри наружу с отдельными правами на каждый исполняемый файл.
 3. `LSMinimumSystemVersion` в `Info.plist` - 14.4. Это максимум из того, что реально нужно
-   при запуске: фреймворки Qt собраны под 14.4, пакеты PySide6 заявляют macOS 14, Swift-помощник
-   Computer Use - 14.0 (и сам проверяет версию). Скан всех Mach-O в сборке 0.2.4 дал ещё два
+   при запуске: фреймворки Qt собраны под 14.4, пакеты PySide6 заявляют macOS 14. Скан всех Mach-O в сборке 0.2.4 дал ещё два
    значения выше: привязки PySide6 и shiboken объявляют 26.0, а `ffmpeg` браузера Playwright - 15.0.
    Загрузчик macOS не отказывает библиотекам из-за этой отметки, важны только реально
    используемые символы. Скан сборки 1.0.0 (01.11.2026, 111 Mach-O): минимум 26.0 у 12 привязок,

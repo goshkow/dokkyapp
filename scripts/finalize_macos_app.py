@@ -74,7 +74,21 @@ def bundle_browser(bundle: Path) -> None:
         browsers.symlink_to(Path("../../../../Resources/playwright-browsers"))
 
 
+def sign_agent_desktop(bundle: Path, identity: str) -> None:
+    """Бинарники agent-desktop подписываются нашим Developer ID с hardened runtime до подписи всего бандла."""
+    folder = bundle / "Contents" / "MacOS" / "koddi" / "computer_use" / "native" / "agent-desktop"
+    if not folder.is_dir():
+        raise SystemExit("В бандле нет agent-desktop: сначала python scripts/fetch_agent_desktop.py")
+    for path in sorted(folder.iterdir()):
+        if path.is_file() and path.name.startswith("agent-desktop") and not path.is_symlink():
+            command = ["codesign", "--force", "--sign", identity]
+            if identity != "-":
+                command += ["--options", "runtime", "--timestamp"]
+            subprocess.run([*command, str(path)], check=True)
+
+
 def sign(bundle: Path, identity: str) -> None:
+    sign_agent_desktop(bundle, identity)
     with tempfile.TemporaryDirectory() as tmp:
         entitlements = Path(tmp) / "entitlements.plist"
         entitlements.write_bytes(plistlib.dumps(ENTITLEMENTS))

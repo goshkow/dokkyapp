@@ -1,5 +1,7 @@
 /* События хода: живой текст, статус, журнал, план, лимиты. Один обработчик на локальный и облачный потоки. */
 import { registerMedia } from '../lib/cloud';
+import { announceAgentNotice } from '../lib/bridge';
+import { recoveryKind } from '../lib/recovery';
 import { conciseStatus, liveLabel, type Message } from '../lib/journal';
 import { readSse } from '../lib/sse';
 import type { Id } from '../lib/types';
@@ -152,6 +154,17 @@ export function resetStreamMessage(delta: { message_id?: string | number }): voi
 
 /* обработка событий */
 const terminal = ['turn.completed', 'turn.failed', 'turn.cancelled'];
+
+/** Идущие повторы, когда сервер или модель не ответили: номер, сколько всего и когда следующий. */
+interface Retry { attempt: number; total: number; until: number }
+let retry: Retry | null = null;
+
+/** «Докки не отвечает · повтор 2 из 6 через 8 с» - строка состояния, пока приложение само повторяет запрос. */
+export function retryStatus(value: Retry, now = Date.now()): string {
+  const seconds = Math.ceil((value.until - now) / 1000);
+  const head = `Докки не отвечает · повтор ${value.attempt} из ${value.total}`;
+  return seconds > 0 ? `${head} через ${seconds} с` : `${head}…`;
+}
 // идущий вызов: подпись живого вывода берётся из его имени и команды
 let runningCall: Record<string, any> | null = null;
 
@@ -159,7 +172,13 @@ function localJournal(kind: string, data: Record<string, any>): void {
   if (!isDevelopment()) return;
   if (data.channel && !['commentary', 'final'].includes(data.channel)) return;
   if (data.turn_id) chat.set({ turnId: data.turn_id });
-  if (kind === 'agent.waiting' || kind === 'tool.waiting') return;
+  if (kind === 'agent.retrying') {
+    retry = { attempt: Number(data.attempt) || 1, total: Number(data.total) || 1, until: Date.now() + (Number(data.seconds) || 0) * 1000 };
+  } else if (['message.delta', 'tool.call', 'agent.step', ...terminal].includes(kind)) retry = null;
+  if (kind === 'agent.waiting' || kind === 'tool.waiting' || kind === 'agent.retrying') {
+    if (retry && kind !== 'tool.waiting') chat.set({ liveStatus: retryStatus(retry) });
+    return;
+  }
   const patch: Partial<ReturnType<typeof chat.get>> = {};
   if (kind === 'turn.started') {
     patch.liveStatus = 'Думаю…';
@@ -222,6 +241,8 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
   const development = isDevelopment();
   const away = () => currentChatId() !== chatId || isDevelopment() !== development;
   const gone = () => controller.signal.aborted || away();
+  // повторы прошлого потока (оборванного сменой чата) к этому не относятся
+  retry = null;
   for await (const event of readSse(response, controller.signal)) {
     const { event: kind, data: payload } = event;
     if (!isDevelopment()) cloudCursor.value = event.id || cloudCursor.value;
@@ -252,7 +273,7 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     }
     if (kind === 'turn.started') setPlanTurnState({ active: true, turn: { id: payload.turn_id ?? chat.get().turnId ?? undefined } });
     if (kind === 'turn.started' && payload.chat_title) retitle(payload.chat_title);
-    if (kind === 'agent.waiting') setStatus(`Докки обрабатывает запрос · ${payload.seconds || 1} с`);
+    if (kind === 'agent.waiting' || kind === 'agent.retrying') setStatus(retry ? retryStatus(retry) : `Докки обрабатывает запрос · ${payload.seconds || 1} с`);
     if (kind === 'agent.step') setStatus('Агент выполняет задачу…');
     if (kind === 'search.started') setStatus('Докки ищет информацию…');
     if (kind === 'search.source') {
@@ -286,7 +307,12 @@ export async function consume(response: Response, chatId: Id, controller: AbortC
     if (kind === 'turn.failed') {
       // лимит кончился посреди хода: полоска лимита и кнопка продления должны появиться сразу
       if (['quota_exceeded', 'window_exhausted', 'overall_exhausted', 'usage_exhausted', 'rate_limited'].includes(String(payload.code ?? ''))) void loadLimits();
-      if (payload.code === 'plan_required') {
+      const recovery = recoveryKind(String(payload.code ?? ''));
+      if (recovery) {
+        // сбой сервера или лимит: вместо всплывашки плашка над полем с «Повторить попытку» или «Продолжить работу»
+        const id = Number(currentChatId());
+        if (recovery === 'stalled' && Number.isFinite(id)) announceAgentNotice(id, 'stalled', view.get().chat?.title ?? '');
+      } else if (payload.code === 'plan_required') {
         // подписка закончилась или не включает режим: задача остановлена, всё сделанное и очередь сохранены, запись закрыта
         handlePlanRequired();
         notify('Докки Code сейчас недоступен на вашем тарифе. Работа сохранена, чат можно читать. Обновите план, чтобы продолжить', true);

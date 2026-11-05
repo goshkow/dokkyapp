@@ -42,6 +42,15 @@ function sweep(force = false): void {
   if (ui.get().scope === 'development') void loadLocal(false).catch(() => undefined);
 }
 
+const kindOf = (event: Event): string => {
+  try {
+    const value = (JSON.parse((event as MessageEvent<string>).data) as { kind?: unknown }).kind;
+    return typeof value === 'string' ? value : 'question';
+  } catch {
+    return 'question';
+  }
+};
+
 const chatOf = (event: Event): number | null => {
   try {
     const value = (JSON.parse((event as MessageEvent<string>).data) as { chat_id?: unknown }).chat_id;
@@ -103,7 +112,7 @@ function listen(): void {
   // агент ждёт ответа: карточка появляется, даже если окно не читает поток этого хода (очередь, переподключение)
   source.addEventListener('agent.request.created', (event) => {
     const chatId = chatOf(event);
-    if (chatId !== null) onQuestion(chatId, true);
+    if (chatId !== null) onQuestion(chatId, true, kindOf(event));
     if (chatId === null || !isDevelopment() || String(currentChatId()) !== String(chatId)) return;
     loadRequests();
     if (!ctl.stream) void remoteTurn(event).catch(() => undefined);

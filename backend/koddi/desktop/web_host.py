@@ -56,7 +56,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from koddi.desktop import prune_webengine_caches, software_rendering, webengine_cache_path
+from koddi.desktop import (
+    auto_render_mode, closing, notices, prune_webengine_caches, software_rendering, webengine_cache_path,
+)
 
 
 def __getattr__(name: str):
@@ -405,8 +407,6 @@ class WindowBridge(QObject):
         """Агент закончил ход или ждёт ответа: окно решает, нужно ли системное уведомление."""
         if self.role != "main" or not self._own_page():
             return
-        from koddi.desktop import notices
-
         notice = notices.parse(payload)
         if notice is not None:
             self.host.agent_notice(notice)
@@ -701,7 +701,11 @@ class WebHost(QMainWindow):
         self.notices = None
         self._unseen_notices = 0
         self._stop_confirmed = False
+        # человек просит закрыть окно (кнопка, Cmd+W) / идёт настоящий выход из программы
+        self._user_close = False
+        self._quitting = False
         self._notice_chat = 0
+        self._notice_times: dict[tuple[int, str], float] = {}
         self._last_regions = None
         self._final_width = None
         if self.glass:
@@ -813,7 +817,7 @@ class WebHost(QMainWindow):
         profile.setUrlRequestInterceptor(self.interceptor)
         if "KoddiDesktop/" not in profile.httpUserAgent():
             agent = profile.httpUserAgent() + " KoddiDesktop/0.2"
-            if software_rendering():
+            if software_rendering() or auto_render_mode():
                 agent += " KoddiRender/software"
             profile.setHttpUserAgent(agent)
         self.view.page().profile().downloadRequested.connect(self._save_download)
@@ -926,6 +930,13 @@ class WebHost(QMainWindow):
             mode = QUrlQuery(url).queryItemValue("mode")
             if mode in {"chat", "search", "development"}:
                 self.setWindowTitle("Докки Code" if mode == "development" else "Докки")
+        elif url.host() == "open-privacy-settings":
+            from koddi.computer_use.service import SETTINGS_LINKS
+
+            # только свои ссылки на разделы приватности, адрес от страницы не принимается
+            link = SETTINGS_LINKS.get(QUrlQuery(url).queryItemValue("pane"))
+            if sys.platform == "darwin" and link:
+                QDesktopServices.openUrl(QUrl(link))
         elif url.host() == "open-url":
             target = QUrl(QUrlQuery(url).queryItemValue("url", QUrl.ComponentFormattingOption.FullyDecoded))
             if (
@@ -1188,6 +1199,8 @@ class WebHost(QMainWindow):
         if IS_MAC:
             from koddi.desktop import macos_frame
 
+            # из трея окно могло быть спрятано вместе со значком в Dock
+            macos_frame.show_dock_icon()
             macos_frame.activate_app()
         self.activateWindow()
 
@@ -1204,14 +1217,20 @@ class WebHost(QMainWindow):
         return self.isVisible() and not self.isMinimized() and self.isActiveWindow()
 
     def agent_notice(self, notice) -> None:
-        """Окно на переднем плане - человек и так видит чат, уведомление лишнее."""
+        """Окно на переднем плане - человек и так видит чат, уведомление лишнее; спрятанное в трей - не на переднем."""
         if self._in_front():
             return
+        # страница может прислать одно и то же много раз подряд (повторы, перерисовка): одно уведомление в 5 с
+        stamp = (notice.chat_id, notice.kind)
+        now = time.monotonic()
+        if now - self._notice_times.get(stamp, -60.0) < 5:
+            return
+        self._notice_times[stamp] = now
         self._notice_chat = notice.chat_id
         self._unseen_notices += 1
         # кнопка на панели задач Windows мигает, пока окно не откроют; Dock прыгает до открытия только ради вопроса,
         # о конце работы на Mac хватает уведомления и числа на значке
-        if notice.kind == "question" or not IS_MAC:
+        if notice.kind in notices.URGENT or not IS_MAC:
             QApplication.alert(self, 0)
         if IS_MAC:
             from koddi.desktop import macos_notices
@@ -1352,7 +1371,7 @@ class WebHost(QMainWindow):
         elif action == "maximize":
             self.toggle_maximized()
         else:
-            self.close()
+            self.close_window()
 
     def _window_frame_state(self):
         return {
@@ -1404,6 +1423,11 @@ class WebHost(QMainWindow):
 
     def _on_load_finished(self, ok: bool) -> None:
         if ok:
+            if not self._ui_loaded:
+                from koddi.desktop import startup_succeeded
+
+                # падение при первых кадрах после загрузки тоже считается падением запуска
+                QTimer.singleShot(4000, startup_succeeded)
             self._ui_loaded = True
             self.startup_label.stop()
             self.apply_lights(self.view)
@@ -1474,12 +1498,27 @@ class WebHost(QMainWindow):
 
     def quit_app(self, *_args) -> None:
         if self._stop_agreed():
+            # Qt 6 при quit() сначала шлёт closeEvent окнам: он не должен спрятать окно вместо выхода
+            self._quitting = True
             QApplication.quit()
 
-    def closeEvent(self, event) -> None:  # noqa: N802
-        if not self._stop_agreed():
-            event.ignore()
-            return
+    def close_window(self, *_args) -> None:
+        """Закрытие по просьбе человека: с включённым «Закрывать в трей» окно прячется, а не завершает программу."""
+        self._user_close = True
+        try:
+            self.close()
+        finally:
+            self._user_close = False
+
+    def _close_to_tray(self) -> bool:
+        from koddi.storage.db import get_setting
+
+        try:
+            return get_setting("close_to_tray", True) is not False
+        except Exception:  # noqa: BLE001 - без настроек закрытие остаётся прежним
+            return False
+
+    def _save_geometry(self) -> None:
         try:
             rect = self.normalGeometry() if self.isMaximized() or self.isMinimized() else self.geometry()
             self._geometry_file().write_text(
@@ -1491,12 +1530,57 @@ class WebHost(QMainWindow):
             )
         except OSError:
             pass
+
+    def hide_to_tray(self) -> None:
+        self._save_geometry()
+        self.hide()
+        if IS_MAC:
+            from koddi.desktop import macos_frame
+
+            macos_frame.hide_dock_icon()
+        self._tray_hint_once()
+
+    def _tray_hint_once(self) -> None:
+        """Первое скрытие в трей: одно уведомление, куда делось окно и что агент работает."""
+        from koddi.storage.db import get_setting, set_setting
+
+        try:
+            if get_setting(closing.HINT_SETTING, False):
+                return
+            set_setting(closing.HINT_SETTING, True)
+        except Exception:  # noqa: BLE001
+            return
+        notice = notices.Notice(0, "tray", "")
+        if IS_MAC:
+            if self.notices is not None:
+                self.notices.post(notice)
+        elif self.tray is not None and hasattr(self.tray, "notify"):
+            self.tray.notify(notice.title, notice.body, self.bring_to_front)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        action = closing.close_action(
+            user_close=self._user_close or event.spontaneous(), quitting=self._quitting,
+            close_to_tray=self._close_to_tray(), has_tray=self.tray is not None,
+        )
+        if action == closing.HIDE:
+            event.ignore()
+            self.hide_to_tray()
+            return
+        if not self._stop_agreed():
+            # выход отменили: следующий крестик снова прячет в трей
+            self._quitting = False
+            event.ignore()
+            return
+        self._save_geometry()
         if IS_MAC:
             from koddi.desktop import macos_frame
 
             macos_frame.detach(self)
             macos_frame.hide_dock_icon()
-        super().closeEvent(event)
+        QMainWindow.closeEvent(self, event)
+        # при значке в трее последнее закрытое окно само программу не завершает
+        self._quitting = True
+        QTimer.singleShot(0, QApplication.quit)
 
     def toggle_maximized(self) -> None:
         self.showNormal() if self.isMaximized() else self.showMaximized()
@@ -1720,6 +1804,20 @@ def _port_free(port: int) -> bool:
     return True
 
 
+class QuitWatch(QObject):
+    """Выход из программы (Cmd+Q, Dock - «Выйти», выход из системы, обновление) приходит событием Quit:
+    окна после него закрываются по-настоящему, а не прячутся в трей."""
+
+    def __init__(self, host) -> None:
+        super().__init__(host)
+        self.host = host
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Quit:
+            self.host._quitting = True
+        return False
+
+
 def _api_port() -> int:
     """Порт локального сервера остаётся прежним между запусками: localStorage и IndexedDB привязаны к адресу страницы,
     а с новым портом при каждом запуске режим, раскрытые проекты и кэш чатов терялись бы."""
@@ -1744,6 +1842,17 @@ def _api_port() -> int:
 
 
 def main() -> None:
+    try:
+        _main()
+    except BaseException:
+        from koddi.desktop import startup_succeeded
+
+        # ошибка Python при запуске - не сбой видеокарты: откат отрисовки из-за неё не нужен
+        startup_succeeded()
+        raise
+
+
+def _main() -> None:
     from koddi.desktop.session import activation_server, register_protocol
     from koddi.config import data_dir
 
@@ -1752,8 +1861,16 @@ def main() -> None:
         from koddi.desktop import macos_menu
 
         macos_menu.set_process_name()
+    from koddi.desktop import prepare_window_rendering
+
+    # до QApplication: Qt читает режим отрисовки при создании первого окна
+    prepare_window_rendering()
     app = QApplication(sys.argv)
     app.setApplicationName("Докки")
+    from koddi.desktop import startup_succeeded
+
+    # обычный выход (второй запуск, закрытие до загрузки) - не падение: откат нужен только после краша
+    app.aboutToQuit.connect(startup_succeeded)
     if IS_MAC:
         macos_menu.install_qt_translations([app_dir() / "qt_translations"])
     url_handler = UrlHandler()
@@ -1761,6 +1878,7 @@ def main() -> None:
         QDesktopServices.setUrlHandler("koddi", url_handler, "handle")
     broker = activation_server()
     if broker is None:
+        startup_succeeded()
         return
     from koddi.updates.service import newer_version_seen
 
@@ -1777,6 +1895,7 @@ def main() -> None:
             f"Откройте актуальную Докки (обычно она в папке «Программы»). Эта копия закрывается, чтобы не повредить "
             f"ваши чаты и настройки.\n\nПуть этой копии: {Path(sys.executable).resolve()}",
         )
+        startup_succeeded()
         return
     try:
         register_protocol()
@@ -1814,11 +1933,24 @@ def main() -> None:
             activate()
             host.menu_action("usage")
 
-        host.tray = tray.install(tray.Actions(open=activate, usage=open_usage, quit=host.quit_app), host)
+        host.tray = tray.install(tray.Actions(open=activate, usage=open_usage, quit=host.quit_app, open_chat=host.open_notice_chat), host)
         if host.tray is not None:
             # значок пропадает сразу, а не после остановки локального сервера
             app.aboutToQuit.connect(host.tray.remove)
         host.install_notices()
+        if host.tray is not None:
+            # окно спрятано в трей - это не «последнее окно закрыто», программа живёт дальше;
+            # настоящее закрытие окна завершает программу само (closeEvent)
+            app.setQuitOnLastWindowClosed(False)
+        quit_watch = QuitWatch(host)
+        app.installEventFilter(quit_watch)
+        # выход из системы: окна закрываются, а не прячутся, иначе система не сможет завершить сеанс
+        def session_ending(*_args) -> None:
+            host._quitting = True
+            # выход из системы отменили: через минуту крестик снова прячет в трей
+            QTimer.singleShot(60_000, lambda: setattr(host, "_quitting", False))
+
+        app.commitDataRequest.connect(session_ending)
 
         def incoming():
             connection = broker.nextPendingConnection()
@@ -1845,6 +1977,7 @@ def main() -> None:
             if quit_marker.exists():
                 quit_marker.unlink(missing_ok=True)
                 host._stop_confirmed = True
+                host._quitting = True
                 app.quit()
                 return
             current = marker.stat().st_mtime_ns if marker.exists() else 0

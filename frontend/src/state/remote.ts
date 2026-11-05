@@ -15,7 +15,7 @@ import { setPanel as realSetPanel, togglePanel as realTogglePanel } from './pane
 import { syncChat } from './chat';
 import { restoreTurn as realRestoreTurn, rollbackChange as realRollbackChange, rollbackHunk as realRollbackHunk, selectChange as realSelectChange } from './chatAgent';
 import type { Change } from './chatTypes';
-import { commitFiles as realCommitFiles, pushBranch as realPushBranch, refreshGit as realRefreshGit } from './git';
+import { commitFiles as realCommitFiles, loadGithub, pushBranch as realPushBranch, refreshGit as realRefreshGit } from './git';
 import { openBilling as realOpenBilling, openSettings as realOpenSettings } from './settingsUi';
 import { startChat, surfaceActions } from './surface';
 import { downloadUpdate as realDownloadUpdate, restartForUpdate as realRestartForUpdate } from './updates';
@@ -36,6 +36,9 @@ const realHunk = (id: Change['id'], path: string, hunk: string): Promise<void> =
 const realRestore = (turnId: number): Promise<void> => realRestoreTurn(turnId, syncAfterRollback);
 /** Порядок блоков правой панели сохраняет главный вид: его данные зеркалят плитки. */
 const realSaveInspectorOrder = async (order: string[]): Promise<void> => { await saveSettings({ inspector_order: order }); };
+
+/** Кнопка «Обновить» у PR: главный вид спрашивает сервер в обход кэша. */
+const realRefreshGithub = (): Promise<void> => loadGithub(true);
 
 const table = {
   downloadUpdate: realDownloadUpdate,
@@ -66,6 +69,7 @@ const table = {
   commitFiles: realCommitFiles,
   pushBranch: realPushBranch,
   refreshGit: realRefreshGit,
+  refreshGithub: realRefreshGithub,
   restoreTurn: realRestore,
   saveInspectorOrder: realSaveInspectorOrder,
   ...surfaceActions,
@@ -97,6 +101,7 @@ export const rollbackHunk = remote('rollbackHunk', realHunk);
 export const commitFiles = remote('commitFiles', realCommitFiles);
 export const pushBranch = remote('pushBranch', realPushBranch);
 export const refreshGit = remote('refreshGit', realRefreshGit);
+export const refreshGithub = remote('refreshGithub', realRefreshGithub);
 export const restoreTurn = remote('restoreTurn', realRestore);
 export const saveInspectorOrder = remote('saveInspectorOrder', realSaveInspectorOrder);
 

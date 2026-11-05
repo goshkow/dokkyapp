@@ -14,6 +14,30 @@ export interface GitFile {
   suggested: boolean;
 }
 
+export interface GitChecks {
+  state: 'none' | 'success' | 'pending' | 'failure';
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  failed_names: string[];
+}
+
+export interface GitPr {
+  number: number;
+  title: string;
+  state: string;
+  draft: boolean;
+  url: string;
+  checks: GitChecks;
+}
+
+/** Сводка GitHub для ветки: available=false - gh нет, не вошёл или репозиторий не на GitHub (блок скрыт). */
+export interface GitHub {
+  available: boolean;
+  pr: GitPr | null;
+}
+
 export interface GitState {
   projectId: number | null;
   repo: boolean;
@@ -28,10 +52,11 @@ export interface GitState {
   ahead: number | null;
   behind: number | null;
   suggestion: string;
+  github: GitHub | null;
 }
 
 const empty = (): GitState => ({
-  projectId: null, repo: false, branch: null, head: '', branches: [], files: [], truncated: false, remote: null, remote_url: '', upstream: null, ahead: null, behind: null, suggestion: '',
+  projectId: null, repo: false, branch: null, head: '', branches: [], files: [], truncated: false, remote: null, remote_url: '', upstream: null, ahead: null, behind: null, suggestion: '', github: null,
 });
 
 export const git = createStore<GitState>(empty());
@@ -52,10 +77,32 @@ export async function refreshGit(): Promise<void> {
   const query = typeof current?.id === 'number' ? `?chat_id=${current.id}` : '';
   try {
     const state = await api<Partial<GitState>>(`/api/projects/${project.id}/git${query}`);
-    if (token === request) git.set({ ...empty(), ...state, projectId: project.id });
+    if (token === request) {
+      const before = git.get();
+      // PR той же ветки остаётся на экране, пока сводка обновляется
+      const github = before.projectId === project.id && before.branch === (state.branch ?? null) ? before.github : null;
+      git.set({ ...empty(), ...state, projectId: project.id, github });
+      if (state.repo && state.remote && state.branch) void loadGithub(false);
+    }
   } catch {
     // папка недоступна: блока git просто нет, остальной проект работает
     if (token === request) git.set({ ...empty(), projectId: project.id });
+  }
+}
+
+let githubRequest = 0;
+
+/** PR текущей ветки и его проверки; refresh обходит кэш сервера (кнопка «Обновить»). */
+export async function loadGithub(refresh: boolean): Promise<void> {
+  const { projectId: id, branch } = git.get();
+  const token = ++githubRequest;
+  if (id === null || !branch) return;
+  try {
+    const github = await api<GitHub>(`/api/projects/${id}/github${refresh ? '?refresh=true' : ''}`);
+    if (token === githubRequest && git.get().projectId === id) git.set({ github });
+  } catch {
+    // сервер не ответил: блока PR просто нет, остальной git работает
+    if (token === githubRequest && git.get().projectId === id) git.set({ github: { available: false, pr: null } });
   }
 }
 
@@ -105,6 +152,8 @@ if (!isMirror) {
       void refreshGit();
     }
   };
+  // сборки идут и заканчиваются без действий в окне; кэш сервера держит запросы редкими
+  window.setInterval(() => { if (document.visibilityState === 'visible' && git.get().github?.available) void loadGithub(false); }, 60_000);
   view.subscribe(check);
   ui.subscribe(check);
   // ход закончился: агент мог поправить файлы или сам переключить ветку

@@ -296,6 +296,10 @@ def test_plugin_skill_needs_user_ok_but_builtin_does_not(project, monkeypatch):
     monkeypatch.setattr(selector, "catalog", catalog)
     builtin = next(item["name"] for item in real(project_id, OWNER, root) if item["source"] == "builtin")
     assert decide("skill.load", {"name": builtin}, root, project_id).action == "allow"
+    # «Разрешить всё» ни о чём не спрашивает, в остальных режимах навык плагина - решение человека
+    for name in ("superpowers:brainstorm", "brainstorm"):
+        assert decide("skill.load", {"name": name}, root, project_id).action == "allow"
+    monkeypatch.setattr("koddi.policy.grants.permission_profile", lambda project_id=None, **_: "trusted")
     for name in ("superpowers:brainstorm", "brainstorm"):
         assert decide("skill.load", {"name": name}, root, project_id).action == "ask"
     # файлы плагина читаются без вопроса: это не подключение навыка

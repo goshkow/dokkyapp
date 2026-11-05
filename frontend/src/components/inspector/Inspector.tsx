@@ -17,6 +17,7 @@ import {
 } from '../../state/workspace';
 import { DiffView } from '../chat/DiffView';
 import { GitCommit } from './GitCommit';
+import { GitHubPr } from './GitHubPr';
 import { MissingFolder, useFolderMissing } from './MissingFolder';
 import { Markdown } from '../chat/Markdown';
 import { PlanList } from '../chat/Plan';
@@ -90,7 +91,7 @@ function Changes() {
     if (!next.delete(key)) next.add(key);
     return next;
   });
-  if (!entries.length) return <section id="turn"><div id="change-summary" className="change-summary">Изменений пока нет</div><GitCommit /></section>;
+  if (!entries.length) return <section id="turn"><div id="change-summary" className="change-summary">Изменений пока нет</div><GitCommit /><GitHubPr /></section>;
   const current = entries.find((entry) => entry.key === selection) ?? (entries[0] as (typeof entries)[number]);
   const rolled = current.change.status === 'rolled_back';
   const turnId = current.change.turn_id ?? null;
@@ -158,6 +159,7 @@ function Changes() {
         )}
       </div>
       <GitCommit />
+      <GitHubPr />
     </section>
   );
 }

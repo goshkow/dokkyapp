@@ -188,7 +188,7 @@ async def recognize(client, model: str, item: dict, cancel_event: threading.Even
     async def collect() -> str:
         text = ""
         async for chunk in responsive_stream(
-            client.stream(model=model, messages=messages, tools=[], options={"temperature": 0, "max_tokens": 4000}),
+            client.stream(model=model, messages=messages, tools=[], options={"temperature": 0, "max_tokens": 12000}),
             cancel_event,
         ):
             if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):

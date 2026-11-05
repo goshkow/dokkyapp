@@ -1,7 +1,7 @@
 /* Состояние чатов режима кода для меню, как на сайте Докки: агент работает (крутилка), ждёт ответа человека
    (оранжевая точка) или закончил, пока чат не открыт (синяя точка до открытия чата). */
 import { post } from '../lib/api';
-import { announceAgentNotice } from '../lib/bridge';
+import { announceAgentNotice, setNoticeGate, type AgentNoticeKind } from '../lib/bridge';
 import { readJson, writeJson } from '../lib/storage';
 import { createStore, useStore } from '../lib/store';
 import type { Chat } from '../lib/types';
@@ -32,6 +32,8 @@ declare global {
   }
 }
 
+setNoticeGate(() => data.get().settings.agent_notifications !== false);
+
 export const chatActivity = createStore<ActivityState>({ activity: {}, done: restored() });
 
 export const useChatMark = (id: Chat['id']): ChatMark => useStore(chatActivity, (state) => state.activity[String(id)] ?? (state.done[String(id)] ? 'done' : null));
@@ -50,8 +52,8 @@ function reportSeen(id: string): void {
 }
 
 /** Агент закончил или спрашивает: хост покажет системное уведомление, если окно не на переднем плане. */
-function notice(id: string, kind: 'done' | 'question'): void {
-  if (!/^[0-9]+$/.test(id) || data.get().settings.agent_notifications === false) return;
+function notice(id: string, kind: AgentNoticeKind): void {
+  if (!/^[0-9]+$/.test(id)) return;
   const title = data.get().localChats.find((chat) => String(chat.id) === id)?.title ?? '';
   announceAgentNotice(Number(id), kind, title);
 }
@@ -61,11 +63,11 @@ function saveDone(done: Record<string, true>): void {
 }
 
 /** live - переход пришёл событием хода; сверка со списком сервера (перезапуск окна) уведомлений не шлёт. */
-function update(id: string, next: Activity | null, live = false): void {
+function update(id: string, next: Activity | null, live = false, ask: 'question' | 'approval' = 'question'): void {
   const { activity, done } = chatActivity.get();
   const previous = activity[id];
   if (previous === next) return;
-  if (live && next === 'question') notice(id, 'question');
+  if (live && next === 'question') notice(id, ask);
   if (live && !next && previous) notice(id, 'done');
   const patch: Partial<ActivityState> = {};
   const activityNext = { ...activity };
@@ -103,9 +105,10 @@ export function onRunState(chatId: number, active: boolean): void {
   else if (chatActivity.get().activity[id] !== 'question') update(id, 'working', true);
 }
 
-export function onQuestion(chatId: number, asking: boolean): void {
+/** kind - вид запроса агента: подтверждение действия или вопрос; в меню оба ждут человека, а уведомление у них разное. */
+export function onQuestion(chatId: number, asking: boolean, kind: string = 'question'): void {
   const id = String(chatId);
-  if (asking) update(id, 'question', true);
+  if (asking) update(id, 'question', true, kind === 'approval' ? 'approval' : 'question');
   else if (chatActivity.get().activity[id] === 'question') update(id, 'working', true);
 }
 

@@ -2,17 +2,20 @@ import { TriangleAlert, X } from 'lucide-react';
 import { useState } from 'react';
 import { readText, writeText } from '../../lib/storage';
 import type { Limits } from '../../lib/types';
+import { useChat } from '../../state/chatCore';
 import { useLimits } from '../../state/limits';
 import { guarded } from '../../state/overlay';
 import { nextPlan, usePlans, type Catalog, type Plan } from '../../state/plans';
 import { openBilling } from '../../state/settingsUi';
 import { useUi } from '../../state/ui';
+import { lastFailure } from './RecoveryBanner';
 
 interface Action { label: string; run: () => void }
 export interface Notice { key: string; tone: 'warn' | 'danger'; title: string; text: string; actions: Action[] }
 
 const LOW = 15;
-const time = (value: string | null): string => {
+/** «17:40» сегодня, «1 января, 17:40» в другой день. */
+export const resetTime = (value: string | null): string => {
   const date = value ? new Date(value) : null;
   if (!date || !Number.isFinite(date.getTime())) return '';
   return date.toDateString() === new Date().toDateString()
@@ -29,7 +32,7 @@ export function computeNotice(limits: Limits | null, scope: string, catalog: Cat
 
   // скользящее окно в 5 часов относится только к Докки Code
   if (scope === 'development' && limits.windowRemaining != null && limits.windowRemaining <= LOW) {
-    const reopens = time(limits.windowResetsAt);
+    const reopens = resetTime(limits.windowResetsAt);
     const exhausted = limits.windowRemaining <= 0;
     return {
       key: `window:${exhausted ? 'out' : 'low'}:${limits.windowResetsAt ?? ''}`,
@@ -73,8 +76,11 @@ export function UsageNotice() {
   const catalog = usePlans((state) => state.catalog);
   const scope = useUi((state) => state.scope);
   const [dismissed, setDismissed] = useState(readDismissed);
+  // ход этого чата уже упал по лимиту: про окно говорит плашка «Продолжить работу», вторая рядом не нужна
+  const limitFailure = useChat((state) => !state.running && lastFailure(state.messages)?.kind === 'limit');
   const notice = computeNotice(limits, scope, catalog);
   if (!notice || dismissed.includes(notice.key)) return null;
+  if (limitFailure && notice.key.startsWith('window:')) return null;
   const close = () => {
     const next = [...dismissed, notice.key].slice(-20);
     setDismissed(next);

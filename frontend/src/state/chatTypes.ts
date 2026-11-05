@@ -45,6 +45,10 @@ export interface ActionSummary {
   kind: 'file' | 'command' | 'other' | string;
   outside_project: string[];
   dangerous: boolean;
+  // на что распространится «Разрешить»: дальше такие действия в этом чате идут без вопросов
+  scope?: string;
+  /** правка файлов внутри проекта: можно разрешить сразу все правки проекта до конца чата */
+  project_edits?: boolean;
 }
 
 /** Итог автопроверки действия в режиме «Автоматически». */

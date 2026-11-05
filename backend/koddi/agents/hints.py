@@ -32,6 +32,16 @@ ENGINEERING_RULES = (
 )
 
 
+# агент сам пользуется картой и проверками, как опытный разработчик, без напоминаний человека
+PROJECT_WORKFLOW = (
+    "Orient with project.map first (overview, then path or query) instead of listing folders or opening many files; "
+    "check code.impact before changing shared code. After code edits run qa.run (lint, types, tests for changed "
+    "files) and fix failures before moving on; for logic changes also run quality.run gates (mutation when tests "
+    "exist). Save durable findings (architecture, gotchas, how to test) with project.map_update. For GitHub work "
+    "use git.* and github.* tools: check github.pr_checks after a push."
+)
+
+
 def turn_hints(project_id: int | None, workspace: Path | None, user_message: str, tool_names: set[str],
                chat_id: int | None = None) -> dict:
     from koddi.policy.account import local_owner
@@ -103,6 +113,8 @@ def turn_hints(project_id: int | None, workspace: Path | None, user_message: str
             }
     except Exception as exc:
         audit_event("WARNING", "hints.plugin_hooks", type(exc).__name__, {"project_id": project_id})
+    if "project.map" in tool_names and "qa.run" in tool_names:
+        hints["project_workflow"] = PROJECT_WORKFLOW
     if "quality.run" in tool_names and chat_id is not None:
         # состояние цикла лежит в базе и попадает в снимок каждого хода: сжатие истории его не стирает
         try:

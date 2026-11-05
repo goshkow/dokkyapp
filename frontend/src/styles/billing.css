@@ -174,7 +174,7 @@ html.glass .billing-ring b { background: var(--panel); }
 .plan-included-heading { grid-column: 1 / -1; margin: 14px 0 4px; font-size: var(--fs-12); letter-spacing: .055em; text-transform: uppercase; }
 .plan-foot { max-width: none; margin-top: 16px; }
 .plan-foot + .plan-foot { margin-top: 4px; }
-.plan-tip { position: fixed; z-index: 1000; max-width: min(290px, calc(100vw - 20px)); padding: 11px 13px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); color: var(--text); box-shadow: 0 8px 28px #0003; font-size: var(--fs-13); line-height: 1.45; pointer-events: none; }
+.plan-tip { position: fixed; inset: auto; margin: 0; z-index: 1000; max-width: min(290px, calc(100vw - 20px)); padding: 11px 13px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); color: var(--text); box-shadow: 0 8px 28px #0003; font-size: var(--fs-13); line-height: 1.45; pointer-events: none; }
 
 /* профиль по центру, как на сайте */
 .pref-profile { flex-direction: column; gap: 8px; padding: 20px 16px 14px; text-align: center; border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }

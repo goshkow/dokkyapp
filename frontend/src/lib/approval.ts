@@ -15,17 +15,29 @@ const labels: Record<string, string> = {
   'mcp.tool_call': 'Выполнить действие внешнего инструмента', 'process.kill': 'Остановить процесс',
   'git.commit': 'Создать коммит', 'git.add': 'Подготовить файлы к коммиту', 'git.checkout': 'Переключить ветку',
   'git.restore_file': 'Восстановить файл из Git', 'git.create_branch': 'Создать ветку',
+  'git.push': 'Отправить ветку на сервер', 'git.pull': 'Забрать изменения с сервера', 'git.merge': 'Слить ветки',
+  'git.stash': 'Отложить правки', 'github.pr_create': 'Создать pull request на GitHub',
   'devserver.start': 'Запустить сервер проекта', 'devserver.stop': 'Остановить сервер проекта',
   'test.run': 'Запустить тесты', 'build.run': 'Собрать проект', 'lint.run': 'Проверить код', 'format.run': 'Отформатировать код',
   'refactor.rename': 'Переименовать символ в проекте', 'refactor.extract': 'Изменить структуру кода',
   'qa.run': 'Запустить проверки проекта', 'quality.run': 'Проверить качество кода',
 };
 const computerActions: Record<string, string> = {
-  launch: 'Открыть приложение', list_windows: 'Найти окно приложения', observe: 'Прочитать окно приложения',
-  screenshot: 'Сделать снимок окна', focus: 'Выбрать окно', focus_window: 'Выбрать окно',
-  press: 'Нажать элемент в приложении', click_element: 'Нажать элемент в приложении', click: 'Нажать в окне приложения',
-  type: 'Ввести текст в приложении', type_element: 'Ввести текст в поле приложения',
-  hotkey: 'Нажать сочетание клавиш', move: 'Переместить указатель', scroll: 'Прокрутить окно приложения',
+  guide: 'Прочитать правила управления приложениями', status: 'Проверить доступ к управлению приложениями',
+  'list-apps': 'Посмотреть запущенные приложения', 'list-windows': 'Посмотреть окна приложений', 'list-displays': 'Посмотреть экраны',
+  snapshot: 'Прочитать окно приложения', find: 'Найти элемент в приложении', get: 'Прочитать свойство элемента', is: 'Проверить состояние элемента',
+  screenshot: 'Сделать снимок окна или экрана', 'list-surfaces': 'Посмотреть меню и панели приложения',
+  click: 'Нажать элемент в приложении', 'double-click': 'Дважды нажать элемент в приложении', 'right-click': 'Открыть контекстное меню элемента',
+  type: 'Ввести текст в поле приложения', 'set-value': 'Записать значение в поле приложения', clear: 'Очистить поле приложения',
+  focus: 'Перевести фокус на элемент', select: 'Выбрать значение в списке приложения', toggle: 'Переключить элемент в приложении',
+  check: 'Отметить элемент в приложении', uncheck: 'Снять отметку с элемента', expand: 'Раскрыть элемент в приложении', collapse: 'Свернуть элемент в приложении',
+  scroll: 'Прокрутить окно приложения', 'scroll-to': 'Прокрутить до элемента', press: 'Нажать сочетание клавиш в приложении',
+  hover: 'Навести указатель на элемент', drag: 'Перетащить элемент', 'mouse-click': 'Нажать мышью в точке экрана',
+  'mouse-move': 'Переместить указатель', 'mouse-wheel': 'Прокрутить колесом мыши', launch: 'Открыть приложение', 'close-app': 'Закрыть приложение',
+  'focus-window': 'Выбрать окно приложения', 'resize-window': 'Изменить размер окна', 'move-window': 'Переместить окно',
+  minimize: 'Свернуть окно', maximize: 'Развернуть окно', restore: 'Восстановить окно', wait: 'Подождать в приложении',
+  'clipboard-get': 'Прочитать буфер обмена', 'clipboard-set': 'Записать текст в буфер обмена', 'list-notifications': 'Прочитать уведомления',
+  batch: 'Выполнить несколько действий в приложении',
 };
 
 /** описание строится по структуре вызова, содержимое файлов и произвольный JSON в подтверждение не попадают */
@@ -43,15 +55,18 @@ export function summarizeApproval(name: unknown, raw: unknown): ApprovalSummary 
   for (const match of patch.matchAll(/^(?:\*\*\* (?:Add|Update|Delete) File: |\+\+\+ (?:b\/)?)([^\r\n]+)/gm)) if (match[1] !== '/dev/null') add(match[1]);
   let title = labels[tool] ?? (tool.startsWith('browser.') ? 'Выполнить действие в браузере' : 'Выполнить действие инструмента');
   if (tool === 'computer.use') {
-    title = computerActions[text(args.action)] ?? 'Управлять приложением';
-    add(args.application);
-    if (typeof args.pid === 'number') add(`Процесс ${args.pid}`);
-    if (typeof args.text === 'string') details.push(`Ввести текст: ${args.text.length.toLocaleString('ru-RU')} символов`);
+    title = computerActions[text(args.command)] ?? 'Управлять приложением';
+    add(args.app);
+    if (typeof args.window_id === 'string') add(`Окно ${text(args.window_id, 64)}`);
+    if (typeof args.text === 'string') details.push(`Текст: ${args.text.length.toLocaleString('ru-RU')} символов`);
+    if (typeof args.combo === 'string') details.push(`Клавиши: ${text(args.combo, 60)}`);
+    if (Array.isArray(args.items)) details.push(`Действий: ${args.items.length.toLocaleString('ru-RU')}`);
+    if (args.headed === true) details.push('Физический ввод: мышь и клавиатура двигаются на экране');
   }
   if (typeof args.url === 'string') {
     try { const url = new URL(args.url); add(`${url.protocol}//${url.host}${url.pathname}`); } catch { /* некорректный адрес не выводим */ }
   }
-  if (tool === 'shell.run' || typeof args.command === 'string') {
+  if (tool === 'shell.run' || (tool !== 'computer.use' && typeof args.command === 'string')) {
     if (tool === 'shell.run') title = 'Выполнить команды в терминале';
     const command = typeof args.command === 'string' ? args.command : '';
     const lines = command.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));

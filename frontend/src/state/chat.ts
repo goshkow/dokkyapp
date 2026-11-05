@@ -705,6 +705,32 @@ export async function executePlan(snapshot: PlanSnapshot): Promise<void> {
   }
 }
 
+/** «Повторить попытку» и «Продолжить работу»: новый ход продолжает задачу после сбоя сервера или лимита. */
+export async function resumeChat(chatId: number): Promise<boolean> {
+  if (!requireDeveloper()) return false;
+  const state = chat.get();
+  if (currentChatId() !== chatId || state.running || state.reasoningBusy) return false;
+  const controller = new AbortController();
+  ctl.stream?.abort();
+  ctl.stream = controller;
+  chat.set({ running: true, turnEnded: false, deltaSeen: false, liveStatus: 'Продолжаю…' });
+  setStatus('Продолжаю работу…');
+  try {
+    const response = await fetch(`/api/chats/${chatId}/resume`, { method: 'POST', headers: json, signal: controller.signal });
+    if (!response.ok) throw await failed(response, 'Не удалось продолжить работу');
+    await consume(response, chatId, controller);
+    return true;
+  } catch (error) {
+    if (ctl.stream === controller) chat.set({ running: false, turnEnded: true });
+    throw error;
+  } finally {
+    if (ctl.stream === controller) {
+      ctl.stream = null;
+      await syncLocal();
+    }
+  }
+}
+
 /* рабочая папка, модель, режим */
 export async function chooseWorkspace(): Promise<void> {
   const current = view.get().project;

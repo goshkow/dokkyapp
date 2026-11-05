@@ -17,8 +17,10 @@ ANSWER_CHARS = 4000
 OPTION = {
     "type": "object",
     "properties": {
-        "label": {"type": "string", "minLength": 1, "maxLength": LABEL_CHARS},
-        "description": {"type": "string", "maxLength": DESCRIPTION_CHARS},
+        "label": {"type": "string", "minLength": 1, "maxLength": LABEL_CHARS,
+                  "description": "Short choice text, 1-5 words."},
+        "description": {"type": "string", "maxLength": DESCRIPTION_CHARS,
+                        "description": "One line on what this choice means or its trade-off."},
     },
     "required": ["label"],
     "additionalProperties": False,
@@ -26,10 +28,15 @@ OPTION = {
 QUESTION = {
     "type": "object",
     "properties": {
-        "question": {"type": "string", "minLength": 1, "maxLength": QUESTION_CHARS},
-        "header": {"type": "string", "maxLength": HEADER_CHARS},
-        "options": {"type": "array", "items": OPTION, "maxItems": MAX_OPTIONS},
-        "multi_select": {"type": "boolean"},
+        "question": {"type": "string", "minLength": 1, "maxLength": QUESTION_CHARS,
+                     "description": "One clear question, ending with a question mark."},
+        "header": {"type": "string", "maxLength": HEADER_CHARS,
+                   "description": "Short label for the question tab, up to 12 characters (e.g. 'Platform')."},
+        "options": {"type": "array", "items": OPTION, "maxItems": MAX_OPTIONS,
+                    "description": "2-4 mutually clear choices when likely answers are known; put the recommended one "
+                    "first. Omit for open questions. Do not add 'Other': the app adds it itself."},
+        "multi_select": {"type": "boolean",
+                         "description": "true only when several options can apply at once; default false (pick one)."},
     },
     "required": ["question"],
     "additionalProperties": False,
@@ -40,8 +47,9 @@ PROPERTIES = {
         "items": QUESTION,
         "minItems": 1,
         "maxItems": MAX_QUESTIONS,
-        "description": "1-4 questions asked together. Give 2-4 short options when the likely answers are known; "
-        "the user can always type their own answer.",
+        "description": "1-4 related questions, answered one by one in order. Ask only what blocks the work. "
+        "Give 2-4 options with a description when likely answers are known; the user can always pick 'Other' "
+        "and type their own answer.",
     },
     # схема одиночного вопроса закреплена в старых сессиях Докки: менять в ней можно только описание
     "question": {"type": "string", "description": "Single question without options (legacy)."},

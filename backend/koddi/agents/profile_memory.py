@@ -326,7 +326,7 @@ async def learn(client, model: str, *, chat_id: int, project_id: int | None, mes
         text = ""
         async for chunk in responsive_stream(
             client.stream(model=model, messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-                          tools=[], options={"temperature": 0, "max_tokens": 1500}),
+                          tools=[], options={"temperature": 0, "max_tokens": 8000}),
             cancel_event,
         ):
             if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):

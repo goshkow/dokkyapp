@@ -84,6 +84,8 @@ export interface AppSettings {
   enter_sends: boolean;
   /** Системное уведомление, когда агент закончил или ждёт ответа, а окно в фоне. */
   agent_notifications: boolean;
+  /** Закрытие окна прячет Докки в трей, а не завершает программу. */
+  close_to_tray: boolean;
   permission_profile: PermissionProfile;
   private_network: boolean;
   selected_model: string;
@@ -109,6 +111,7 @@ export const defaultSettings: AppSettings = {
   launch_at_login: false,
   enter_sends: true,
   agent_notifications: true,
+  close_to_tray: true,
   permission_profile: 'trusted',
   private_network: true,
   selected_model: '',

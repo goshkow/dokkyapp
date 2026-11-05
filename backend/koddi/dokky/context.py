@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import uuid
 
 from koddi.agents.compaction import context_size
@@ -109,6 +110,108 @@ def _pruned(old: str) -> str:
     return f"[вывод удалён при сжатии: {len(old.splitlines())} строк, {len(old)} символов; при необходимости повтори чтение]"
 
 
+# потолок ответа сервера 16384; рассуждение сводки в режиме max занимает до трёх-четырёх тысяч из него
+SUMMARY_MAX_TOKENS = 16000
+KEEP_RECENT_TOKENS = 10_000
+
+
+def summary_window(config: dict | None, mode: str, value: dict | None = None) -> int:
+    """Окно, в которое должен влезть запрос сводки.
+
+    Запрос сводки начинает на сервере новую задачу в выбранном режиме, поэтому окно берётся этого режима: живое
+    из последнего ответа сервера, затем опубликованное в /models. Общий context_tokens приложения мог устареть
+    (например, 200 тыс. со старого маршрута) и раньше давал «недостаточно места» при занятых 48% окна Max.
+    """
+    from koddi.agents.compaction import context_limit
+
+    config = config or {"provider": "dokky"}
+    live = route_context(value)
+    if live.get("mode") == mode and type(live.get("limit_tokens")) is int and live["limit_tokens"] >= 8192:
+        return live["limit_tokens"]
+    models = config.get("models")
+    for model in models if isinstance(models, list) else []:
+        if not isinstance(model, dict) or model.get("id") != "dokky-code":
+            continue
+        for item in model.get("reasoning_modes") or []:
+            if isinstance(item, dict) and item.get("id") == mode and type(item.get("context_tokens")) is int:
+                if item["context_tokens"] >= 8192:
+                    return item["context_tokens"]
+    return context_limit(config)
+
+
+def shrink_for_summary(messages: list[dict], tools: list, limit: int) -> list[dict] | None:
+    """Копия истории для запроса сводки, которая гарантированно влезает в окно вместе с ответом.
+
+    Ступени, пока не влезет: заглушки на старые выводы и длинные аргументы; то же для всей истории, кроме
+    последнего сообщения человека; отбрасывание самых старых обменов (их суть уже была в прошлых сводках).
+    None - не влезают даже начальные инструкции и последний обмен.
+    """
+    request = [{"role": "user", "content": SUMMARY_REQUEST}]
+    room = limit - SUMMARY_MAX_TOKENS
+    tools_size = context_size([], tools, dokky=True)
+
+    def fits(items: list[dict]) -> bool:
+        return context_size(items + request, tools, dokky=True) <= room
+
+    def squeeze(items: list[dict], until: int, *, everything: bool) -> None:
+        last_user = max((i for i, m in enumerate(items) if m.get("role") == "user"), default=-1)
+        for index, item in enumerate(items[:until]):
+            role, content = item.get("role"), item.get("content")
+            if role == "tool" and isinstance(content, str) and len(content) > 600:
+                item["content"] = _pruned(content)
+            elif role in {"user", "assistant"} and isinstance(content, str) and index > 0 and (
+                len(content) > 20_000 or everything and len(content) > 8_000 and index != last_user
+            ):
+                item["content"] = content[:4000] + f"\n[середина удалена при сжатии: {len(content)} символов]"
+            for call in item.get("tool_calls", []) if role == "assistant" else []:
+                arguments = call.get("function", {}).get("arguments")
+                if isinstance(arguments, str) and len(arguments) > (600 if everything else 2000):
+                    call["function"]["arguments"] = json.dumps({"_pruned": len(arguments)})
+
+    result = prune_outputs(messages)
+    if fits(result):
+        return result
+    # граница: всё, что новее, пока остаётся как есть
+    keep_from, total = len(result), 0
+    for index in range(len(result) - 1, -1, -1):
+        total += context_size([result[index]], [], dokky=True)
+        if total > KEEP_RECENT_TOKENS:
+            break
+        keep_from = index
+    squeeze(result, keep_from, everything=False)
+    if fits(result):
+        return result
+    squeeze(result, len(result), everything=True)
+    if fits(result):
+        return result
+    # самые старые обмены уходят целиком: начинаем с сообщения человека или ответа модели, чтобы результат
+    # инструмента не остался без своего вызова
+    head = 0
+    while head < len(result) and result[head].get("role") in {"system", "developer"}:
+        head += 1
+    sizes = [context_size([item], [], dokky=True) for item in result]
+    budget = room - tools_size - context_size(request, [], dokky=True) - sum(sizes[:head]) - 64
+    cut, body = len(result), 0
+    for index in range(len(result) - 1, head - 1, -1):
+        body += sizes[index]
+        if body > budget:
+            break
+        if result[index].get("role") in {"user", "assistant"}:
+            cut = index
+    if cut >= len(result):
+        return None
+    dropped = cut - head
+    kept = result[:head] + result[cut:]
+    if dropped:
+        note = f"[ранние сообщения ({dropped}) не поместились в окно и опущены; их суть была в прошлых сводках]"
+        first = kept[head] if head < len(kept) else None
+        if first and first.get("role") == "user" and isinstance(first.get("content"), str):
+            first["content"] = note + "\n\n" + first["content"]
+        else:
+            kept.insert(head, {"role": "user", "content": note})
+    return kept if fits(kept) else None
+
+
 def recent_tail(messages: list[dict], budget: int = 10_000) -> list[dict]:
     start, total = len(messages), 0
     for index in range(len(messages) - 1, -1, -1):
@@ -202,6 +305,52 @@ def abandon_transition(chat_id: int, value: dict, operation: dict, identity: str
     coding.save(chat_id, value, expected_owner=identity)
 
 
+# сбои сводки, после которых ход идёт дальше без неё; лимиты, выход из аккаунта и отказы человека сюда не входят
+SOFT_COMPACTION_CODES = frozenset({
+    "compaction_incomplete", "compaction_ineffective", "context_limit", "context_tail_limit", "upstream_unavailable",
+})
+HARD_CODES = frozenset({"quota_exceeded", "agent_loop_limit", "session_revoked", "invalid_token", "credentials_unavailable"})
+
+
+def soft_dokky_error(exc) -> bool:
+    """Ошибка, из-за которой нельзя обрывать ход: сводка не вышла или сеть не ответила."""
+    code = getattr(exc, "code", "")
+    if code in HARD_CODES or getattr(exc, "status", 0) == 401:
+        return False
+    status = getattr(exc, "status", 0) or 0
+    return code in SOFT_COMPACTION_CODES or bool(getattr(exc, "retryable", False)) or status >= 500 or status == 408
+
+
+def drop_transition(chat_id: int) -> None:
+    """Снимает неудавшуюся операцию сжатия, иначе следующий запрос ждёт её завершения."""
+    with coding.session_operation(chat_id) as identity:
+        value = coding.load(chat_id)
+        operation = value["session"].get("context_transition") if value else None
+        if operation:
+            abandon_transition(chat_id, value, operation, identity)
+
+
+def trim_history(messages: list[dict], tools: list, limit: int) -> list[dict] | None:
+    """Локальная замена сводке: заглушки на старые выводы, а если мало - только начальные инструкции и свежий хвост.
+
+    None - сократить не удалось, значит повтор ничего не изменит.
+    """
+    before = context_size(messages, tools, dokky=True)
+    result = shrink_for_summary(messages, tools, limit)
+    if result is None or context_size(result, tools, dokky=True) >= before:
+        head = []
+        for item in messages:
+            if item.get("role") not in {"system", "developer"}:
+                break
+            head.append(copy.deepcopy(item))
+        body = messages[len(head):]
+        try:
+            result = [*head, *recent_tail(body, KEEP_RECENT_TOKENS)]
+        except DokkyError:
+            return None
+    return result if context_size(result, tools, dokky=True) < before else None
+
+
 async def transition(
     chat_id: int,
     *,
@@ -278,26 +427,28 @@ async def transition(
                     operation["replacement"] = pruned
                 else:
                     tail = recent_tail(source)
+                    request = {"role": "user", "content": SUMMARY_REQUEST}
+                    window = summary_window(config, mode, value)
+                    summary_source = source
+                    if context_size(source + [request], value["tools"], dokky=True) > window - SUMMARY_MAX_TOKENS:
+                        # запрос сводки не влезает: выводы инструментов ужимаются локально, иначе чат не продолжить
+                        summary_source = shrink_for_summary(source, value["tools"], window)
+                        if summary_source is None:
+                            raise DokkyError(
+                                "Недостаточно места для запроса сводки; история сохранена",
+                                422,
+                                "context_limit",
+                            )
+                        operation["summary_messages"] = summary_source + [request]
                     body = coding.prepare(
                         value,
-                        source + [{"role": "user", "content": SUMMARY_REQUEST}],
+                        summary_source + [request],
                         value["tools"],
+                        checkpoint=summary_source is not source,
                     )
-                    body.update(purpose="compaction", max_tokens=6000, stream=False)
+                    body.update(purpose="compaction", max_tokens=SUMMARY_MAX_TOKENS, stream=False)
                     if value["tools"]:
                         body["tool_choice"] = "none"
-                    from koddi.agents.compaction import context_limit
-
-                    if context_size(
-                        source + [{"role": "user", "content": SUMMARY_REQUEST}],
-                        value["tools"],
-                        dokky=True,
-                    ) > context_limit(config or {"provider": "dokky"}):
-                        raise DokkyError(
-                            "Недостаточно места для запроса сводки; история сохранена",
-                            422,
-                            "context_limit",
-                        )
                     operation.update(body=body, tail=tail)
                 value["session"]["context_transition"] = operation
                 coding.save(chat_id, value, expected_owner=identity)
@@ -458,10 +609,8 @@ async def transition(
                     422,
                     "compaction_ineffective",
                 )
-            from koddi.agents.compaction import context_limit
-
-            if context_size(operation["replacement"], value["tools"], dokky=True) > context_limit(
-                config or {"provider": "dokky"}
+            if context_size(operation["replacement"], value["tools"], dokky=True) > summary_window(
+                config, operation["target_mode"], value
             ):
                 abandon_transition(chat_id, value, operation, identity)
                 raise DokkyError(

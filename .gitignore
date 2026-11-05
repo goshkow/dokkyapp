@@ -48,8 +48,8 @@ nuitka-crash-report.xml
 
 /shots/
 
-# нативный помощник собирается из собственного Swift-исходника
-backend/koddi/computer_use/native/dokky-computer-helper*
+# бинарники agent-desktop скачивает scripts/fetch_agent_desktop.py
+backend/koddi/computer_use/native/agent-desktop/
 
 # личные рабочие заметки и внутренние материалы, в публичный репозиторий не идут
 /internal/
@@ -64,3 +64,6 @@ installer/*/obj/
 
 # локальные настройки инструментов
 .claude/
+
+# кэш tsc -b
+*.tsbuildinfo

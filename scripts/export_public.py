@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NEVER = (
     "internal/", "TASKS.md", "PROJECT_CONTEXT.md", "AGENTS.md", "_screens/", ".env",
     "docs/UPDATES_API_SPEC.md", "docs/RELEASE_1.0.0_CHECKLIST.md", "DOKKY_AGENT_QUALITY_UPGRADE.md", "DOKKY_UB_MODE_ENGINEERING_UPGRADE.md", "docs/UPDATES_CLIENT_DESIGN.md", "docs/PROMPT_CACHE_CLIENT.md", "docs/PLAN_0.2.1.md",
-    "docs/WINDOWS_TODO.md", "docs/AGENT_PARITY_PLAN.md",
+    "docs/WINDOWS_TODO.md", "docs/AGENT_PARITY_PLAN.md", "docs/RELEASE_1.0.2_PLAN.md", "docs/WINDOWS_CHECK_1.0.2.md",
 )
 AUTHOR = ("goshkow", "goshkow@users.noreply.github.com")
 

@@ -42,8 +42,19 @@ def test_removed_or_changed_schema_is_explicitly_rejected():
         compatible_tools([tool("file__read")], [changed])
 
 
+def old_computer_schema():
+    # computer.use до перехода на agent-desktop: нужен как пример широкой схемы с action/enum
+    import json
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "pinned_tool_schemas_v2.json"
+    return next(item for item in json.loads(fixture.read_text(encoding="utf-8"))
+                if item["function"]["name"] == "computer.use")
+
+
 def computer_tools():
-    current = deepcopy(TOOL_SCHEMAS_BY_NAME["computer.use"])
+    current = deepcopy(old_computer_schema())
+    current["function"]["name"] = "computer.use"
     pinned = deepcopy(current)
     pinned["function"]["name"] = "computer__use"
     pinned["function"]["description"] = "Previous instructions"
@@ -62,9 +73,24 @@ def test_computer_optional_arguments_and_actions_keep_old_wire_schema():
     selected[0]["function"]["name"] = "computer__use"
     assert selected[0]["function"] == pinned["function"]
     assert [pinned, current] == before
-    assert validate_tool_arguments("computer.use", {"action": "launch", "application": "Calculator"}) is None
-    assert validate_tool_arguments("computer.use", {"action": "arbitrary"}) is not None
-    assert validate_tool_arguments("computer.use", {"action": "launch", "unexpected": "ignored?"}) is not None
+
+
+def test_old_computer_session_is_marked_stale_instead_of_aborting():
+    # контракт computer.use сменён на agent-desktop: старая схема не принимается новой, но диалог живёт
+    pinned = deepcopy(old_computer_schema())
+    with pytest.raises(DokkyError) as caught:
+        compatible_tools([pinned], [TOOL_SCHEMAS_BY_NAME["computer.use"]])
+    assert caught.value.code == "tools_changed"
+    stale = set()
+    selected = compatible_tools([pinned], [TOOL_SCHEMAS_BY_NAME["computer.use"]], stale=stale)
+    assert stale == {"computer.use"}
+    assert selected[0]["function"]["parameters"] == pinned["function"]["parameters"]
+
+
+def test_computer_use_new_contract_validation():
+    assert validate_tool_arguments("computer.use", {"command": "snapshot", "app": "Calculator"}) is None
+    assert validate_tool_arguments("computer.use", {"command": "arbitrary"}) is not None
+    assert validate_tool_arguments("computer.use", {"command": "snapshot", "unexpected": "x"}) is not None
 
 
 @pytest.mark.parametrize("change", ["required", "type", "enum", "bound", "removed", "reference"])
@@ -177,5 +203,8 @@ def test_sessions_pinned_before_code_intelligence_upgrade_stay_compatible():
     from koddi.tools.schemas import TOOL_SCHEMAS
 
     pinned = json.loads((Path(__file__).parent / "fixtures" / "pinned_tool_schemas_v1.json").read_text(encoding="utf-8"))
-    selected = compatible_tools(pinned, [*TOOL_SCHEMAS, *CONTROL_TOOLS])
+    stale = set()
+    selected = compatible_tools(pinned, [*TOOL_SCHEMAS, *CONTROL_TOOLS], stale=stale)
+    # computer.use сменил контракт на agent-desktop: остальные инструменты совместимы, он помечен устаревшим
+    assert stale <= {"computer.use"}
     assert [item["function"]["parameters"] for item in selected] == [item["function"]["parameters"] for item in pinned]

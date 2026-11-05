@@ -6,6 +6,10 @@ from urllib.parse import urlsplit
 from koddi.storage.db import db, get_setting
 
 
+# отметка явного выбора «Разрешить всё» без проекта: только она даёт полный доступ новым проектам
+FULL_ACCOUNT_KEY = "permission_full_account:"
+
+
 def current_owner() -> str:
     user = get_setting("dokky_user", {})
     return str(user.get("id") or user.get("user_id") or "__test__")
@@ -30,8 +34,9 @@ def permission_profile(project_id: int | None = None, *, owner: str | None = Non
             ).fetchone()
         if grant is not None:
             return "full" if grant[1] == "allow-all" else grant[1] or {1: "trusted", 2: "full"}.get(grant[0], "ask")
-        # полный доступ выдаётся проекту отдельно. Значение аккаунта могло остаться от выбора в другом проекте
-        if saved in {"full", "allow-all"}:
+        # полный доступ аккаунта доходит до проектов без своего выбора, только если человек выбрал его сам
+        # без проекта (1.0.2+). Старое значение могло остаться от выбора в другом проекте
+        if saved in {"full", "allow-all"} and get_setting(FULL_ACCOUNT_KEY + owner) is not True:
             return "trusted"
     if saved is None and os.getenv("KODDI_INTERNAL_TEST") == "1":
         return "full" if legacy == "allow-all" else legacy

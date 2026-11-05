@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const network = vi.hoisted(() => ({ post: vi.fn(() => Promise.resolve({ ok: true })) }));
 vi.mock('../lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../lib/api')>()), post: network.post }));
 
+import { announceAgentNotice } from '../lib/bridge';
 import type { Chat } from '../lib/types';
 import { chatActivity, markSeen, onQuestion, onRunState } from './chatActivity';
 import { data } from './data';
@@ -83,6 +84,36 @@ describe('состояние чатов в меню', () => {
     data.set({ settings: { ...data.get().settings, agent_notifications: false } });
     onRunState(6, true);
     onRunState(6, false);
+    expect(agentNotice).not.toHaveBeenCalled();
+    data.set({ settings: { ...data.get().settings, agent_notifications: true } });
+    delete window.koddiWindowBridge;
+  });
+
+  it('запрос подтверждения уходит как approval, вопрос - как question', () => {
+    const agentNotice = vi.fn();
+    window.koddiWindowBridge = { agentNotice } as unknown as typeof window.koddiWindowBridge;
+    data.set({ localChats: [chat(8)] });
+    onRunState(8, true);
+    onQuestion(8, true, 'approval');
+    // меню у обоих одно: ждёт человека
+    expect(chatActivity.get().activity['8']).toBe('question');
+    onQuestion(8, false);
+    onQuestion(8, true, 'question');
+    onQuestion(8, false);
+    onQuestion(8, true, 'что-то новое');
+    expect(agentNotice.mock.calls.map(([payload]) => JSON.parse(payload as string).kind)).toEqual(['approval', 'question', 'question']);
+    delete window.koddiWindowBridge;
+  });
+
+  it('stalled и limit из плашки идут тем же мостом и уважают настройку', () => {
+    const agentNotice = vi.fn();
+    window.koddiWindowBridge = { agentNotice } as unknown as typeof window.koddiWindowBridge;
+    announceAgentNotice(2, 'stalled', 'Чат');
+    announceAgentNotice(2, 'limit', 'Чат');
+    expect(agentNotice.mock.calls.map(([payload]) => JSON.parse(payload as string).kind)).toEqual(['stalled', 'limit']);
+    agentNotice.mockClear();
+    data.set({ settings: { ...data.get().settings, agent_notifications: false } });
+    announceAgentNotice(2, 'limit', 'Чат');
     expect(agentNotice).not.toHaveBeenCalled();
     data.set({ settings: { ...data.get().settings, agent_notifications: true } });
     delete window.koddiWindowBridge;

@@ -7,7 +7,7 @@ import pytest
 import koddi.storage.db as storage
 from koddi.dokky.client import API, DokkyClient, DokkyError
 from koddi.dokky import coding
-from koddi.remote.client import RemoteAIClient
+from koddi.remote.client import RETRY_DELAYS, RemoteAIClient
 
 
 class Store:
@@ -244,7 +244,7 @@ async def test_pending_step_survives_transport_failure_and_client_recreation(cha
         tools=[],
         options={"_chat_id": chat},
     )
-    with pytest.raises(RuntimeError, match="Соединение"):
+    with pytest.raises(RuntimeError, match="временно не отвечает"):
         _ = [
             e
             async for e in RemoteAIClient(
@@ -252,7 +252,7 @@ async def test_pending_step_survives_transport_failure_and_client_recreation(cha
             ).stream(**args)
         ]
     saved = coding.pending(chat)
-    assert saved and len(requests) == 4
+    assert saved and len(requests) == 1 + len(RETRY_DELAYS)
     healthy = True
     _ = [
         e
@@ -303,7 +303,7 @@ async def test_eof_after_finish_cannot_commit_or_execute_tool(chat, monkeypatch)
     monkeypatch.setattr("koddi.dokky.client.dokky", DokkyClient(transport=transport, store=Store()))
     client = RemoteAIClient({"provider": "dokky", "base_url": API}, transport=transport)
     events = []
-    with pytest.raises(RuntimeError, match="Соединение"):
+    with pytest.raises(RuntimeError, match="временно не отвечает"):
         async for event in client.stream(
             model="dokky-code",
             messages=[{"role": "user", "content": "Создай файл"}],
@@ -313,7 +313,7 @@ async def test_eof_after_finish_cannot_commit_or_execute_tool(chat, monkeypatch)
             events.append(event)
     assert not any("tool_call" in event for event in events)
     assert coding.load(chat)["messages"] == []
-    assert len(attempts) == 4 and len(set(attempts)) == 1
+    assert len(attempts) == 1 + len(RETRY_DELAYS) and len(set(attempts)) == 1
 
 
 def test_unconfirmed_user_request_is_not_lost():

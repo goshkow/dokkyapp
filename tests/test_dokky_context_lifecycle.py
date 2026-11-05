@@ -182,7 +182,7 @@ async def test_summary_current_mode_new_session_and_verbatim_tail(chat):
     body = client.requests[0][2]["json"]
     assert body["purpose"] == "compaction" and body["reasoning_mode"] == "pro"
     assert body["tools"] == old["tools"] and body["tool_choice"] == "none"
-    assert body["max_tokens"] == 6000 and body["history"] == {
+    assert body["max_tokens"] == 16000 and body["history"] == {
         "base_length": 5,
         "base_hash": "old-hash",
     }

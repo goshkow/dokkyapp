@@ -568,7 +568,10 @@ def test_sessions_pinned_at_previous_release_stay_compatible():
     from koddi.tools.schemas import TOOL_SCHEMAS
 
     pinned = json.loads((Path(__file__).parent / "fixtures" / "pinned_tool_schemas_v2.json").read_text(encoding="utf-8"))
-    selected = compatible_tools(pinned, [*TOOL_SCHEMAS, *CONTROL_TOOLS])
+    stale = set()
+    selected = compatible_tools(pinned, [*TOOL_SCHEMAS, *CONTROL_TOOLS], stale=stale)
+    # computer.use сменил контракт на agent-desktop: остальные инструменты совместимы, он помечен устаревшим
+    assert stale <= {"computer.use"}
     assert [item["function"]["parameters"] for item in selected] == [item["function"]["parameters"] for item in pinned]
     assert "quality.run" not in {item["function"]["name"] for item in selected}
 
@@ -684,7 +687,10 @@ def test_proposal_does_not_touch_sources(env):
 def test_agent_has_no_push_or_force_tools():
     from koddi.tools.schemas import TOOL_SCHEMAS_BY_NAME
 
-    assert not {name for name in TOOL_SCHEMAS_BY_NAME if "push" in name}
+    # публикация есть, но без принуждения: git.push шлёт ветку в одноимённую, force-аргументов нет
+    assert {name for name in TOOL_SCHEMAS_BY_NAME if "push" in name} == {"git.push"}
+    push = TOOL_SCHEMAS_BY_NAME["git.push"]["function"]["parameters"]["properties"]
+    assert set(push) == {"branch", "remote"}
     commit = TOOL_SCHEMAS_BY_NAME["git.commit"]["function"]["parameters"]["properties"]
     assert not {"amend", "no_verify", "force"} & set(commit)
 

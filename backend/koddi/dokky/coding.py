@@ -170,7 +170,9 @@ def _accepts_pinned_schema(pinned: object, current: object) -> bool:
     return True
 
 
-def compatible_tools(pinned: list[dict], available: list[dict]) -> list[dict]:
+def compatible_tools(pinned: list[dict], available: list[dict], *, stale: set[str] | None = None) -> list[dict]:
+    """Закреплённые схемы сессии. С `stale` пропавший или изменившийся инструмент не обрывает работу:
+    схема остаётся прежней, имя попадает в stale, а вызов получит понятный отказ."""
     if not pinned:
         return available
     current={item['function']['name'].replace('.','__'):item for item in available}
@@ -179,7 +181,12 @@ def compatible_tools(pinned: list[dict], available: list[dict]) -> list[dict]:
         function=item.get('function',{})
         candidate=current.get(function.get('name', '').replace('.', '__'))
         if candidate is None or not _accepts_pinned_schema(function.get('parameters'), candidate['function']['parameters']):
-            raise DokkyError('Инструменты этого диалога больше не совместимы. История сохранена; создайте новый чат.',409,'tools_changed')
+            if stale is None:
+                raise DokkyError('Инструменты этого диалога больше не совместимы. История сохранена; создайте новый чат.',409,'tools_changed')
+            name = function.get('name', '').replace('__', '.')
+            stale.add(name)
+            result.append({'type':'function','function':dict(function,name=name)})
+            continue
         # серверная сессия закрепляет порядок и точные схемы, включая описания
         result.append({'type':'function','function':dict(function,name=candidate['function']['name'])})
     return result

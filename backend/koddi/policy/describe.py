@@ -37,6 +37,11 @@ TITLES = {
     "process.kill": "Завершить процесс",
     "git.add": "Добавить файлы в индекс Git",
     "git.commit": "Сделать коммит",
+    "git.push": "Отправить коммиты на сервер (git push)",
+    "git.pull": "Подтянуть изменения с сервера (git pull)",
+    "git.merge": "Слить ветку (git merge)",
+    "git.stash": "Отложить изменения (git stash)",
+    "github.pr_create": "Создать pull request на GitHub",
     "git.checkout": "Переключить ветку Git",
     "git.create_branch": "Создать ветку Git",
     "git.restore_file": "Отменить изменения файла в Git",
@@ -138,11 +143,31 @@ def describe_action(name: str, args: dict[str, Any] | None, *, external: list[st
         target = ", ".join(files[:8])
     elif name == "git.commit":
         detail = str(args.get("message", ""))
+    elif name in {"git.push", "git.pull"}:
+        target = " ".join(str(args[key]) for key in ("remote", "branch") if args.get(key))
+    elif name == "git.merge":
+        target = str(args.get("branch", "")) or ("отменить слияние" if args.get("abort") else "")
+    elif name == "github.pr_create":
+        target = str(args.get("title", ""))
+        detail = _short(args.get("body") or "", 300)
     elif name == "git.add":
         target = ", ".join(str(item) for item in args.get("paths", ["."]))
     elif name == "browser.type":
         target = str(args.get("selector", ""))
         detail = f"текст: «{_short(args.get('text', ''), 120)}»"
+    elif name == "computer.use":
+        command = str(args.get("command", ""))
+        app = str(args.get("app") or "")
+        title = f"Работать с приложением {app}" if app else title
+        target = app or str(args.get("ref") or args.get("window_id") or "")
+        parts = [f"действие: {command}"] if command else []
+        if args.get("text"):
+            parts.append(f"текст: «{_short(args['text'], 120)}»")
+        if args.get("combo"):
+            parts.append(f"клавиши: {args['combo']}")
+        if command == "batch":
+            parts.append(f"шагов: {len(args.get('items') or [])}")
+        detail = "\n".join(parts)
     elif name == "mcp.tool_call":
         target = f"{args.get('server', '')} / {args.get('name', '')}"
     elif name == "memory.set":

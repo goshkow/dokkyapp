@@ -23,6 +23,11 @@ STDLIB = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
 # первые шесть - исходные виды заметок карты, остальные - разделы знаний проекта (F2)
 NOTE_KINDS = ("decision", "module", "file", "api", "topic", "gotcha", "overview", "architecture", "dataflow",
               "convention", "issue", "test", "progress")
+# языки одной платформы видят классы друг друга: java импортирует kotlin и scala
+NS_FAMILIES = {"java": "jvm", "kotlin": "jvm", "scala": "jvm", "csharp": "csharp", "php": "php"}
+NS_SEPARATOR = {"jvm": ".", "csharp": ".", "php": "\\"}
+MAX_NAMESPACE_LINKS = 40
+PATH_LANGS = {"c", "cpp", "objc", "css", "html", "ruby", "shell"}
 PARAM = re.compile(r"\{[^}/]*\}|<[^>/]*>|:[A-Za-z_]\w*")
 
 
@@ -70,6 +75,8 @@ class Graph:
     note_targets: dict[int, list[str]] = field(default_factory=dict)
     notes_by_node: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
     stale_notes: set[int] = field(default_factory=set)
+    # в проекте на Windows Foo.h и foo.h - один файл
+    casefold: bool = sys.platform == "win32"
 
     def __post_init__(self) -> None:
         self._index()
@@ -151,9 +158,28 @@ class Graph:
             if directory:
                 self.dirs[parent_of(directory)]["dirs"].append(directory)
         self.go_module = ""
+        self.ns_classes: dict[str, list[str]] = defaultdict(list)
+        self.ns_files: dict[str, list[str]] = defaultdict(list)
+        self.psr4: list[tuple[str, str, str]] = []
+        self.dart_packages: dict[str, str] = {}
+        self._dir_by_suffix: dict[str, list[str]] = {}
         for path in self.files:
+            info = self.files[path].get("info") or {}
             if PurePosixPath(path).name == "go.mod":
-                self.go_module = (self.files[path].get("info") or {}).get("go_module", "")
+                self.go_module = info.get("go_module", "")
+            family = NS_FAMILIES.get(info.get("lang", ""))
+            if family:
+                sep = NS_SEPARATOR[family]
+                names = {PurePosixPath(path).stem, *(item[0] for item in info.get("symbols", []) if item[1] == "symbol")}
+                for namespace in info.get("ns", []):
+                    self.ns_files[family + ":" + namespace].append(path)
+                    for name in names:
+                        self.ns_classes[f"{family}:{namespace}{sep}{name}"].append(path)
+            for prefix, directory in info.get("psr4", []):
+                self.psr4.append((prefix, parent_of(path), directory))
+            if info.get("dart_package"):
+                self.dart_packages[info["dart_package"]] = parent_of(path)
+        self.psr4.sort(key=lambda item: -len(item[0]))
 
     def _closest(self, importer: str, candidates: list[str]) -> str:
         if len(candidates) == 1:
@@ -205,6 +231,9 @@ class Graph:
                 continue
             if not isinstance(spec, str):
                 continue
+            if lang in NS_FAMILIES:
+                internal.extend(item for item in self._namespace_targets(path, lang, spec) if item != path)
+                continue
             target = self._resolve_spec(path, spec, lang or "")
             if target:
                 if target != path:
@@ -214,30 +243,129 @@ class Graph:
                 package = "/".join(name.split("/")[:2]) if name.startswith("@") else name.split("/")[0]
                 if package and package not in NODE_BUILTINS and not spec.startswith("node:"):
                     external.append(package)
+        internal.extend(self._same_package(path, info))
         return list(dict.fromkeys(internal)), sorted(set(external))
 
+    def _same_package(self, path: str, info: dict) -> list[str]:
+        """Классы того же пакета или namespace, упомянутые в коде без import."""
+        family = NS_FAMILIES.get(info.get("lang", ""))
+        if not family or family == "php":
+            return []
+        sep = NS_SEPARATOR[family]
+        found = []
+        for namespace in info.get("ns", []):
+            for name in info.get("uses", []):
+                found.extend(item for item in self.ns_classes.get(f"{family}:{namespace}{sep}{name}", []) if item != path)
+        return found
+
     def _existing(self, base: str, extensions: tuple[str, ...] = ()) -> str | None:
-        base = posixpath.normpath(base)
+        base = posixpath.normpath(base.replace("\\", "/"))
         if base.startswith("..") or base in {".", ""}:
             return None
-        if base in self.files:
-            return base
+
+        def known(candidate: str) -> str | None:
+            if candidate in self.files:
+                return candidate
+            return self.by_lower.get(candidate.lower()) if self.casefold else None
+
+        found = known(base)
+        if found:
+            return found
         for extension in extensions:
-            if base + extension in self.files:
-                return base + extension
+            found = known(base + extension)
+            if found:
+                return found
         for extension in extensions:
-            if f"{base}/index{extension}" in self.files:
-                return f"{base}/index{extension}"
+            found = known(f"{base}/index{extension}")
+            if found:
+                return found
         stem, suffix = posixpath.splitext(base)
         # ESM в TypeScript пишет import './x.js' для файла x.ts
-        if suffix in {".js", ".jsx", ".mjs", ".cjs"}:
+        if suffix.lower() in {".js", ".jsx", ".mjs", ".cjs"}:
             for extension in (".ts", ".tsx", ".mts", ".cts"):
-                if stem + extension in self.files:
-                    return stem + extension
+                found = known(stem + extension)
+                if found:
+                    return found
         return None
+
+    def _namespace_targets(self, importer: str, lang: str, spec: str) -> list[str]:
+        """Файлы по импорту java, kotlin, scala, c# и php: пакет целиком (`a.b.*`, `using X`) или класс по полному имени."""
+        family = NS_FAMILIES.get(lang)
+        if not family:
+            return []
+        sep = NS_SEPARATOR[family]
+        spec = spec.lstrip("\\")
+        if spec.endswith(sep + "*"):
+            return self._package_files(importer, family, spec[:-2])
+        if family == "csharp":
+            # `using X.Y;` подключает пространство имён, `using static X.Y.Class;` - класс
+            found = self._package_files(importer, family, spec)
+            if found:
+                return found
+        parts = spec.split(sep)
+        # хвост может быть вложенным классом или статическим членом: `a.b.C.D`, `a.b.C.method`
+        for size in range(len(parts), 1, -1):
+            namespace, name = sep.join(parts[: size - 1]), parts[size - 1]
+            found = self.ns_classes.get(f"{family}:{namespace}{sep}{name}")
+            if found:
+                return [self._closest(importer, found)]
+            found = self._by_package_path(importer, namespace, name)
+            if found:
+                return [found]
+        return self._psr4_target(spec) if family == "php" else []
+
+    def _package_files(self, importer: str, family: str, namespace: str) -> list[str]:
+        found = self.ns_files.get(f"{family}:{namespace}")
+        if not found:
+            # файлы без объявления пакета: пакет определяется каталогом
+            pure = namespace.replace(NS_SEPARATOR[family], "/")
+            found = [path for directory in self._dirs_ending(pure) for path in self.dirs[directory]["files"]
+                     if NS_FAMILIES.get((self.files[path].get("info") or {}).get("lang", "")) == family]
+        found = [path for path in found if path != importer]
+        return sorted(found, key=lambda path: (-len(posixpath.commonpath([importer, path])), path))[:MAX_NAMESPACE_LINKS]
+
+    def _dirs_ending(self, suffix: str) -> list[str]:
+        if suffix not in self._dir_by_suffix:
+            self._dir_by_suffix[suffix] = [d for d in self.dirs if d and (d == suffix or d.endswith("/" + suffix))] if suffix else []
+        return self._dir_by_suffix[suffix]
+
+    def _by_package_path(self, importer: str, namespace: str, name: str) -> str | None:
+        """Класс без объявленного пакета: файл `<корень>/a/b/Name.ext` для `a.b.Name`; корень - src/main/java, модуль или любой каталог."""
+        pure = namespace.replace("\\", "/").replace(".", "/").lower()
+        found = []
+        for path in self.by_stem.get(name.lower(), []):
+            folder = parent_of(path).lower()
+            if PurePosixPath(path).stem.lower() == name.lower() and (folder == pure or folder.endswith("/" + pure)):
+                found.append(path)
+        return self._closest(importer, found) if found else None
+
+    def _psr4_target(self, fqcn: str) -> list[str]:
+        for prefix, base, directory in self.psr4:
+            if fqcn == prefix or fqcn.startswith(prefix + "\\") or not prefix:
+                rest = fqcn[len(prefix):].strip("\\").replace("\\", "/")
+                found = self._existing(posixpath.join(base, directory, rest), (".php",))
+                if found:
+                    return [found]
+        return []
+
+    def _dart_target(self, importer: str, spec: str) -> str | None:
+        if spec.startswith("package:"):
+            package, _, rest = spec[len("package:"):].partition("/")
+            root = self.dart_packages.get(package)
+            if root is not None:
+                return self._existing(posixpath.join(root, "lib", rest))
+            return next((path for path in self.files if path.endswith("/lib/" + rest) and path.endswith(".dart")), None) if rest else None
+        if "://" in spec:
+            return None
+        return self._existing(posixpath.join(parent_of(importer), spec))
 
     def _resolve_spec(self, importer: str, spec: str, lang: str) -> str | None:
         directory = parent_of(importer)
+        if lang in PATH_LANGS:
+            # включения, написанные на Windows, ходят с обратной косой чертой
+            spec = spec.replace("\\", "/")
+        if lang == "dart":
+            return self._dart_target(importer, spec)
         if lang in {"typescript", "javascript", "vue", "svelte", "css", "html", "ruby", "shell"}:
             extensions = JS_EXTENSIONS if lang != "ruby" else (".rb",)
             if spec.startswith((".", "/")):

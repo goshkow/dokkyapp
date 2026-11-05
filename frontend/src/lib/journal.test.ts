@@ -84,6 +84,8 @@ describe('journal', () => {
   it('пишет действия понятным текстом и показывает ошибки', () => {
     expect(actionText({ event: 'tool.call', data: { name: 'file.read', arguments: { path: 'a.py' } } })).toBe('Читаю: a.py');
     expect(actionText({ event: 'tool.result', data: { name: 'shell.run', arguments: { command: 'ls' }, result: { ok: false } } })).toBe('Не выполнено: Выполнена команда: ls');
+    expect(actionText({ event: 'tool.result', data: { name: 'git.status', arguments: {}, result: { ok: false, git_missing: true } } })).toBe('Git не установлен - шаг пропущен');
+    expect(actionText({ event: 'tool.result', data: { name: 'git.status', arguments: {}, result: { ok: false, not_a_repository: true } } })).toBe('Папка проекта без git - шаг пропущен');
   });
 });
 

@@ -294,11 +294,15 @@ CODE_TOOLS = {
 }
 
 
+REMOTE_GIT_TOOLS = {"git.push", "git.pull", "git.fetch", "git.merge", "git.stash", "git.remote"}
+
+
 # инструменты, которые меняют файлы или индекс git рабочей папки: их ход держит замок «один писатель»
 WORKSPACE_WRITERS = {
     "file.create", "file.write_patch", "file.edit", "file.search_replace", "file.delete", "file.move", "file.copy",
     "file.restore", "patch.apply", "format.run", "refactor.rename", "refactor.extract", "code.symbol_edit",
     "git.checkout", "git.create_branch", "git.add", "git.commit", "git.restore_file", "changes.rollback",
+    "git.pull", "git.merge", "git.stash",
 }
 
 
@@ -373,6 +377,14 @@ class ToolRunner:
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
 
+    def _turn_chat(self) -> int | None:
+        """Чат этого хода: computer use помнит снимки окон по нему."""
+        if self.turn_id is None:
+            return None
+        with db() as conn:
+            row = conn.execute("SELECT chat_id FROM turns WHERE id=?", (self.turn_id,)).fetchone()
+        return row[0] if row else None
+
     def _root_chat(self) -> int | None:
         """Чат человека: вложенный агент пользуется его разрешениями."""
         if self.turn_id is None:
@@ -383,6 +395,14 @@ class ToolRunner:
                 (self.turn_id,),
             ).fetchone()
         return row[0] if row else None
+
+    def allow_project_edits(self) -> None:
+        """Человек разрешил все правки файлов проекта до конца чата, как «принимать правки» в Claude Code."""
+        from koddi.policy import scopes
+        from koddi.policy.grants import current_owner
+
+        if self.workspace is not None:
+            scopes.grant_kind(current_owner(), self._root_chat(), "edits", self.workspace.resolve().as_posix().casefold())
 
     def fetch_host_approved(self, args: dict[str, Any]) -> bool:
         from koddi.policy.grants import fetch_host_allowed
@@ -405,6 +425,21 @@ class ToolRunner:
                 allow_fetch_host(self._root_chat(), str(args.get("url") or ""))
             elif self.fetch_host_approved(args):
                 decision = replace(decision, action="allow", reason="site allowed earlier in this chat")
+        objects: list = []
+        edits = None
+        if decision.action in {"ask", "review"}:
+            from koddi.policy import scopes
+            from koddi.policy.grants import current_owner
+
+            # одно «да» человека или автопроверки на объект (файл, команду, сайт) покрывает такие же действия в этом чате
+            objects = scopes.action_scopes(name, args, self.workspace, dangerous=decision.dangerous,
+                                           chat_id=self._turn_chat() if name == "computer.use" else None)
+            edits = None if decision.external else scopes.project_edits(name, args, self.workspace)
+            owner, chat = current_owner(), self._root_chat()
+            if approved:
+                scopes.grant(owner, chat, objects)
+            elif scopes.covered(owner, chat, objects) or (edits and scopes.granted(owner, chat, "edits", edits)):
+                decision = replace(decision, action="allow", reason="object allowed earlier in this chat")
         if approved and decision.action in {"ask", "review"}:
             decision = replace(decision, action="allow", reason="approved for this exact call")
         if decision.action == "review" and not self.review_actions:
@@ -438,6 +473,8 @@ class ToolRunner:
                 "external": list(decision.external),
                 "dangerous": decision.dangerous,
                 "reason": decision.reason,
+                "scope": scopes.describe(objects),
+                "project_edits": bool(edits),
                 "tool": name,
                 "args": args,
             }
@@ -737,6 +774,10 @@ class ToolRunner:
             return result
         if name == "git.restore_file":
             return self.git_restore_file(args)
+        if name in REMOTE_GIT_TOOLS:
+            return self.git_remote_tool(name, args)
+        if name.startswith("github."):
+            return self.github_tool(name, args)
         if name in {"test.detect", "build.detect"}:
             return self.detect_commands(name)
         if name == "verification.run":
@@ -1706,24 +1747,75 @@ class ToolRunner:
         from koddi.projects.gitsafe import SAFE_CONFIG, git_env
 
         workspace = self._require_workspace()
-        proc = subprocess.run(
-            [command[0], *SAFE_CONFIG, *command[1:]],
-            cwd=workspace,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=30,
-            check=False,
-            env=git_env(),
-            creationflags=HIDDEN_SUBPROCESS,
-        )
+        try:
+            proc = subprocess.run(
+                [command[0], *SAFE_CONFIG, *command[1:]],
+                cwd=workspace,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env=git_env(),
+                creationflags=HIDDEN_SUBPROCESS,
+            )
+        except FileNotFoundError:
+            # частый случай на Windows: Git не установлен. Это не сбой шага, агент просто обходится без git
+            return {"ok": False, "git_missing": True, "error": "Git is not installed on this computer. Skip git steps "
+                    "or ask the user to install Git (https://git-scm.com) if version control is needed."}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "timed_out": True, "error": "git did not answer in 30 seconds (a lock or a slow "
+                    "network drive). Retry once later or continue without this git step."}
+        if proc.returncode != 0 and "not a git repository" in proc.stderr.casefold():
+            return {"ok": False, "not_a_repository": True, "error": "The project folder is not a git repository. Git "
+                    "steps are not needed here; suggest git init only if the user wants version control."}
         return {
             "ok": proc.returncode == 0,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
             "returncode": proc.returncode,
         }
+
+    def git_remote_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.projects import gitremote
+
+        root = self._require_workspace()
+        if name == "git.push":
+            return gitremote.push(root, args.get("branch"), args.get("remote"))
+        if name == "git.pull":
+            return gitremote.pull(root, args.get("remote"), args.get("branch"), bool(args.get("rebase")))
+        if name == "git.fetch":
+            return gitremote.fetch(root, args.get("remote"))
+        if name == "git.merge":
+            return gitremote.merge(root, args.get("branch"), abort=bool(args.get("abort")), ff_only=bool(args.get("ff_only")))
+        if name == "git.stash":
+            return gitremote.stash(root, str(args.get("action") or "list"), args.get("message"), bool(args.get("include_untracked")))
+        return gitremote.remote_list(root)
+
+    def github_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from koddi.tools import github
+
+        root = self._require_workspace()
+        handlers = {
+            "github.status": lambda: github.status(root),
+            "github.pr_list": lambda: github.pr_list(root, args),
+            "github.pr_view": lambda: github.pr_view(root, args),
+            "github.pr_create": lambda: github.pr_create(root, args),
+            "github.pr_checks": lambda: github.pr_checks(root, args),
+            "github.issue_list": lambda: github.issue_list(root, args),
+            "github.issue_view": lambda: github.issue_view(root, args),
+            "github.run_list": lambda: github.run_list(root, args),
+            "github.run_view": lambda: github.run_view(root, args, self._current_branch()),
+        }
+        if name not in handlers:
+            return {"ok": False, "error": f"неизвестный инструмент {name}"}
+        return handlers[name]()
+
+    def _current_branch(self) -> str | None:
+        from koddi.projects.gitremote import current_branch
+
+        return current_branch(self._require_workspace())
 
     def git_restore_file(self, args: dict[str, Any]) -> dict[str, Any]:
         """Версия файла из индекса пишется как обычная правка агента: она в журнале и откатывается.

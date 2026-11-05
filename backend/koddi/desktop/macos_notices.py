@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import objc
 
-from koddi.desktop.notices import Notice
+from koddi.desktop.notices import URGENT, Notice
 
 LOG = logging.getLogger(__name__)
 _classes: dict = {}
@@ -64,9 +64,9 @@ def _delegate_class():
                 chat_id = int(info["chat_id"]) if info is not None and "chat_id" in info else 0
             except (TypeError, ValueError, KeyError):
                 chat_id = 0
-            # ответ приходит не обязательно в главном потоке, а окно Qt трогаем только из него
-            if chat_id > 0:
-                AppHelper.callAfter(self.owner.open_chat, chat_id)
+            # ответ приходит не обязательно в главном потоке, а окно Qt трогаем только из него;
+            # без чата (подсказка про трей) просто открывается окно
+            AppHelper.callAfter(self.owner.open_chat, max(chat_id, 0))
             handler()
 
     _classes["delegate"] = NoticeDelegate
@@ -109,7 +109,7 @@ class MacNotices:
         content.setBody_(notice.body)
         content.setUserInfo_({"chat_id": notice.chat_id})
         # звук - только когда агент ждёт человека: конец работы не повод звенеть
-        if notice.kind == "question":
+        if notice.kind in URGENT:
             content.setSound_(UN.UNNotificationSound.defaultSound())
         # одно уведомление на чат: новое заменяет прежнее, а не копится стопкой
         request = UN.UNNotificationRequest.requestWithIdentifier_content_trigger_(f"chat-{notice.chat_id}", content, None)

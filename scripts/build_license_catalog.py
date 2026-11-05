@@ -150,6 +150,24 @@ def build(output: Path) -> dict:
                 "status": "notice_collected",
             }
         )
+    components.append(
+        {
+            "id": "agent-desktop",
+            "name": "agent-desktop (управление приложениями)",
+            "version": "1.2.0",
+            "license": "Apache-2.0",
+            "source": "https://github.com/vercel-labs/agent-desktop",
+            "usage": "native_runtime",
+            "notices": notices(
+                "agent-desktop",
+                [
+                    ("LICENSE", ROOT / "third_party/agent-desktop/LICENSE"),
+                    ("NOTICE", ROOT / "third_party/agent-desktop/NOTICE"),
+                ],
+            ),
+            "status": "notice_collected",
+        }
+    )
     # уведомления о прежней адаптации навыков, без назначения им новой лицензии
     for identifier, name, license_name, source, filename in [
         (

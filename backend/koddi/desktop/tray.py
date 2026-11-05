@@ -14,9 +14,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
-    QGridLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QWidget, QWidgetAction,
+    QSystemTrayIcon,
 )
 
 from koddi.desktop import splash
@@ -34,12 +34,27 @@ class Limit:
     resets_at: float | None
 
 
+CHAT_MARKS = ("question", "working", "done")
+MAX_CHATS = 12
+
+
+@dataclass(frozen=True)
+class ChatStatus:
+    """Чат режима кода, который работает, ждёт ответа или закончил, пока его не открыли."""
+
+    id: int
+    title: str
+    mark: str
+
+
 @dataclass(frozen=True)
 class TrayState:
     plan: str | None = None
     window: Limit | None = None
     window_hours: int = 5
     total: Limit | None = None
+    theme: str = "dark"
+    chats: tuple[ChatStatus, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -54,6 +69,7 @@ class Actions:
     open: Callable[[], None]
     usage: Callable[[], None]
     quit: Callable[[], None]
+    open_chat: Callable[[int], None] | None = None
 
 
 def _number(value) -> float | None:
@@ -73,6 +89,30 @@ def _limit(raw) -> Limit | None:
     return Limit(max(0, min(100, round(remaining))), at if at is not None and at > 0 else None)
 
 
+def _text(value, limit: int) -> str:
+    return "".join(ch for ch in value if ch.isprintable()).strip()[:limit] if isinstance(value, str) else ""
+
+
+def _chats(raw) -> tuple[ChatStatus, ...]:
+    """Чаты от страницы: только целые id, известные отметки; сначала те, что ждут ответа, потом работающие."""
+    if not isinstance(raw, list):
+        return ()
+    result = []
+    seen = set()
+    for item in raw[:20]:
+        if not isinstance(item, dict):
+            continue
+        chat_id, mark = item.get("id"), item.get("mark")
+        if isinstance(chat_id, bool) or not isinstance(chat_id, int) or chat_id <= 0 or chat_id in seen:
+            continue
+        if mark not in CHAT_MARKS:
+            continue
+        seen.add(chat_id)
+        result.append(ChatStatus(chat_id, _text(item.get("title"), 80), mark))
+    result.sort(key=lambda chat: CHAT_MARKS.index(chat.mark))
+    return tuple(result[:MAX_CHATS])
+
+
 def parse(payload: str) -> TrayState | None:
     """Данные от страницы; None - сообщение битое, прежнее меню остаётся."""
     if not isinstance(payload, str) or len(payload) > MAX_PAYLOAD:
@@ -83,8 +123,7 @@ def parse(payload: str) -> TrayState | None:
         return None
     if not isinstance(data, dict):
         return None
-    plan = data.get("plan")
-    plan = "".join(ch for ch in plan if ch.isprintable()).strip()[:40] if isinstance(plan, str) else ""
+    plan = _text(data.get("plan"), 40)
     window = data.get("window")
     hours = _number(window.get("hours")) if isinstance(window, dict) else None
     return TrayState(
@@ -92,6 +131,8 @@ def parse(payload: str) -> TrayState | None:
         window=_limit(window),
         window_hours=int(hours) if hours is not None and 1 <= hours <= 168 else 5,
         total=_limit(data.get("total")),
+        theme="light" if data.get("theme") == "light" else "dark",
+        chats=_chats(data.get("chats")),
     )
 
 
@@ -169,29 +210,38 @@ def windows_icon() -> QIcon:
 
 
 class QtTray:
-    """Значок в области уведомлений Windows: щелчок открывает окно, правый щелчок - меню с лимитами."""
+    """Значок в области уведомлений Windows: щелчок открывает окно, правый щелчок - своё меню (`tray_panel.py`)."""
 
     def __init__(self, actions: Actions, parent=None) -> None:
+        from koddi.desktop.tray_panel import TrayPanel
+
         self.actions = actions
         self.state = TrayState()
-        self.menu = QMenu(parent)
-        self.menu.aboutToShow.connect(self.render)
+        self.panel = TrayPanel(self)
         self.icon = QSystemTrayIcon(windows_icon(), parent)
         self.icon.setToolTip(APP_NAME)
-        self.icon.setContextMenu(self.menu)
         self.icon.activated.connect(self._activated)
         self._notice_click: Callable[[], None] | None = None
         self.icon.messageClicked.connect(self._message_clicked)
-        self.render()
         self.icon.show()
 
     def _activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.panel.hide()
             self.actions.open()
+        elif reason == QSystemTrayIcon.ActivationReason.Context:
+            self.show_panel()
+
+    def show_panel(self) -> None:
+        """Меню над значком; время до сброса считается на момент открытия."""
+        if self.panel.isVisible():
+            self.panel.hide()
+            return
+        self.panel.popup_at(self.icon.geometry())
 
     def update(self, state: TrayState) -> None:
         self.state = state
-        self.render()
+        self.panel.refresh()
 
     def notify(self, title: str, body: str, on_click: Callable[[], None]) -> None:
         """Всплывающее уведомление Windows от значка в трее; щелчок по нему открывает чат."""
@@ -202,75 +252,8 @@ class QtTray:
         if self._notice_click is not None:
             self._notice_click()
 
-    def _widget_action(self, widget: QWidget) -> QWidgetAction:
-        action = QWidgetAction(self.menu)
-        action.setDefaultWidget(widget)
-        self.menu.addAction(action)
-        return action
-
-    def _run(self, handler: Callable[[], None]) -> Callable[..., None]:
-        def run(*_):
-            self.menu.hide()
-            handler()
-        return run
-
-    def _header(self) -> QWidget:
-        widget = QWidget()
-        layout = QGridLayout(widget)
-        layout.setContentsMargins(12, 8, 12, 8)
-        title = QLabel(APP_NAME)
-        font = title.font()
-        font.setBold(True)
-        title.setFont(font)
-        version = QLabel(version_text())
-        version.setEnabled(False)
-        button = QPushButton(OPEN_HINT)
-        button.clicked.connect(self._run(self.actions.open))
-        layout.addWidget(title, 0, 0)
-        layout.addWidget(version, 1, 0)
-        layout.addWidget(button, 0, 1, 2, 1, Qt.AlignmentFlag.AlignVCenter)
-        layout.setColumnStretch(0, 1)
-        return widget
-
-    def _limit(self, row: Row) -> QWidget:
-        widget = QWidget()
-        layout = QGridLayout(widget)
-        layout.setContentsMargins(12, 4, 12, 6)
-        layout.setVerticalSpacing(4)
-        detail = QLabel(row.detail)
-        detail.setEnabled(False)
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setValue(row.percent)
-        bar.setTextVisible(False)
-        bar.setFixedHeight(6)
-        bar.setMinimumWidth(260)
-        bar.setAccessibleName(f"{row.title}: {row.detail}")
-        layout.addWidget(QLabel(row.title), 0, 0)
-        layout.addWidget(detail, 0, 1, Qt.AlignmentFlag.AlignRight)
-        layout.addWidget(bar, 1, 0, 1, 2)
-        return widget
-
-    def render(self) -> None:
-        """Меню собирается заново при открытии: время до сброса считается на этот момент."""
-        self.menu.clear()
-        self._widget_action(self._header())
-        self.menu.addSeparator()
-        limit_rows = rows(self.state)
-        if limit_rows:
-            self.menu.addSection(section_title(self.state))
-            for row in limit_rows:
-                self._widget_action(self._limit(row))
-            self.menu.addSeparator()
-        usage = QAction(USAGE_TITLE, self.menu)
-        usage.triggered.connect(self._run(self.actions.usage))
-        self.menu.addAction(usage)
-        self.menu.addSeparator()
-        leave = QAction(QUIT_TITLE, self.menu)
-        leave.triggered.connect(self._run(self.actions.quit))
-        self.menu.addAction(leave)
-
     def remove(self) -> None:
+        self.panel.hide()
         self.icon.hide()
 
 

@@ -46,7 +46,7 @@ QT_RU="$("$PYTHON" -c "from PySide6.QtCore import QLibraryInfo as L; print(L.pat
 
 rm -rf "$OUT/DokkyApp.app" "$OUT/Докки.app" "$OUT/web_host.app" "$OUT/web_host.dist"
 
-"$PYTHON" scripts/build_computer_helper.py
+"$PYTHON" scripts/fetch_agent_desktop.py
 
 # pygments и numpy тянутся только из консольной утилиты httpx и необязательных импортов PIL и pytesseract,
 # а это пятая часть всего C-кода; LTO на скомпилированном Python почти ничего не даёт, а линковку тормозит
@@ -92,8 +92,10 @@ BUILT="$(find "$OUT" -maxdepth 1 -name '*.app' -print -quit)"
 APP="$OUT/Докки.app"
 [ "$BUILT" = "$APP" ] || mv "$BUILT" "$APP"
 
+# Nuitka не переносит исполняемые файлы из data-dir: кладём agent-desktop сами
 mkdir -p "$APP/Contents/MacOS/koddi/computer_use/native"
-cp backend/koddi/computer_use/native/dokky-computer-helper "$APP/Contents/MacOS/koddi/computer_use/native/"
+rm -rf "$APP/Contents/MacOS/koddi/computer_use/native/agent-desktop"
+cp -R backend/koddi/computer_use/native/agent-desktop "$APP/Contents/MacOS/koddi/computer_use/native/"
 
 # служебные файлы профилировщика могут лежать рядом с исходниками, в поставке им делать нечего
 find "$APP" -name '*.profraw' -delete

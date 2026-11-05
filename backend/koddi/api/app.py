@@ -185,6 +185,13 @@ class ChatUpdateIn(BaseModel):
     project_id: int | None = None
 
 
+# продолжение после сбоя сервера или лимита: модель видит просьбу, человек - короткую подпись
+RESUME_PROMPT = (
+    "The previous step was interrupted by a temporary error or a usage limit. Continue the task from where you "
+    "stopped: check what is already done and do not repeat finished steps."
+)
+
+
 class MessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=200000)
     mode: str = "development"
@@ -318,9 +325,10 @@ def _saved_surface() -> str:
 
 
 def _saved_render_mode() -> str:
-    from koddi.desktop import saved_render_mode
+    from koddi.desktop import auto_render_mode, saved_render_mode
 
-    return saved_render_mode()
+    # после падения при запуске Докки сама перешла на отрисовку без видеокарты: так и показываем
+    return "software" if auto_render_mode() else saved_render_mode()
 
 
 class UiStaticFiles(StaticFiles):
@@ -496,6 +504,7 @@ def create_app() -> FastAPI:
             "launch_at_login": _autostart_enabled(),
             "enter_sends": get_setting("enter_sends", True),
             "agent_notifications": get_setting("agent_notifications", True),
+            "close_to_tray": get_setting("close_to_tray", True),
             "coding_reasoning_mode": reasoning_mode(),
             "coding_runtime_extensions": get_setting("coding_runtime_extensions:" + str(get_setting("dokky_user", {}).get("id") or get_setting("dokky_user", {}).get("user_id") or ""), False),
             "coding_keepalive": get_setting("coding_keepalive:" + str(get_setting("dokky_user", {}).get("id") or get_setting("dokky_user", {}).get("user_id") or "__test__"), True),
@@ -557,7 +566,7 @@ def create_app() -> FastAPI:
                 autostart.set_enabled(payload["launch_at_login"])
             except (ValueError, OSError) as exc:
                 raise HTTPException(409, str(exc) or "Не удалось изменить автозапуск") from exc
-        for flag in ("enter_sends", "agent_notifications"):
+        for flag in ("enter_sends", "agent_notifications", "close_to_tray"):
             if flag in payload and type(payload[flag]) is not bool:
                 raise HTTPException(422, "Ожидалось логическое значение")
         if "inspector_order" in payload:
@@ -599,12 +608,13 @@ def create_app() -> FastAPI:
                     (owner, project_id, int(payload['private_network']), {"trusted": 1, "full": 2}.get(profile, 0), "allow-all" if profile == "full" else profile),
                 )
         if "permission_profile" in payload:
-            from koddi.policy.grants import permission_profile
+            from koddi.policy.grants import FULL_ACCOUNT_KEY, permission_profile
 
             # «Разрешить всё» остаётся в проекте, где его выбрали: иначе его молча получат все новые проекты.
             # Режим только чтения аккаунта при этом снимается: он важнее выбора проекта
             if project_id is None or payload["permission_profile"] != "full":
                 set_setting("permission_profile:" + owner, payload["permission_profile"])
+                set_setting(FULL_ACCOUNT_KEY + owner, project_id is None and payload["permission_profile"] == "full")
             elif permission_profile(owner=owner) == "read-only":
                 set_setting("permission_profile:" + owner, "trusted")
         if "coding_reasoning_mode" in payload:
@@ -627,6 +637,7 @@ def create_app() -> FastAPI:
             "dev_instructions",
             "enter_sends",
             "agent_notifications",
+            "close_to_tray",
             "inspector_order",
         ):
             if key in payload:
@@ -780,6 +791,15 @@ def create_app() -> FastAPI:
         result = _git_call(push, _git_project(project_id), payload.branch, payload.remote)
         log_event("INFO" if result["ok"] else "WARNING", "git.ui_push", str(project_id), {"ok": result["ok"]})
         return result
+
+    @app.get("/api/projects/{project_id}/github")
+    def project_github(project_id: int, refresh: bool = False) -> dict:
+        from koddi.projects.gitremote import current_branch
+        from koddi.tools.github import pr_summary
+
+        root = _git_project(project_id)
+        # gh нет, не вошёл или репозиторий не на GitHub: available=false, панель ничего не показывает
+        return pr_summary(root, current_branch(root), refresh=refresh)
 
     @app.get("/api/projects/{project_id}/map")
     def project_map_get(project_id: int) -> dict:
@@ -1379,6 +1399,9 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Запрос уже закрыт")
             if row["kind"] == "approval" and not isinstance(payload.get("approved"), bool):
                 raise HTTPException(422, "Нужно подтвердить или отклонить действие")
+            if row["kind"] == "approval" and (payload.get("scope") != "project_edits" or payload["approved"] is not True):
+                # шире одного объекта человек может разрешить только правки файлов проекта в этом чате
+                payload.pop("scope", None)
             if row["kind"] == "question":
                 from koddi.agents.questions import accept, normalize
 
@@ -1852,25 +1875,31 @@ def create_app() -> FastAPI:
         context_text = "\n\n".join(part for part in (skills_text, command_text, mentions_text) if part)
         orchestrator = AgentOrchestrator()
         cancel_event = threading.Event()
-        run = await agent_runs.start(
-            chat_id,
-            orchestrator.run(
-                chat_id=chat_id,
-                project_id=chat["project_id"],
-                workspace=workspace,
-                user_message=(context_text + "\n\nЗапрос пользователя:\n" if context_text else "") + payload.content,
-                display_message=display_message if display_message is not None else (("Навыки: " + ", ".join(skill_names) + "\n\n" if skill_names else "") + payload.content),
-                attachment_ids=payload.attachment_ids,
-                queued_request_id=queued_request_id,
-                mode=normalized_mode,
-                model=payload.model or chat["model"],
-                options=payload.options,
+        try:
+            run = await agent_runs.start(
+                chat_id,
+                orchestrator.run(
+                    chat_id=chat_id,
+                    project_id=chat["project_id"],
+                    workspace=workspace,
+                    user_message=(context_text + "\n\nЗапрос пользователя:\n" if context_text else "") + payload.content,
+                    display_message=display_message if display_message is not None else (("Навыки: " + ", ".join(skill_names) + "\n\n" if skill_names else "") + payload.content),
+                    attachment_ids=payload.attachment_ids,
+                    queued_request_id=queued_request_id,
+                    mode=normalized_mode,
+                    model=payload.model or chat["model"],
+                    options=payload.options,
+                    cancel_event=cancel_event,
+                    origin=origin,
+                ),
                 cancel_event=cancel_event,
-                origin=origin,
-            ),
-            cancel_event=cancel_event,
-            owner_id=local_owner(),
-        )
+                owner_id=local_owner(),
+            )
+        except RuntimeError as exc:
+            # два запуска разом (двойной клик, вторая вкладка) прошли проверку выше: второй получает 409, а не 500
+            if agent_runs.active(chat_id):
+                raise HTTPException(status_code=409, detail="Задача уже выполняется") from exc
+            raise
         return StreamingResponse(
             run.subscribe(),
             media_type="text/event-stream",
@@ -2052,6 +2081,24 @@ def create_app() -> FastAPI:
                 if not agent_runs.active(chat_id):
                     conn.execute("UPDATE chats SET mode=? WHERE id=?", (chat["mode"], chat_id))
             raise
+
+    @app.post("/api/chats/{chat_id}/resume")
+    async def chat_resume(chat_id: int) -> StreamingResponse:
+        """«Повторить попытку» и «Продолжить работу»: новый ход продолжает задачу после сбоя или лимита."""
+        # сначала владелец: статус чужого чата не раскрывается
+        chat = require_chat(chat_id)
+        with db() as conn:
+            last = conn.execute(
+                "SELECT status FROM turns WHERE chat_id=? ORDER BY id DESC LIMIT 1", (chat_id,)
+            ).fetchone()
+        # продолжать можно только оборванный ход: повторный клик или чужая вкладка не запускают второй
+        if agent_runs.active(chat_id) or not last or last["status"] != "failed":
+            raise HTTPException(409, "Продолжать нечего: последний ход не оборвался")
+        return await start_chat_turn(
+            chat_id,
+            MessageIn(content=RESUME_PROMPT, mode=chat["mode"] or "development", model=chat["model"]),
+            display_message="Продолжи с того места, где остановился",
+        )
 
     @app.post("/api/chats/{chat_id}/turn/cancel")
     async def chat_turn_cancel(chat_id: int) -> dict[str, Any]:

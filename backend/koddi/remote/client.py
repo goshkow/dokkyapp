@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import re
 import uuid
 from copy import deepcopy
@@ -15,6 +16,22 @@ from koddi.storage.db import get_setting, set_setting
 
 CONTEXT_CEILING = 600_000
 DOKKY_CONTEXT_LIMIT = 1_000_000
+# паузы перед повторами, когда сервер или модель не отвечают: всего около 2,5 минуты, как у Codex и Claude Code;
+# каждая пауза видна человеку в строке состояния
+RETRY_DELAYS = (5, 10, 15, 30, 30, 60)
+DOKKY_RETRIES = len(RETRY_DELAYS)
+UNAVAILABLE_TEXT = "Докки временно не отвечает. Попробуйте повторить попытку позже - история и задача сохранены."
+
+
+def _backoff(attempt: int, retry_after: float = 0) -> float:
+    """Пауза перед повтором по расписанию; заголовок Retry-After сервера важнее, но не дольше 90 с."""
+    delay = RETRY_DELAYS[min(max(attempt, 0), len(RETRY_DELAYS) - 1)] * random.uniform(0.95, 1.05)
+    return max(min(retry_after, 90.0), delay)
+
+
+def _retrying(attempt: int, total: int, delay: float, reason: str) -> dict:
+    """Кусок потока для строки состояния: какой повтор, из скольких и через сколько секунд."""
+    return {"retrying": {"attempt": attempt + 1, "total": total, "seconds": max(1, round(delay)), "reason": reason}}
 
 
 class RemoteAIError(RuntimeError):
@@ -261,6 +278,7 @@ class RemoteAIClient:
         auxiliary = None
         if self.config.get("provider") == "dokky":
             from koddi.dokky.coding import ensure, prepare, auxiliary_session, canonical_messages, pending
+            from koddi.dokky.client import DokkyError
 
             if chat_id is not None:
                 coding = await ensure(chat_id)
@@ -270,16 +288,38 @@ class RemoteAIClient:
                     body = unresolved["body"]
                     wire_tools = body.get("tools", [])
                     coding["tools"] = wire_tools
-                elif (coding["tools"] or coding["messages"]) and coding["tools"] != wire_tools:
-                    # схемы и их порядок закреплены за сессией
+                elif coding["messages"] and not coding["tools"] and wire_tools:
                     raise RemoteAIError(
                         "Набор инструментов этого диалога изменился. Создайте новый чат."
                     )
                 else:
+                    # схемы и их порядок закреплены за сессией: при расхождении берутся закреплённые, ход не обрывается
+                    wire_tools = coding["tools"] or wire_tools
                     coding["tools"] = wire_tools
                     checkpoint = (options or {}).get("_context_checkpoint") is True
-                    wire_messages = canonical_messages(coding, wire_messages, checkpoint=checkpoint)
-                    body = prepare(coding, wire_messages, wire_tools, checkpoint=checkpoint) | {"stream": True}
+                    try:
+                        wire_messages = canonical_messages(coding, wire_messages, checkpoint=checkpoint)
+                        body = prepare(coding, wire_messages, wire_tools, checkpoint=checkpoint) | {"stream": True}
+                    except DokkyError as exc:
+                        if exc.code != "history_changed":
+                            raise
+                        # локальная и серверная история разошлись: один раз сверяемся с сервером и собираем запрос заново
+                        from koddi.dokky.coding import recover, rebase_pending, prepare as prepare_body, isolate_recovered_journal
+                        from koddi.logs import log_event
+                        from koddi.telemetry.errors import report_error
+
+                        report_error("history_changed", "DokkyError", stage="step", http_status=exc.status)
+                        log_event("WARNING", "ai.history_recover", "История разошлась с сервером, сверяюсь и повторяю шаг", {"chat_id": chat_id})
+                        previous = coding["messages"]
+                        coding = await recover(chat_id)
+                        coding["tools"] = wire_tools
+                        try:
+                            wire_messages = rebase_pending(previous, wire_messages, coding["messages"])
+                            body = prepare_body(coding, wire_messages, wire_tools) | {"stream": True}
+                        except DokkyError:
+                            # серверный префикс не совпал с локальным: отправляем локальную историю целиком как контрольную точку
+                            isolate_recovered_journal(chat_id, coding)
+                            body = prepare_body(coding, wire_messages, wire_tools, checkpoint=True) | {"stream": True}
             else:
                 auxiliary = await auxiliary_session()
                 body.update(
@@ -322,10 +362,12 @@ class RemoteAIClient:
                     save_pending(chat_id, request_key, body, wire_messages)
             attempt = -1
             repaired_empty = False
+            retried_empty = False
             recovered_history = False
             recovered_session = False
             encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            while attempt < 3:
+            retries = DOKKY_RETRIES
+            while attempt < retries:
                 attempt += 1
                 if identity is not None:
                     check_owner(identity)
@@ -345,9 +387,11 @@ class RemoteAIClient:
                         if (
                             self.config.get("provider") != "dokky"
                             and response.status_code in {429, 502, 503, 504}
-                            and attempt < 3
+                            and attempt < retries
                         ):
-                            await asyncio.sleep(min(8, 2**attempt))
+                            delay = _backoff(attempt)
+                            yield _retrying(attempt, retries, delay, f"HTTP {response.status_code}")
+                            await asyncio.sleep(delay)
                             continue
                         if response.is_error:
                             await response.aread()
@@ -546,13 +590,8 @@ class RemoteAIClient:
                                     pass
                         if metadata or usage:
                             yield {"usage": usage, "dokky": metadata}
-                        if empty:
-                            raise RemoteAIError(
-                                "AI-сервер завершил запрос без текста и действий. Автоматический новый платный запрос не отправлен. История сохранена; можно отправить новый запрос.",
-                                code="empty_response",
-                                request_id=server_request_id,
-                            )
-                        if auxiliary:
+                        if auxiliary and (not empty or finish_reason == "length" or retried_empty):
+                            # вспомогательная сессия удаляется до любого raise
                             from koddi.dokky.client import dokky
 
                             try:
@@ -563,6 +602,30 @@ class RemoteAIClient:
                                 )
                             except Exception:
                                 pass
+                        if empty and finish_reason == "length":
+                            # рассуждение съело весь лимит ответа: оркестратор сам попросит модель ответить короче
+                            yield {"finish_reason": "length"}
+                            return
+                        if empty and not retried_empty:
+                            # один автоматический повтор шага: новый ключ, прежний ответ пуст и закрыт
+                            retried_empty = True
+                            log_event("WARNING", "ai.empty_retry", "Пустой ответ модели, повторяю шаг", {"client_request_id": request_key})
+                            request_key = str(uuid.uuid4())
+                            if coding is not None:
+                                from koddi.dokky.coding import prepare as prepare_retry
+
+                                body.pop("history", None)
+                                body = body | prepare_retry(coding, wire_messages, wire_tools)
+                                encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                                save_pending(chat_id, request_key, body, wire_messages)
+                            attempt = -1
+                            continue
+                        if empty:
+                            raise RemoteAIError(
+                                "Модель дважды вернула пустой ответ без текста и действий. История сохранена.",
+                                code="empty_response",
+                                request_id=server_request_id,
+                            )
                         # обрезанный вызов не исполняем, даже если его JSON выглядит полным
                         if finish_reason == "length":
                             yield {"finish_reason": finish_reason}
@@ -585,13 +648,17 @@ class RemoteAIClient:
                 except (ValueError, TypeError, KeyError, AttributeError) as exc:
                     raise RemoteAIError("Некорректный потоковый ответ AI-сервера") from exc
                 except (httpx.TransportError, httpx.TimeoutException) as exc:
-                    if attempt == 3 or (received and self.config.get("provider") != "dokky"):
+                    if attempt >= retries:
+                        raise RemoteAIError(UNAVAILABLE_TEXT, code="ai_unavailable") from exc
+                    if received and self.config.get("provider") != "dokky":
                         raise RemoteAIError(
-                            "Соединение с AI-сервером прервано. Повторите запрос."
+                            "Соединение с AI-сервером прервано. Повторите запрос.", code="ai_unavailable"
                         ) from exc
                     if received:
                         yield {"reset": True}
-                    await asyncio.sleep(2**attempt)
+                    delay = _backoff(attempt)
+                    yield _retrying(attempt, retries, delay, "network")
+                    await asyncio.sleep(delay)
                 except Exception as exc:
                     from koddi.dokky.client import DokkyError
 
@@ -695,8 +762,11 @@ class RemoteAIClient:
                         if received:
                             yield {"reset": True}
                         continue
-                    if not exc.retryable or attempt == 3:
-                        if not exc.retryable and chat_id is not None:
+                    if exc.retryable and attempt >= retries:
+                        # запрос остаётся ожидающим: «Повторить попытку» продолжит его с тем же ключом
+                        raise RemoteAIError(UNAVAILABLE_TEXT, code="ai_unavailable", request_id=exc.details.get("request_id")) from exc
+                    if not exc.retryable:
+                        if chat_id is not None:
                             from koddi.storage.db import db
 
                             with db() as conn:
@@ -707,7 +777,7 @@ class RemoteAIClient:
                         raise
                     if received:
                         yield {"reset": True}
-                    await asyncio.sleep(max(float(exc.retry_after), 2**attempt))
-            raise RemoteAIError(
-                "Восстановление запроса не завершилось. История и ожидающий запрос сохранены для продолжения."
-            )
+                    delay = _backoff(attempt, float(exc.retry_after))
+                    yield _retrying(attempt, retries, delay, exc.code)
+                    await asyncio.sleep(delay)
+            raise RemoteAIError(UNAVAILABLE_TEXT, code="ai_unavailable")

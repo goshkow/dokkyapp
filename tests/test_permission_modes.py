@@ -42,7 +42,7 @@ def test_each_mode_decides_project_writes_and_commands(places, mode, expected):
     workspace, _ = places
     profile(mode)
     assert decide("file.create", {"path": "a.py", "content": ""}, workspace).action == expected
-    assert decide("shell.run", {"command": "python -V"}, workspace).action == expected
+    assert decide("shell.run", {"command": "python build.py"}, workspace).action == expected
     dangerous = decide("shell.run", {"command": "Remove-Item build -Recurse"}, workspace)
     assert dangerous.action == expected and dangerous.dangerous
     assert decide("file.read", {"path": "a.py"}, workspace).action == "allow"
@@ -54,7 +54,8 @@ def test_files_outside_project_follow_the_mode(places, mode, expected):
     profile(mode)
     read = decide("file.read", {"path": str(settings)}, workspace)
     edit = decide("file.edit", {"path": str(settings), "old_text": "low", "new_text": "high"}, workspace)
-    assert read.action == expected and read.external == (str(settings.resolve()),)
+    # чтение вне проекта не спрашивается ни в каком режиме, правка - по режиму
+    assert read.action == "allow" and read.external == (str(settings.resolve()),)
     assert edit.action == expected and edit.external
 
 
@@ -69,7 +70,7 @@ def test_outside_access_stays_closed_where_it_must(places):
     assert decide("file.read", {"path": str(secret)}, workspace).action == "block"
     assert decide("file.write_patch", {"path": str(secret), "content": "x"}, workspace).action == "block"
     profile("read-only")
-    assert decide("file.read", {"path": str(settings)}, workspace).action == "ask"
+    assert decide("file.read", {"path": str(settings)}, workspace).action == "allow"
     assert decide("file.edit", {"path": str(settings), "old_text": "a", "new_text": "b"}, workspace).action == "block"
 
 
@@ -90,8 +91,8 @@ def test_outside_edit_is_backed_up_and_rolls_back(places):
     restored = rollback_change_set(done["change_set_id"])
     assert restored["rolled_back"], restored
     assert settings.read_text(encoding="utf-8") == "[video]\nquality=low\n"
-    # одобрение одного вызова не открывает тот же файл следующему
-    assert runner.run("file.read", {"path": str(settings)})["approval_required"]
+    # вне чата одобрение одного вызова не открывает тот же файл следующему
+    assert runner.run("file.edit", args)["approval_required"]
 
 
 def test_full_mode_reads_and_writes_outside_without_questions(places):
@@ -158,7 +159,8 @@ async def test_review_failure_falls_back_to_the_user():
     good = ReviewClient('{"necessity": 9, "safety": 8, "decision": "allow", "reason": "Тесты нужны"}')
     verdict = await review_action(good, **common)
     assert verdict["allowed"] and good.calls[0]["tools"] == []
-    assert good.calls[0]["options"]["max_tokens"] <= 300
+    # рассуждение идёт в тот же лимит: 300 токенов съедались целиком (прод, 05.11.2026)
+    assert 2000 <= good.calls[0]["options"]["max_tokens"] <= 8000
     for client in (ReviewClient(error=RuntimeError("network")), ReviewClient("не JSON")):
         verdict = await review_action(client, **common)
         assert not verdict["allowed"] and not verdict["available"]

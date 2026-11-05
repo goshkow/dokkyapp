@@ -64,7 +64,7 @@ def install(host) -> None:
     add(file, "Новый чат", command("new-chat"), "Ctrl+N")
     add(file, "Открыть проект…", lambda *_: host.open_project_folder(), "Ctrl+O")
     file.addSeparator()
-    add(file, "Закрыть окно", host.close, "Ctrl+W")
+    add(file, "Закрыть окно", host.close_window, "Ctrl+W")
     # пункты с ролями Qt переносит в меню приложения «Докки»
     add(file, f"О программе {APP_NAME}", command("about"), role=Role.AboutRole)
     add(file, "Настройки…", command("settings"), "Ctrl+,", Role.PreferencesRole)

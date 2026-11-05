@@ -171,10 +171,17 @@ def detach(widget) -> None:
 
 
 def hide_dock_icon() -> None:
-    """Закрытие окна завершает программу, но остановка локального сервера занимает время: значок убираем сразу."""
+    """Окно закрыто или спрятано в трей: значок из Dock убираем сразу (при выходе остановка сервера занимает время)."""
     from AppKit import NSApplication
 
     NSApplication.sharedApplication().setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
+
+
+def show_dock_icon() -> None:
+    """Окно открыли из трея, уведомления или вторым запуском: значок возвращается в Dock."""
+    from AppKit import NSApplication
+
+    NSApplication.sharedApplication().setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
 
 
 def activate_app() -> None:

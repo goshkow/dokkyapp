@@ -15,7 +15,8 @@ from koddi.projectmap.chunks import chunk_ranges
 
 # новая версия разбора перечитывает все файлы, даже если mtime не менялся
 # 2: фрагменты для поиска контекста, признак теста и вызываемые имена
-PARSER_VERSION = 2
+# 3: пакеты и импорты java, kotlin, scala, c#, php, dart; psr-4 из composer.json и имя пакета pubspec.yaml
+PARSER_VERSION = 3
 MAX_PARSE_BYTES = 512 * 1024
 MAX_SYMBOLS = 80
 MAX_IMPORTS = 120
@@ -297,6 +298,63 @@ COMMENT_MARKERS = {
 }
 
 
+JVM_PACKAGE = re.compile(r"^\s*package\s+([\w.]+)", re.M)
+JAVA_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+(?:\.\*)?)\s*;", re.M)
+KOTLIN_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\.\*)?)", re.M)
+SCALA_IMPORT = re.compile(r"^\s*import\s+([\w.]+?)(?:\.(_|\*|\{[^}]*\}))?\s*$", re.M)
+CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.M)
+CSHARP_USING = re.compile(r"^\s*(?:global\s+)?using\s+(?:static\s+)?(?:\w+\s*=\s*)?(?:global::)?([\w.]+)\s*;", re.M)
+PHP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w\\]+)", re.M)
+PHP_USE = re.compile(r"^use\s+(?:function\s+|const\s+)?\\?([\w\\]+?)(?:\\\{([^}]*)\})?(?:\s+as\s+\w+)?\s*;", re.M)
+DART_IMPORT = re.compile(r"""^\s*(?:import|export|part)\s+['"]([^'"]+)['"]""", re.M)
+
+
+# строки и комментарии c-подобных языков: имена внутри них типами не считаются
+NOISE = re.compile(r'''"""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|/\*[\s\S]*?\*/|//[^\n]*''')
+TYPE_NAME = re.compile(r"\b[A-Z][A-Za-z0-9_]*\b")
+MAX_USES = 300
+
+
+def _namespaces(text: str, info: dict, lang: str) -> None:
+    """Пространства имён файла (info.ns) и импорты по именам классов: путь файла по ним ищет граф."""
+    ns: list[str] = []
+    imports: list[str] = []
+    if lang in {"java", "kotlin", "scala"}:
+        ns = JVM_PACKAGE.findall(text)
+        if lang == "scala":
+            for base, tail in SCALA_IMPORT.findall(text):
+                if tail in {"_", "*"}:
+                    imports.append(base + ".*")
+                elif tail:
+                    imports.extend(f"{base}.{name.split('=>')[0].strip()}" for name in tail[1:-1].split(",") if name.split("=>")[0].strip() not in {"", "_"})
+                else:
+                    imports.append(base)
+        else:
+            imports = (JAVA_IMPORT if lang == "java" else KOTLIN_IMPORT).findall(text)
+    elif lang == "csharp":
+        ns = CSHARP_NAMESPACE.findall(text)
+        imports = CSHARP_USING.findall(text)
+    elif lang == "php":
+        ns = PHP_NAMESPACE.findall(text)
+        for base, group in PHP_USE.findall(text):
+            if group:
+                imports.extend(f"{base}\\{name.split(' as ')[0].strip().lstrip(chr(92))}" for name in group.split(",") if name.strip())
+            else:
+                imports.append(base)
+    elif lang == "dart":
+        imports = [spec for spec in DART_IMPORT.findall(text) if not spec.startswith("dart:")]
+    if lang in {"java", "kotlin", "scala", "csharp"}:
+        # типы из того же пакета подключаются без import: связь строится по использованным именам
+        code = NOISE.sub(" ", text)
+        uses = list(dict.fromkeys(TYPE_NAME.findall(code)))[:MAX_USES]
+        if uses:
+            info["uses"] = uses
+    if ns:
+        info["ns"] = list(dict.fromkeys(ns))[:8]
+    if imports:
+        info["imports"] = list(dict.fromkeys(imports))[:MAX_IMPORTS]
+
+
 def _generic(text: str, info: dict, lang: str) -> None:
     lines = text.splitlines()
     info["summary"] = _first_comment(lines, COMMENT_MARKERS.get(lang, ("//", "#")))
@@ -308,6 +366,8 @@ def _generic(text: str, info: dict, lang: str) -> None:
             if name:
                 symbols.append([name, "table" if lang == "sql" else "symbol", _line_of(text, match.start())])
         info["symbols"] = symbols[:MAX_SYMBOLS]
+    if lang in {"java", "kotlin", "scala", "csharp", "php", "dart"}:
+        _namespaces(text, info, lang)
     pattern = GENERIC_IMPORTS.get(lang)
     if pattern:
         imports = []
@@ -361,14 +421,35 @@ def _html(text: str, info: dict) -> None:
     _api_calls(text, info)
 
 
+def _composer(value: dict, info: dict) -> None:
+    pairs = []
+    for section in ("autoload", "autoload-dev"):
+        block = value.get(section)
+        psr4 = block.get("psr-4") if isinstance(block, dict) else None
+        if not isinstance(psr4, dict):
+            continue
+        for prefix, dirs in psr4.items():
+            for directory in dirs if isinstance(dirs, list) else [dirs]:
+                if isinstance(prefix, str) and isinstance(directory, str):
+                    pairs.append([prefix.strip("\\"), directory.replace("\\", "/").strip("/")])
+    if pairs:
+        info["psr4"] = pairs[:40]
+    if isinstance(value.get("name"), str):
+        info["summary"] = _clean(f"composer package {value['name']}")
+
+
 def _json(path: str, text: str, info: dict) -> None:
-    if PurePosixPath(path).name.lower() != "package.json":
+    name = PurePosixPath(path).name.lower()
+    if name not in {"package.json", "composer.json"}:
         return
     try:
         value = json.loads(text)
     except ValueError:
         return
     if not isinstance(value, dict):
+        return
+    if name == "composer.json":
+        _composer(value, info)
         return
     name = value.get("name") if isinstance(value.get("name"), str) else ""
     description = value.get("description") if isinstance(value.get("description"), str) else ""
@@ -393,9 +474,11 @@ def _toml(path: str, text: str, info: dict) -> None:
         info["symbols"] = [[key, "script", 0] for key in re.findall(r'(?m)^([\w.-]+)\s*=', scripts.group(1))[:30]]
 
 
-def _yaml(text: str, info: dict) -> None:
+def _yaml(path: str, text: str, info: dict) -> None:
     name = re.search(r"(?m)^name:\s*['\"]?([^'\"\n]+)", text)
     info["summary"] = _clean(name.group(1)) if name else _first_comment(text.splitlines(), ("#",))
+    if name and PurePosixPath(path).name.lower() == "pubspec.yaml":
+        info["dart_package"] = name.group(1).strip()
 
 
 def parse_file(path: str, data: bytes) -> dict:
@@ -420,7 +503,7 @@ def parse_file(path: str, data: bytes) -> dict:
     elif lang == "toml":
         _toml(path, text, info)
     elif lang == "yaml":
-        _yaml(text, info)
+        _yaml(path, text, info)
     elif lang == "gomod":
         module = re.search(r"(?m)^module\s+(\S+)", text)
         if module:

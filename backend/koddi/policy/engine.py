@@ -60,6 +60,17 @@ READ_ONLY_TOOLS = {
     "build.detect",
     "git.worktree_list",
     "process.list",
+    # только читают: локальные ссылки на удалённые ветки и данные GitHub через gh пользователя
+    "git.remote",
+    "git.fetch",
+    "github.status",
+    "github.pr_list",
+    "github.pr_view",
+    "github.pr_checks",
+    "github.issue_list",
+    "github.issue_view",
+    "github.run_list",
+    "github.run_view",
 }
 WRITE_TOOLS = {
     "workspace.open",
@@ -85,6 +96,12 @@ WRITE_TOOLS = {
     "git.add",
     "git.commit",
     "git.restore_file",
+    "git.pull",
+    "git.merge",
+    "git.stash",
+    # уходят наружу: каждый раз по режиму, разрешение на объект их не покрывает
+    "git.push",
+    "github.pr_create",
     "memory.set",
     "context.compact",
     "task.create",
@@ -297,6 +314,72 @@ def dangerous_command(command: str) -> bool:
     )
 
 
+# команды, которые только читают: идут без вопросов в любом режиме
+_READ_PROGRAMS = frozenset({
+    "ls", "dir", "pwd", "cat", "type", "head", "tail", "wc", "grep", "egrep", "rg", "ag", "ack", "findstr", "tree",
+    "file", "stat", "du", "df", "which", "where", "whereis", "uname", "whoami", "hostname", "date", "echo", "printf",
+    "basename", "dirname", "realpath", "readlink", "sort", "uniq", "cut", "diff", "cmp", "jq",
+    "get-childitem", "gci", "get-content", "gc", "select-string", "sls", "get-location", "test-path", "get-item",
+    "resolve-path", "get-command", "measure-object",
+})
+_READ_GIT = frozenset({
+    "status", "log", "diff", "show", "blame", "shortlog", "describe", "rev-parse", "ls-files", "ls-tree",
+    "cat-file", "grep", "reflog", "for-each-ref", "name-rev", "merge-base",
+})
+_READ_VERSION = re.compile(r"^[\w.+-]+(?:\.exe)?\s+(?:--version|-v|-V|version)$")
+# вывод в файл, подстановки и цепочки делают «чтение» записью или запуском чего угодно
+_WRITE_SYNTAX = re.compile(r"[;&<>`\n]|\$\(|\|\||>>")
+_SENSITIVE_PARTS = frozenset({
+    ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".gcloud", "keychains", ".password-store", ".netrc",
+    ".pgpass", ".git-credentials", "credentials", "koddi", ".npmrc", ".pypirc",
+})
+_SENSITIVE_NAME = re.compile(r"(?:^\.env(?:\..*)?$|^id_[a-z0-9]+|\.(?:pem|key|p12|pfx|keychain|kdbx)$)", re.IGNORECASE)
+
+
+def sensitive_path(path: str) -> bool:
+    """Ключи, пароли, токены и данные самой Докки: чтение вне проекта таких мест всегда спрашивается."""
+    parts = Path(path).expanduser().parts
+    lowered = [part.casefold() for part in parts]
+    if any(part in _SENSITIVE_PARTS for part in lowered):
+        return True
+    if "gh" in lowered and ".config" in lowered:
+        return True
+    return bool(parts and _SENSITIVE_NAME.search(parts[-1]))
+
+
+def _read_segment(segment: str) -> bool:
+    words = segment.split()
+    if not words:
+        return False
+    name = words[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    name = name[:-4] if name.endswith(".exe") else name
+    if name == "git":
+        index = 1
+        while index < len(words) and words[index].startswith("-"):
+            if words[index] in _GIT_VALUE_OPTIONS:
+                return False
+            index += 1
+        return index < len(words) and words[index] in _READ_GIT and "--output" not in " ".join(words)
+    if name == "find":
+        return not re.search(r"\s-(?:delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", " ".join(words))
+    if name == "sed":
+        return all(not word.startswith("-i") and word != "--in-place" for word in words[1:])
+    if name in {"sort", "uniq"}:
+        return "-o" not in words and not any(word.startswith("--output") for word in words)
+    return name in _READ_PROGRAMS or bool(_READ_VERSION.match(segment.strip()))
+
+
+def read_only_command(command: str) -> bool:
+    """Команда, которая ничего не меняет: чтение, поиск, git status/log/diff, версии программ. Можно конвейером."""
+    if dangerous_command(command):
+        return False
+    outer, texts, expanded = _unquote(command)
+    if expanded or _WRITE_SYNTAX.search(outer):
+        return False
+    segments = [part.strip() for part in outer.split("|")]
+    return bool(segments) and all(segment and _read_segment(segment) for segment in segments)
+
+
 # файлы вне проекта открываются только этим инструментам и только по абсолютному пути
 EXTERNAL_PATH_TOOLS = {
     "file.read",
@@ -506,9 +589,13 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
 
         if not consent_enabled():
             return Decision("block", "enable Computer Use in settings first")
-        if profile == "full":
-            return Decision("allow", "full access granted by the user")
-        return Decision("ask", "each computer action requires explicit approval")
+        from koddi.computer_use.service import READ_COMMANDS
+
+        # список приложений, окон и экранов, справка и статус ничего не трогают
+        if args.get("command") in READ_COMMANDS or profile == "full":
+            return Decision("allow", "full access granted by the user" if profile == "full" else "computer overview")
+        # одно «да» на приложение покрывает остальное в нём (policy/scopes.py); автопроверка тут не решает
+        return Decision("ask", "working with a local application needs the user's approval once per app")
     if tool_name.startswith("browser."):
         return _decide_browser(tool_name, args, workspace, profile)
     if tool_name == "ui.verify":
@@ -522,14 +609,17 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         reads = tool_name in READ_ONLY_TOOLS
         if profile == "read-only" and not reads:
             return Decision("block", "read-only permission profile")
+        # чтение без вопросов в любом режиме, кроме мест, где лежат ключи и пароли
+        if reads and not any(sensitive_path(item) for item in external):
+            return Decision("allow", "reading a file outside the project", external=tuple(external))
         if profile == "read-only":
             return Decision("ask", "file outside the project", external=tuple(external))
         return _confirm(profile, "file outside the project", external=tuple(external))
     if tool_name == "skill.load" and not args.get("file"):
         from koddi.skills.selector import needs_consent
 
-        # навык из скачанного плагина - чужая инструкция: агент предлагает, решает человек, в любом режиме
-        if needs_consent(str(args.get("name") or ""), project_id, workspace):
+        # навык из скачанного плагина - чужая инструкция: агент предлагает, решает человек (кроме «Разрешить всё»)
+        if profile != "full" and needs_consent(str(args.get("name") or ""), project_id, workspace):
             return Decision("ask", "uses a skill from a plugin the user installed: the user decides each time")
     if tool_name == "web.fetch":
         return _decide_fetch(args, profile)
@@ -578,8 +668,8 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
     }:
         return Decision("block", "workspace is required")
     command = args.get("command")
-    if isinstance(command, str) and tool_name != "safety.review" and _plugin_script(command):
-        # скрипты плагинов запускает только человек: вопрос в любом режиме, включая «Разрешить всё»,
+    if isinstance(command, str) and tool_name != "safety.review" and profile != "full" and _plugin_script(command):
+        # скрипты плагинов запускает только человек: вопрос в любом режиме, кроме «Разрешить всё»,
         # и для любого инструмента с командой (test.run, build.run, devserver.start и т.д.)
         return Decision("ask", "runs a file of an installed plugin: every run needs the user's approval")
     if tool_name == "qa.run":
@@ -589,6 +679,8 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
         return _confirm(profile, f"profile={profile}")
     if tool_name == "shell.run":
         command = str(args.get("command", ""))
+        if read_only_command(command):
+            return Decision("allow", "read-only command")
         if dangerous_command(command):
             return _confirm(profile, "dangerous shell command", dangerous=True)
         return _confirm(profile, f"profile={profile}")

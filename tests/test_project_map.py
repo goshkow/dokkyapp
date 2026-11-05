@@ -508,3 +508,124 @@ def test_live_watcher_updates_map_after_file_change(project):
         assert any(event == "project_map.updated" and data["project_id"] == project_id for event, data in events)
     finally:
         service.shutdown()
+
+
+# ---------- связи java, kotlin, scala, c#, php и dart
+
+def sources_graph(sources: dict[str, str], **options) -> Graph:
+    files = {path: {"size": len(text), "sha256": "", "lang": "", "info": parse_file(path, text.encode())} for path, text in sources.items()}
+    return Graph(files, [], **options)
+
+
+def test_java_imports_resolve_across_packages_modules_and_static_wildcard():
+    graph = sources_graph({
+        "core/src/main/java/com/acme/model/User.java": "package com.acme.model;\npublic class User { public static int MAX = 1; }\n",
+        "core/src/main/java/com/acme/model/Role.java": "package com.acme.model;\npublic class Role {}\n",
+        "core/src/main/java/com/acme/util/Strings.java": "package com.acme.util;\npublic class Strings { public static String trim(String s) { return s; } }\n",
+        "web/src/main/java/com/acme/web/Controller.java": (
+            "package com.acme.web;\n"
+            "import com.acme.model.User;\n"
+            "import com.acme.model.User.Builder;\n"
+            "import static com.acme.util.Strings.trim;\n"
+            "import com.acme.model.*;\n"
+            "import java.util.List;\n"
+            "public class Controller {}\n"
+        ),
+        "web/src/test/java/com/acme/web/ControllerTest.java": "package com.acme.web;\nimport com.acme.web.Controller;\nclass ControllerTest {}\n",
+    })
+    user, role, strings = (f"core/src/main/java/com/acme/{name}.java" for name in ("model/User", "model/Role", "util/Strings"))
+    controller = "web/src/main/java/com/acme/web/Controller.java"
+    assert set(graph.imports[controller]) == {user, role, strings}
+    assert graph.imports["web/src/test/java/com/acme/web/ControllerTest.java"] == [controller]
+    assert graph.is_test("web/src/test/java/com/acme/web/ControllerTest.java")
+    assert graph.imported_by[user] == [controller]
+
+
+def test_java_without_package_declaration_falls_back_to_source_root_path():
+    graph = sources_graph({
+        "src/main/java/org/x/Repo.java": "public class Repo {}\n",
+        "src/main/java/org/x/Other.java": "public class Other {}\n",
+        "src/main/java/org/y/App.java": "import org.x.Repo;\nimport org.x.*;\nclass App {}\n",
+    })
+    assert set(graph.imports["src/main/java/org/y/App.java"]) == {"src/main/java/org/x/Repo.java", "src/main/java/org/x/Other.java"}
+
+
+def test_kotlin_scala_and_java_see_each_other():
+    graph = sources_graph({
+        "app/src/main/kotlin/app/Service.kt": "package app\nimport app.dao.Dao\nimport app.dao.Helper as H\nclass Service\n",
+        "app/src/main/java/app/dao/Dao.java": "package app.dao;\npublic interface Dao {}\n",
+        "app/src/main/kotlin/app/dao/Helper.kt": "package app.dao\nfun helper() {}\nclass Helper\n",
+        "lib/Mix.scala": "package lib\nimport app.dao.{Dao, Helper}\nimport app.dao._\nclass Mix\n",
+    })
+    assert set(graph.imports["app/src/main/kotlin/app/Service.kt"]) == {"app/src/main/java/app/dao/Dao.java", "app/src/main/kotlin/app/dao/Helper.kt"}
+    assert set(graph.imports["lib/Mix.scala"]) == {"app/src/main/java/app/dao/Dao.java", "app/src/main/kotlin/app/dao/Helper.kt"}
+
+
+def test_java_import_of_unknown_library_is_not_linked():
+    graph = sources_graph({"A.java": "package a;\nimport org.springframework.stereotype.Service;\nimport static org.junit.Assert.*;\nclass A {}\n"})
+    assert graph.imports["A.java"] == []
+
+
+def test_csharp_using_links_namespace_files_and_static_class():
+    graph = sources_graph({
+        "Core/Models/User.cs": "namespace Acme.Models;\npublic class User {}\n",
+        "Core/Models/Role.cs": "namespace Acme.Models\n{\n    public class Role {}\n}\n",
+        "Core/Util/Text.cs": "namespace Acme.Util { public static class Text {} }\n",
+        "App/Program.cs": "using System;\nusing Acme.Models;\nusing static Acme.Util.Text;\nclass Program {}\n",
+    })
+    assert set(graph.imports["App/Program.cs"]) == {"Core/Models/User.cs", "Core/Models/Role.cs", "Core/Util/Text.cs"}
+
+
+def test_php_use_links_namespace_and_psr4_from_composer():
+    graph = sources_graph({
+        "composer.json": '{"name": "acme/app", "autoload": {"psr-4": {"Acme\\\\": "src/"}}}',
+        "src/Models/User.php": "<?php\nnamespace Acme\\Models;\nclass User {}\n",
+        "src/Service/Mailer.php": "<?php\nclass Mailer {}\n",
+        "src/Http/Controller.php": "<?php\nnamespace Acme\\Http;\nuse Acme\\Models\\{User};\nuse Acme\\Service\\Mailer;\nuse Psr\\Log\\LoggerInterface;\nclass Controller {}\n",
+    })
+    assert set(graph.imports["src/Http/Controller.php"]) == {"src/Models/User.php", "src/Service/Mailer.php"}
+
+
+def test_dart_package_and_relative_imports():
+    graph = sources_graph({
+        "pubspec.yaml": "name: my_app\n",
+        "lib/src/util.dart": "int one() => 1;\n",
+        "lib/model.dart": "class Model {}\n",
+        "lib/main.dart": "import 'dart:async';\nimport 'package:my_app/model.dart';\nimport 'package:flutter/material.dart';\nimport 'src/util.dart';\n",
+    })
+    assert set(graph.imports["lib/main.dart"]) == {"lib/model.dart", "lib/src/util.dart"}
+
+
+def test_windows_style_includes_and_case_insensitive_lookup():
+    sources = {
+        "src/Util.h": "int util();\n",
+        "src/sub/Helper.h": "int help();\n",
+        "src/main.c": '#include "util.h"\n#include "sub\\helper.h"\n',
+    }
+    assert sources_graph(sources, casefold=True).imports["src/main.c"] == ["src/Util.h", "src/sub/Helper.h"]
+    # на регистрозависимой файловой системе другое написание - другой файл
+    assert sources_graph(sources, casefold=False).imports["src/main.c"] == []
+
+
+
+def test_same_package_classes_are_linked_without_import():
+    graph = sources_graph({
+        "src/p/Main.java": 'package p;\n// Ghost\nclass Main { String s = "Quoted"; /* Hidden */ Game game = new Game(); Other o; Main m; }\n',
+        "src/p/Game.java": "package p;\nclass Game {}\n",
+        "src/p/Ghost.java": "package p;\nclass Ghost {}\n",
+        "src/p/Quoted.java": "package p;\nclass Quoted {}\n",
+        "src/p/Hidden.java": "package p;\nclass Hidden {}\n",
+        "src/q/Other.java": "package q;\nclass Other {}\n",
+    })
+    assert graph.imports["src/p/Main.java"] == ["src/p/Game.java"]
+
+
+def test_same_namespace_csharp_and_kotlin_are_linked():
+    graph = sources_graph({
+        "A/Program.cs": "namespace App;\nclass Program { Service s; }\n",
+        "A/Service.cs": "namespace App;\nclass Service {}\n",
+        "k/Main.kt": "package k\nfun main() { Repo() }\n",
+        "k/Repo.kt": "package k\nclass Repo\n",
+    })
+    assert graph.imports["A/Program.cs"] == ["A/Service.cs"]
+    assert graph.imports["k/Main.kt"] == ["k/Repo.kt"]

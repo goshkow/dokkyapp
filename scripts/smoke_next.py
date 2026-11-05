@@ -224,13 +224,22 @@ def scenario_agent_questions_and_diff_layout():
     with browser_page(api, viewport=(1300, 900)) as page:
         page.wait_for_timeout(1200)
         open_chat(page)
-        check(page.locator(".question-panel .question-item").count() == 3, "три вопроса в одной карточке")
+        # вопросы идут по одному: вкладки, «1 из 3», «Далее»
+        check(page.locator(".question-panel .question-tab").count() == 3, "три вкладки вопросов")
+        check("1 из 3" in page.locator(".question-panel .question-count").inner_text(), "номер вопроса")
+        check(page.locator(".question-panel .question-item").count() == 1, "на экране один вопрос")
         submit = page.locator(".question-panel button[type=submit]")
-        check(submit.is_disabled(), "ответ без всех ответов")
+        check(submit.is_disabled(), "дальше без ответа")
+        # один вариант - сразу следующий вопрос
         page.get_by_role("radio", name="Лента не очищается").click()
+        page.wait_for_timeout(500)
+        check("2 из 3" in page.locator(".question-panel .question-count").inner_text(), "переход ко второму вопросу")
         page.get_by_role("checkbox", name="Разработка", exact=True).click()
         page.get_by_role("checkbox", name="Чат", exact=True).click()
-        field = page.locator(".question-panel textarea").nth(2)
+        submit.click()
+        page.wait_for_timeout(500)
+        check("3 из 3" in page.locator(".question-panel .question-count").inner_text(), "третий вопрос")
+        field = page.locator(".question-panel textarea").first
         field.fill("Строка один\nСтрока два\nСтрока три\nСтрока четыре")
         check(field.evaluate("(n) => n.clientHeight > 70 && n.scrollWidth <= n.clientWidth + 1"), "поле не растёт или текст уходит вправо")
         page.screenshot(path=str(Path(__file__).resolve().parents[1] / "_screens" / "agent-questions.png"))
@@ -441,7 +450,7 @@ def scenario_quality_card():
         posts = [c[2] for c in api.calls if c[0] == "POST" and c[1] == "/api/projects/1/quality/decision"]
         check(posts == [{"gate": "mutation", "key": "calc.py|grade|1", "decision": "accepted"}], f"решение человека: {posts}")
         check("принято человеком" in page.locator(".quality-finding").inner_text(), "решение видно в находке")
-        page.click(".quality-actions button:has-text('На карте')")
+        page.click(".quality-actions .quality-heat")
         page.wait_for_timeout(500)
         check(any(c[1] == "/api/projects/1/quality/heatmap" for c in api.calls), "тепловая карта загружена")
 

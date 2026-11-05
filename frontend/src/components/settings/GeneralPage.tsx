@@ -96,6 +96,13 @@ export function GeneralPage({ say }: { say: Say }) {
             save={saveKey('agent_notifications')}
             say={say}
           />
+          <Toggle
+            title="Закрывать в трей"
+            detail={isMac() ? 'Закрытие окна прячет Докки в строку меню, агент продолжает работу. Выход - «Завершить Докки» в её меню или ⌘Q.' : 'Закрытие окна прячет Докки в трей, агент продолжает работу. Выход - «Завершить Докки» в меню значка.'}
+            checked={settings.close_to_tray !== false}
+            save={saveKey('close_to_tray')}
+            say={say}
+          />
         </Section>
       )}
     </>

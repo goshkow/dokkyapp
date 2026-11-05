@@ -23,11 +23,21 @@ def context_limit(config: dict) -> int:
     return min(limits) if len(limits) > 1 else 32768
 
 
+def tool_chars(tools: list[dict]) -> int:
+    """Размер инструментов в том виде, в каком они уходят модели.
+
+    Служебные поля приложения (права, таймауты, схема результата) модели не отправляются, и раньше их подсчёт
+    раздувал оценку на тысячи токенов: сжатие начиналось рано, а при малом окне падало с «нет места».
+    """
+    wire = [{"type": item.get("type", "function"), "function": item.get("function", item)} for item in tools]
+    # в сети точка в имени заменяется на «__»
+    dots = sum(str(item["function"].get("name", "")).count(".") for item in wire if isinstance(item["function"], dict))
+    return len(json.dumps(wire, ensure_ascii=False)) + dots
+
+
 def context_size(messages: list[dict], tools: list[dict], *, dokky: bool = False) -> int:
     divisor = 3 if dokky else 4
-    return len(json.dumps(messages, ensure_ascii=False)) // divisor + len(
-        json.dumps(tools, ensure_ascii=False)
-    ) // divisor + 2
+    return len(json.dumps(messages, ensure_ascii=False)) // divisor + tool_chars(tools) // divisor + 2
 
 
 def needs_compaction(messages: list[dict], tools: list[dict], config: dict) -> bool:

@@ -16,7 +16,8 @@ MIN_NECESSITY = 6
 MIN_SAFETY = 6
 # у команд с признаками удаления или изменения системы порог безопасности выше
 MIN_SAFETY_DANGEROUS = 8
-TIMEOUT_SECONDS = 25
+TIMEOUT_SECONDS = 40
+REVIEW_MAX_TOKENS = 4000
 MAX_TASK_CHARS = 1500
 MAX_ARGUMENT_CHARS = 2000
 
@@ -123,7 +124,8 @@ async def review_action(client, *, model: str, responsive: Callable, task: str, 
                 model=model,
                 messages=messages,
                 tools=[],
-                options={"response_format": SCHEMA, "max_tokens": 300, "temperature": 0},
+                # рассуждение модели тоже идёт в лимит: при 300 токенах ответ не успевал начаться
+                options={"response_format": SCHEMA, "max_tokens": REVIEW_MAX_TOKENS, "temperature": 0},
             )
         ):
             if isinstance(chunk, dict) and isinstance(chunk.get("content"), str):
@@ -135,5 +137,8 @@ async def review_action(client, *, model: str, responsive: Callable, task: str, 
         return parse_verdict(text, dangerous=bool(action.get("dangerous")))
     except asyncio.CancelledError:
         raise
-    except Exception:  # сеть, лимит, неверный ответ - решает человек
+    except Exception as exc:  # сеть, лимит, неверный ответ - решает человек
+        from koddi.logs.service import log_event
+
+        log_event("WARNING", "tool.review_unavailable", tool, {"error": type(exc).__name__, "code": getattr(exc, "code", None)})
         return unavailable("Автопроверка сейчас недоступна, решение за вами.")

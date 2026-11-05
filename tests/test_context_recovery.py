@@ -237,7 +237,7 @@ async def test_completed_empty_reply_does_not_poison_next_request(chat, monkeypa
             return httpx.Response(201, json=session())
         body = json.loads(request.content)
         seen.append((request.headers["Idempotency-Key"], body))
-        return answer("" if len(seen) == 1 else "Готово")
+        return answer("" if len(seen) <= 2 else "Готово")
 
     client = client_for(handler, monkeypatch)
     messages = [{"role": "system", "content": "Agent"}, {"role": "user", "content": "Task"}]
@@ -259,7 +259,7 @@ async def test_completed_empty_reply_does_not_poison_next_request(chat, monkeypa
             options={"_chat_id": chat},
         )
     ]
-    assert len(seen) == 2 and seen[0][0] != seen[1][0]
+    assert len(seen) == 3 and seen[1][0] != seen[2][0]
     assert "history" not in seen[1][1]
     assert coding.load(chat)["messages"][-1]["content"] == "Готово"
 

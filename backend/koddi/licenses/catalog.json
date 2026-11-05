@@ -3,6 +3,29 @@
   "platform": "darwin",
   "components": [
     {
+      "id": "agent-desktop",
+      "name": "agent-desktop (управление приложениями)",
+      "version": "1.2.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/vercel-labs/agent-desktop",
+      "usage": "native_runtime",
+      "notices": [
+        {
+          "id": "c693279643b8cd5d",
+          "name": "LICENSE",
+          "path": "notices/agent-desktop/c693279643b8cd5d.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "id": "dfb14fbb9e7d0952",
+          "name": "NOTICE",
+          "path": "notices/agent-desktop/dfb14fbb9e7d0952.txt",
+          "sha256": "387fb40c63a727280f1bba2b9852b35b098e277dcc0f80b0c6627ef93633aaa7"
+        }
+      ],
+      "status": "notice_collected"
+    },
+    {
       "id": "dokky-notices",
       "name": "Докки: сведения о сторонних компонентах",
       "version": "repository",
@@ -14,7 +37,7 @@
           "id": "beddac776885b6fe",
           "name": "THIRD_PARTY.md",
           "path": "notices/dokky-notices/beddac776885b6fe.txt",
-          "sha256": "a274792aacf10a82c769b5fb416ca32c1cf6df1907fd80f7f6f2801d21a0c855"
+          "sha256": "63851ad725c88614c3da9ccab383ac381a502166cf6c7c3960be0890450181d7"
         }
       ],
       "status": "notice_collected"

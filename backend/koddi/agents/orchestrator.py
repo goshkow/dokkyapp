@@ -23,6 +23,7 @@ from koddi.agents.history import (
     replay_history,
 )
 from koddi.agents.compaction import summarize_history, context_limit, context_size, needs_compaction
+from koddi.agents.compaction import tool_chars as count_tool_chars
 from koddi.agents.prompts import (
     coding_context_update,
     compose_coding_context,
@@ -33,6 +34,7 @@ from koddi.agents.prompts import (
 from koddi.agents.mcp_tools import discover_agent_tools
 from koddi.agents.memory import retrieve_memory
 from koddi.logs import log_event as audit_event
+from koddi.telemetry.errors import report_error
 from koddi.policy.describe import describe_action
 from koddi.policy.grants import permission_profile as access_profile
 from koddi.policy.instructions import format_instructions
@@ -46,8 +48,10 @@ from koddi.tools.output_store import save_tool_output
 from koddi.tools.runner import tool_output_excerpt
 from koddi.quality.contract import compact
 
-# сколько запросов к модели ход делает, прежде чем спросить человека, продолжать ли
-STEP_CHECKPOINT = 150
+# сколько запросов к модели ход делает, прежде чем спросить человека, продолжать ли.
+# Сервер Докки обрывает цепочку после 150 шагов без сообщения человека, поэтому отметка раньше
+STEP_CHECKPOINT = 120
+CONTINUE_MESSAGE = "Продолжай задачу с того места, где остановился."
 
 
 def sse(event: str, data: Any) -> str:
@@ -501,6 +505,23 @@ def save_message(message_id: int, text: str, metadata: dict):
         )
 
 
+SOFT_NUDGE_LIMIT = 2
+SOFT_NUDGES = {
+    "length": "Лимит ответа ушёл на рассуждение: ответь короче и сразу вызови инструмент или разбей шаг на меньшие.",
+    "empty": "Ответ пришёл пустым. Продолжи задачу: вызови нужный инструмент или дай итог.",
+    "ids": "Вызовы инструментов пришли с некорректными идентификаторами и не выполнялись. Вызови нужные инструменты заново.",
+    "verify": "В изменённых файлах остались ошибки синтаксиса. Исправь их и заверши задачу.",
+    "plan": "В плане остались незавершённые шаги. Продолжи работу или отметь действительно заблокированные шаги и объясни ограничение.",
+}
+SOFT_STOP_NOTES = {
+    "length": "Лимит ответа снова ушёл на рассуждение, поэтому я остановился. Всё сделанное сохранено: напишите «продолжай», и я разобью работу на меньшие шаги.",
+    "empty": "Модель несколько раз подряд вернула пустой ответ, поэтому я остановился. Всё сделанное сохранено: напишите «продолжай».",
+    "ids": "Модель несколько раз подряд прислала некорректные вызовы инструментов, поэтому я остановился. Всё сделанное сохранено: напишите «продолжай».",
+    "verify": "В изменённых файлах остались ошибки синтаксиса, которые не удалось исправить. Результат и диагностика сохранены: напишите «продолжай», и я займусь ими.",
+    "plan": "В плане остались незавершённые шаги, но модель не продолжила работу. План сохранён: напишите «продолжай».",
+}
+
+
 class AgentOrchestrator:
     """Цикл инструментов с удалённой моделью: история провайдера и история интерфейса хранятся отдельно."""
 
@@ -905,8 +926,13 @@ class AgentOrchestrator:
                 keep = set(agent_tools) | CHILD_CONTROLS
                 tools = [item for item in tools if item["function"]["name"] in keep]
                 allowed_names &= keep
+            # инструменты, которых в закреплённой сессии уже нет в приложении: вызов получает отказ, ход не обрывается
+            stale_tools: set[str] = set()
             if config.get("provider") == "dokky":
-                from koddi.dokky.coding import load, compatible_tools
+                from koddi.dokky.coding import load, compatible_tools as pinned_tools
+
+                def compatible_tools(pinned, available):
+                    return pinned_tools(pinned, available, stale=stale_tools)
 
                 tools.sort(key=lambda item: item["function"]["name"])
             from koddi.agents.profile_memory import forget_everything, memory_context
@@ -971,7 +997,8 @@ class AgentOrchestrator:
                 )
 
                 canonical = await ensure(chat_id)
-                from koddi.dokky.context import should_compact, transition
+                from koddi.dokky.client import DokkyError
+                from koddi.dokky.context import should_compact, transition, drop_transition, soft_dokky_error, trim_history
 
                 if not canonical["messages"] and canonical["session"].get("history", {}).get("length", 0):
                     canonical = await recover(chat_id)
@@ -984,17 +1011,33 @@ class AgentOrchestrator:
                     # выбранный режим вступает в силу только с этим сообщением, не раньше
                     from koddi.dokky.coding import apply_pending_mode
 
-                    async for event in responsive_stream(
-                        apply_pending_mode(chat_id, config=config, runtime_context=current_context),
-                        cancel_event,
-                    ):
-                        if "event" in event:
-                            yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+                    try:
+                        async for event in responsive_stream(
+                            apply_pending_mode(chat_id, config=config, runtime_context=current_context),
+                            cancel_event,
+                        ):
+                            if "event" in event:
+                                yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+                    except DokkyError as exc:
+                        if not soft_dokky_error(exc):
+                            raise
+                        # смена режима остаётся отложенной и применится со следующим сообщением
+                        drop_transition(chat_id)
+                        audit_event("WARNING", "ai.mode_deferred", "Смена режима не вышла, работа идёт в текущем", {"code": exc.code, "stage": "setup"})
+                        report_error(exc.code, exc, stage="setup", http_status=exc.status, reasoning_mode=depth)
                     canonical = await ensure(chat_id)
                 if not pending(chat_id) and should_compact(canonical, config, boundary=True):
-                    async for event in responsive_stream(transition(chat_id, config=config, runtime_context=current_context), cancel_event):
-                        if "event" in event:
-                            yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+                    try:
+                        async for event in responsive_stream(transition(chat_id, config=config, runtime_context=current_context), cancel_event):
+                            if "event" in event:
+                                yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+                    except DokkyError as exc:
+                        if not soft_dokky_error(exc):
+                            raise
+                        # сводка не вышла: ход идёт дальше, а сжатие повторится на следующей границе или по лимиту окна
+                        drop_transition(chat_id)
+                        audit_event("WARNING", "ai.compaction_skipped", "Сжатие контекста не вышло, работа продолжается", {"code": exc.code, "stage": "setup"})
+                        report_error(exc.code, exc, stage="compaction", http_status=exc.status, reasoning_mode=depth)
                     canonical = await ensure(chat_id)
                 if not canonical["messages"] and canonical["session"].get("history", {}).get(
                     "length", 0
@@ -1132,6 +1175,8 @@ class AgentOrchestrator:
             step, complete = 0, False
             stalled = 0
             last_continuation = None
+            # подряд идущие мягкие подсказки модели вместо обрыва хода; после двух ход завершается с объяснением
+            soft_nudges = 0
             force_compaction = False
             rejected_context_limit = None
             compacted_baseline = None
@@ -1139,8 +1184,11 @@ class AgentOrchestrator:
             while not complete:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
-                if step >= next_checkpoint:
-                    # ход без присмотра не должен тратить деньги бесконечно: режим подтверждений тут ни при чём
+                if step >= next_checkpoint and access_profile(project_id) == "full":
+                    # «Разрешить всё» - без вопросов; предел шагов без сообщения человека держит сервер
+                    next_checkpoint = step + STEP_CHECKPOINT
+                elif step >= next_checkpoint:
+                    # ход без присмотра не должен тратить деньги бесконечно
                     next_checkpoint = step + STEP_CHECKPOINT
                     answer = {}
                     async for value in wait_input("approval", {
@@ -1154,6 +1202,12 @@ class AgentOrchestrator:
                             answer = value
                     if answer.get("approved") is not True:
                         raise ValueError(f"Работа остановлена после {step} шагов: продолжение не подтверждено.")
+                if step and step == next_checkpoint - STEP_CHECKPOINT and messages and messages[-1].get("role") != "user":
+                    # сообщение от имени человека начинает на сервере новую цепочку шагов, и ход идёт дальше
+                    resume = {"role": "user", "content": CONTINUE_MESSAGE}
+                    messages.append(resume)
+                    # в журнал, как подсказки: после восстановления хода цепочка шагов та же, что видел сервер
+                    await durable_write(journal, chat_id, resume)
                 active_config = config | getattr(client, "config", {})
                 if rejected_context_limit is not None:
                     active_config["context_tokens_limit"] = rejected_context_limit
@@ -1177,12 +1231,28 @@ class AgentOrchestrator:
                             project_id=project_id, mode=mode, workspace=workspace, memory=memory, plan=plan, depth=depth, project_map=project_map,
                             hints=hints,
                         )
-                        async for event in responsive_stream(transition(chat_id, messages=messages, config=active_config, runtime_context=current_context), cancel_event):
-                            if "event" in event:
-                                yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
-                        messages = deepcopy(load(chat_id)["messages"])
+                        try:
+                            async for event in responsive_stream(transition(chat_id, messages=messages, config=active_config, runtime_context=current_context), cancel_event):
+                                if "event" in event:
+                                    yield sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+                            messages = deepcopy(load(chat_id)["messages"])
+                            context_checkpoint = False
+                        except DokkyError as exc:
+                            if not soft_dokky_error(exc):
+                                raise
+                            # сводка не вышла: старые выводы заменяются заглушками локально, и ход идёт дальше
+                            drop_transition(chat_id)
+                            report_error(exc.code, exc, stage="compaction", http_status=exc.status, reasoning_mode=depth, step=step)
+                            trimmed = trim_history(messages, tools, context_limit(active_config))
+                            audit_event("WARNING", "ai.compaction_skipped", "Сводка не вышла, история урезана локально", {
+                                "code": exc.code, "step": step, "trimmed": trimmed is not None,
+                            })
+                            if trimmed is None:
+                                raise
+                            messages = trimmed
+                            context_checkpoint = True
+                            yield sse("agent.status", {"text": "Сводка не вышла, сократил историю и продолжаю"})
                         force_compaction = False
-                        context_checkpoint = False
                 if not pending_followup and (
                     force_compaction
                     or has_history
@@ -1192,7 +1262,7 @@ class AgentOrchestrator:
                     yield sse("agent.status", {"text": "Сжимаю контекст"})
                     limit = context_limit(active_config)
                     divisor = 3 if config.get("provider") == "dokky" else 4
-                    tool_chars = len(json.dumps(tools, ensure_ascii=False))
+                    tool_chars = count_tool_chars(tools)
                     fixed = [
                         *initial_instructions(messages),
                         user,
@@ -1315,6 +1385,9 @@ class AgentOrchestrator:
                             raise asyncio.CancelledError
                         if "waiting_seconds" in chunk:
                             yield sse("agent.waiting", {"seconds": chunk["waiting_seconds"]})
+                        if "retrying" in chunk:
+                            # сервер или модель не ответили: человек видит, какой повтор и когда
+                            yield sse("agent.retrying", chunk["retrying"])
                         if chunk.get("reset"):
                             text, calls, reason = "", [], None
                             await durable_write(save_message, message_id, "", {"status": "running"})
@@ -1370,22 +1443,34 @@ class AgentOrchestrator:
                         {"status": "superseded", "kind": "context_retry"},
                     )
                     continue
+                except RemoteAIError as exc:
+                    # клиент уже повторил пустой ответ сам; дальше это обычный пустой ответ, а не обрыв
+                    if exc.code != "empty_response" or text or calls:
+                        raise
+                    report_error(exc.code, exc, stage="step", reasoning_mode=depth, step=step)
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
                 if reason == "length":
                     calls = []
+                soft_kind = None
                 call_ids = [c.get("id") for c in calls]
                 if any(not isinstance(i, str) or not i for i in call_ids) or len(
                     set(call_ids)
                 ) != len(call_ids):
-                    raise ValueError("AI-сервер прислал некорректные идентификаторы вызовов")
+                    # вызовы с битыми id не исполняются и в историю не попадают
+                    calls, soft_kind = [], "ids"
                 metrics.tool_calls += len(calls)
                 if calls:
                     await durable_write(metrics.persist, turn_id)
-                if not text and not calls and reason != "length":
-                    raise ValueError("AI-сервер вернул пустой ответ без действий")
-                if not calls and mode in {"development", "debug", "build"} and getattr(runner, "completion_diagnostics", lambda: [])():
-                    raise RemoteAIError("В изменённых файлах остались ошибки синтаксиса; результат и диагностика сохранены", code="verification_failed")
+                if not text and not calls and reason != "length" and soft_kind is None:
+                    soft_kind = "empty"
+                diagnostics = []
+                if not calls and soft_kind is None and mode in {"development", "debug", "build"}:
+                    diagnostics = getattr(runner, "completion_diagnostics", lambda: [])()
+                    if diagnostics:
+                        soft_kind = "verify"
+                if not calls and soft_kind is None and reason == "length" and config.get("provider") == "dokky":
+                    soft_kind = "length"
                 context_checkpoint = False
                 # правки надо сдать через task.complete: там гейт качества. Напоминаем один раз, упрямая модель хода не зациклит
                 remind_complete = False
@@ -1403,6 +1488,7 @@ class AgentOrchestrator:
                     if calls
                     or reason == "length"
                     or remind_complete
+                    or soft_kind
                     or (
                         mode != "plan"
                         and any(item.get("status") in {"pending", "running"} for item in plan)
@@ -1432,8 +1518,9 @@ class AgentOrchestrator:
                         }
                         for c in calls
                     ]
-                messages.append(assistant)
-                await durable_write(journal, chat_id, assistant)
+                if text or calls:
+                    messages.append(assistant)
+                    await durable_write(journal, chat_id, assistant)
                 if not calls:
                     if pending_followup:
                         for followup in pending_followup:
@@ -1441,12 +1528,40 @@ class AgentOrchestrator:
                             await durable_write(journal, chat_id, followup)
                         pending_followup = None
                         continue
-                    if reason == "length":
-                        if config.get("provider") == "dokky":
-                            raise RemoteAIError(
-                                "Достигнут лимит ответа. Частичный текст сохранён; для продолжения отправьте новое сообщение. Обрезанные вызовы инструментов не исполнялись.",
-                                code="response_truncated",
+                    if (
+                        soft_kind is None and config.get("provider") == "dokky" and not remind_complete and mode != "plan"
+                        and any(item.get("status") in {"pending", "running"} for item in plan)
+                    ):
+                        soft_kind = "plan"
+                    if soft_kind:
+                        soft_nudges += 1
+                        report_error(
+                            "soft_" + soft_kind, "SoftNudge", stage="step", reasoning_mode=depth, step=step,
+                        )
+                        audit_event("WARNING", "ai.soft_nudge", soft_kind, {"step": step, "count": soft_nudges})
+                        if soft_nudges > SOFT_NUDGE_LIMIT:
+                            # модель так и не сдвинулась: ход завершается понятным объяснением, история сохранена
+                            note = SOFT_STOP_NOTES[soft_kind]
+                            offset = len(text.encode("utf-16-le")) // 2
+                            addition = ("\n\n" if text else "") + note
+                            text += addition
+                            await durable_write(
+                                save_message, message_id, text, {"status": "completed", "channel": "final"}
                             )
+                            yield sse("message.delta", {
+                                "content": addition, "message_id": message_id, "turn_id": turn_id, "offset": offset,
+                            })
+                            yield sse("message.updated", {"message_id": message_id, "turn_id": turn_id, "channel": "final"})
+                            complete = True
+                            break
+                        hint = SOFT_NUDGES[soft_kind]
+                        if soft_kind == "verify":
+                            hint += " Диагностика: " + json.dumps(diagnostics, ensure_ascii=False, default=str)[:3000]
+                        nudge = {"role": "user", "content": hint}
+                        messages.append(nudge)
+                        await durable_write(journal, chat_id, nudge)
+                        continue
+                    if reason == "length":
                         continuation = {
                             "role": "user",
                             "content": "Продолжите с места остановки: достигнут лимит ответа сервера, задача не завершена. Обрезанные вызовы инструментов не исполнялись; при необходимости вызовите их заново.",
@@ -1466,10 +1581,6 @@ class AgentOrchestrator:
                     elif mode != "plan" and any(
                         item.get("status") in {"pending", "running"} for item in plan
                     ):
-                        if config.get("provider") == "dokky":
-                            raise ValueError(
-                                "Модель завершила ответ, но в плане остались незавершённые шаги. История и план сохранены; продолжение требует сообщения пользователя."
-                            )
                         continuation = {
                             "role": "user",
                             "content": "В текущем плане остались незавершённые шаги. Продолжите задачу или отметьте действительно заблокированные шаги и объясните ограничение.",
@@ -1489,6 +1600,7 @@ class AgentOrchestrator:
                     if reason == "length" or plan:
                         continue
                 stalled, last_continuation = 0, None
+                soft_nudges = 0
                 activity_id = await durable_write(create_message, chat_id, "activity", turn_id)
                 created_ids.append(activity_id)
                 events = []
@@ -1551,6 +1663,8 @@ class AgentOrchestrator:
                         or name not in allowed_names
                     ):
                         result = {"ok": False, "error": "Инструмент недоступен в активном режиме."}
+                    elif name in stale_tools:
+                        result = {"ok": False, "error": "Инструмент изменился после начала диалога и сейчас недоступен. Обойдись другими инструментами или начни новый чат."}
                     elif self._control_error(name, args):
                         result = {"ok": False, "error": self._control_error(name, args)}
                     elif name == "plan.update":
@@ -1755,6 +1869,11 @@ class AgentOrchestrator:
                                     execution_name, execution_args,
                                     external=result.get("external"), dangerous=bool(result.get("dangerous")),
                                 )
+                                if result.get("scope"):
+                                    # на что распространится «Разрешить»: дальше такие действия идут без вопросов
+                                    action["scope"] = result["scope"]
+                                if result.get("project_edits"):
+                                    action["project_edits"] = True
                                 verdict = None
                                 if result.get("review"):
                                     yield sse("agent.status", {"text": "Докки проверяет действие: " + action["title"].lower()})
@@ -1779,6 +1898,8 @@ class AgentOrchestrator:
                                         else:
                                             answer = value
                                 if answer.get("approved") is True:
+                                    if answer.get("scope") == "project_edits" and action.get("project_edits"):
+                                        runner.allow_project_edits()
                                     command_output = _begin_command(chat_id, call["id"], runner)
                                     execution_started = monotonic()
                                     async for update in execute_tool_events(
@@ -1937,6 +2058,10 @@ class AgentOrchestrator:
             from koddi.logs.service import redact
 
             metrics.stop_reason = getattr(exc, "code", "agent_error")
+            report_error(
+                getattr(exc, "code", "agent_error"), type(exc).__name__, stage="step",
+                http_status=getattr(exc, "status", None), reasoning_mode=locals().get("depth"), step=locals().get("step"),
+            )
             error = redact(str(exc))
             details = {
                 "code": getattr(exc, "code", "agent_error"),
