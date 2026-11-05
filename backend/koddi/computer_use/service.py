@@ -23,12 +23,15 @@ from koddi.storage.db import db, get_setting, set_setting
 _device_lock = threading.Lock()
 _revoked = threading.Event()
 NATIVE = Path(__file__).with_name("native")
-CURSOR_LABEL = "Докки"
+# не больше 6 слов (ограничение agent-desktop)
+CURSOR_LABEL = "Докки за работой"
 # --accent из frontend/src/styles/tokens.css
 CURSOR_ACCENT = "#438dff"
 MAX_OUTPUT = 4_000_000
 MAX_STDERR = 65536
-MAX_STDIN = 20000
+# agent-desktop читает из --stdin не больше 10 000 байт UTF-8, кириллица - по 2 байта на букву
+MAX_STDIN_BYTES = 10_000
+MAX_STDIN = MAX_STDIN_BYTES
 GUIDE_TOPICS = {"commands-observation", "commands-interaction", "commands-system", "workflows"}
 SETTINGS_LINKS = {
     "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
@@ -419,6 +422,8 @@ def build_invocation(args: dict) -> Invocation:
     for name in spec.stdin:
         if name in args:
             stdin = _text(args[name], name, MAX_STDIN)
+            if len(stdin.encode("utf-8")) > MAX_STDIN_BYTES:
+                raise ValueError(f"{name}: не больше {MAX_STDIN_BYTES} байт UTF-8 (около 5000 русских букв); длинный текст вводите частями")
             argv.append("--stdin")
             break
     if command == "screenshot":
@@ -476,7 +481,7 @@ def run_process(
     """Запускает agent-desktop и возвращает его JSON-конверт; без shell, с лимитами времени и вывода."""
     cancel_event = cancel_event or threading.Event()
     encoded = stdin.encode("utf-8") if stdin is not None else b""
-    if len(encoded) > MAX_STDIN * 4:
+    if len(encoded) > MAX_STDIN_BYTES:
         raise ValueError("Слишком большой текст")
     command = [str(binary_path()), *argv]
     options = {}
@@ -559,6 +564,8 @@ _state_lock = threading.Lock()
 _sessions: dict[int, str] = {}
 _snapshot_apps: dict[int, dict[str, str]] = {}
 _window_apps: dict[int, dict[str, str]] = {}
+# разные имена одного приложения в чате (bundle id, имя из launch, имя окна) -> одно имя для разрешения
+_app_aliases: dict[int, dict[str, str]] = {}
 _MEMORY = 64
 
 
@@ -576,6 +583,45 @@ def _recall(table: dict, chat_id: int | None, key: str) -> str | None:
         return table.get(chat_id or 0, {}).get(key)
 
 
+def _link_apps(chat_id: int, *names) -> None:
+    """Запоминает, что эти имена - одно приложение: «да» на одно покрывает остальные."""
+    keys = [normalize_app(name) for name in names if isinstance(name, str) and name.strip()]
+    keys = [key for key in dict.fromkeys(keys) if key]
+    # системные и опасные приложения не склеиваем ни с чем: для них вопрос на каждое действие
+    if len(keys) < 2 or any(key in SENSITIVE_APPS for key in keys):
+        return
+    with _state_lock:
+        if chat_id not in _app_aliases and len(_app_aliases) >= _MEMORY:
+            _app_aliases.pop(next(iter(_app_aliases)))
+        table = _app_aliases.setdefault(chat_id, {})
+        canonical = next((table[key] for key in keys if key in table), keys[0])
+        for key in keys:
+            table.pop(key, None)
+            table[key] = canonical
+        while len(table) > _MEMORY * 4:
+            table.pop(next(iter(table)))
+
+
+def same_app(asked, got) -> bool:
+    """launch нашёл то, что просили: то же имя, одно внутри другого или хвост bundle id (com.apple.TextEdit)."""
+    if not isinstance(asked, str) or not isinstance(got, str):
+        return False
+    tail = asked.rsplit(".", 1)[-1] if asked.count(".") >= 2 else asked
+    left, right, short = normalize_app(asked), normalize_app(got), normalize_app(tail)
+    if not left or not right:
+        return False
+    return left == right or short == right or (min(len(left), len(right)) >= 4 and (left in right or right in left))
+
+
+def app_key(name: str, chat_id: int | None) -> str:
+    """Ключ разрешения на приложение с учётом его других имён в этом чате."""
+    key = normalize_app(name)
+    if chat_id is None:
+        return key
+    with _state_lock:
+        return _app_aliases.get(chat_id, {}).get(key, key)
+
+
 def end_sessions() -> None:
     """Закрывает сессии agent-desktop (с ними исчезает и курсор агента)."""
     with _state_lock:
@@ -583,6 +629,7 @@ def end_sessions() -> None:
         _sessions.clear()
         _snapshot_apps.clear()
         _window_apps.clear()
+        _app_aliases.clear()
     for session_id in ids:
         try:
             run_process(["session", "end", session_id], timeout=10)
@@ -600,7 +647,9 @@ def _ensure_session(chat_id: int, cancel_event: threading.Event, owner: str) -> 
         return known
     try:
         started = run_process(
-            ["session", "start", f"--name=dokky-chat-{chat_id}", "--cursor"],
+            # без --cursor: курсор по умолчанию успевает показаться с английской подписью agent-desktop,
+            # поэтому включаем его сразу со своей подписью
+            ["session", "start", f"--name=dokky-chat-{chat_id}"],
             timeout=15, cancel_event=cancel_event, owner=owner,
         )
         session_id = (started.get("data") or {}).get("session_id") if started.get("ok") else None
@@ -858,6 +907,16 @@ class ComputerSession:
             app = data.get("app") if isinstance(data.get("app"), str) else args.get("app")
             if command in {"snapshot", "find"} and isinstance(snapshot_id, str) and isinstance(app, str) and app:
                 _remember(_snapshot_apps, chat_id, snapshot_id, app)
+        if command == "launch" and isinstance(data, dict):
+            window = data.get("window") if isinstance(data.get("window"), dict) else {}
+            found = [name for name in (data.get("app"), window.get("app_name")) if isinstance(name, str)]
+            # запустилось что-то другое (нечёткое совпадение имени) - разрешение на него не переносится
+            if found and all(same_app(args.get("app"), name) for name in found):
+                _link_apps(chat_id, args.get("app"), *found)
+        if command == "list-apps" and isinstance(data, dict) and isinstance(data.get("apps"), list):
+            for item in data["apps"][:500]:
+                if isinstance(item, dict):
+                    _link_apps(chat_id, item.get("name"), item.get("bundle_id"))
         if command == "list-windows" and isinstance(data, list):
             for window in data:
                 if isinstance(window, dict) and isinstance(window.get("id"), str) and isinstance(window.get("app_name"), str):

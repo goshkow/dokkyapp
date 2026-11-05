@@ -170,13 +170,13 @@ def action_scopes(tool: str, args: dict, workspace: Path | None, *, dangerous: b
     if dangerous:
         return []
     if tool == "computer.use":
-        from koddi.computer_use.service import normalize_app, sensitive_app, target_app
+        from koddi.computer_use.service import app_key, sensitive_app, target_app
 
         app = target_app(args, chat_id)
         # терминалы, пароли, настройки системы и сама Докки - только по одному действию
         if not app or sensitive_app(app):
             return []
-        return [Scope("app", normalize_app(app), f"приложение {app}")]
+        return [Scope("app", app_key(app, chat_id), f"приложение {app}")]
     if tool in FILE_EDIT_TOOLS:
         keys = _file_keys(tool, args, workspace)
         return [Scope("file", key, f"правки файла {_relative(key, workspace)}") for key in keys]
@@ -195,6 +195,17 @@ def action_scopes(tool: str, args: dict, workspace: Path | None, *, dangerous: b
         return [Scope("mcp", server, f"сервер MCP {server}")] if server else []
     if tool == "docs.lookup":
         return [Scope("mcp", "context7", "документацию Context7")]
+    if tool == "cloud.video":
+        return [Scope("cloud", tool, "разбор видео в облаке Докки")]
+    if tool in {"cloud.image", "cloud.document"}:
+        # файлы проекта уходят на сервер: разрешение не распространяется на другие наборы файлов
+        sent = args.get("references") if tool == "cloud.image" else args.get("inputs")
+        if sent:
+            return []
+        folder = str(args.get("save_to") or "dokky-cloud").strip().strip("/\\").casefold() or "dokky-cloud"
+        label = "создание картинок в облаке Докки" if tool == "cloud.image" else "наброски документов в облаке Докки"
+        # одно «да» - на одну папку результата: в другие папки проекта без вопроса не пишем
+        return [Scope("cloud", f"{tool}:{folder}", f"{label} в папку {folder}")]
     return []
 
 

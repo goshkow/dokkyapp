@@ -105,6 +105,20 @@ def describe_action(name: str, args: dict[str, Any] | None, *, external: list[st
         title = "Открыть страницу в интернете"
         target = str(args.get("url", ""))
         detail = "Адрес уйдёт этому сайту. Если разрешить, сайт больше не будет спрашиваться в этом чате."
+    elif name == "cloud.video":
+        kind = "network"
+        title = "Разобрать видео в облаке Докки"
+        target = str(args.get("url", ""))
+        detail = str(args.get("question") or "")[:300] + "\nРасход - из лимита режима разработки."
+    elif name in {"cloud.image", "cloud.document"}:
+        kind = "network"
+        title = "Создать картинку в облаке Докки" if name == "cloud.image" else "Сделать документ в облаке Докки"
+        sent = args.get("references") if name == "cloud.image" else args.get("inputs")
+        target = ", ".join(str(item) for item in sent[:5]) if isinstance(sent, list) else ""
+        what = str(args.get("prompt") if name == "cloud.image" else args.get("instruction") or "")
+        detail = (what[:300] + ("…" if len(what) > 300 else "")
+                  + ("\nФайлы проекта уйдут на сервер Докки." if target else "")
+                  + "\nРасход - из лимита режима разработки.")
     elif name == "skill.load":
         target = str(args.get("name", ""))
         detail = "Агент предлагает навык из установленного вами плагина. Навык добавляет способ работы, но не права."

@@ -347,6 +347,9 @@ TOOL_DEFINITIONS: list[dict] = [
         {"query": "string", "limit": "integer"},
     ),
     ("web.fetch", "Fetch and summarize URL.", {"url": "string"}),
+    ("cloud.image", "Create or edit an image in the Dokky cloud (same image model as Dokky chat, billed to the user's development limit). prompt: what to draw or change, in detail. references: optional project files, up to 4: images png/jpg/jpeg/webp to edit or follow as a reference, or documents pdf/docx/pptx/txt/md/csv whose text describes the content; max 20 MB each, 40 MB total. save_to: project folder for the result (default dokky-cloud). The PNG is saved into the project and shown to the user. Use it directly for any image request; for exact UI assets prefer code (SVG/CSS).", {"prompt": "string", "references": "array", "save_to": "string"}),
+    ("cloud.video", "Watch and analyze a YouTube video in the Dokky cloud (speech and frames) and answer a question about it. url: https youtube.com or youtu.be link. question: what to find out (default: a structured summary). scope: overview (whole video) or relevant (only parts that answer the question). Returns markdown text with timestamps. Billed to the user's development limit; can take several minutes.", {"url": "string", "question": "string", "scope": "string"}),
+    ("cloud.document", "Draft a designed document in the Dokky cloud with the same document pipeline as Dokky chat: format pdf, docx, pptx (presentation) or xlsx (spreadsheet). instruction: what the file must contain, structure, style and language. inputs: optional project files to use or rework, up to 5: pdf, docx, pptx, txt, md, csv, png, jpg, jpeg, webp; max 20 MB each, 40 MB total. save_to: project folder (default dokky-cloud); existing files are never overwritten. It is a draft generator for good-looking first versions, not an editor: do final and precise edits locally. Not for large documents or exact data transformations - do those locally.", {"instruction": "string", "format": "string", "inputs": "array", "save_to": "string"}),
     ("browser.open", "Open a page in the built-in browser shown in the right panel. url: http(s) URL (localhost works after devserver.start), or a project file path like index.html. Returns session_id.", {"url": "string"}),
     ("browser.snapshot", "Text snapshot of the page: headings, text, links, buttons and fields; every interactive element gets a ref like e12 for click/type. Take it after each action.", {"session_id": "integer", "max_chars": "integer"}),
     ("browser.click", "Click an element by ref from browser.snapshot (or CSS/text selector).", {"session_id": "integer", "ref": "string", "selector": "string", "double": "boolean", "button": "string"}),
@@ -479,7 +482,7 @@ def _schema(name: str, description: str, params: dict[str, str]) -> dict:
 
         optional.update(set(params) - {"command"})
         properties["command"]["enum"] = list(COMMAND_NAMES)
-        properties["text"]["maxLength"] = 20000
+        properties["text"]["maxLength"] = 10000
         for key in ("app", "combo", "query", "role", "name", "value"):
             properties[key]["maxLength"] = 500
         for key in ("ref", "to_ref"):
@@ -496,6 +499,18 @@ def _schema(name: str, description: str, params: dict[str, str]) -> dict:
             "maxItems": 64,
             "items": {"type": "object", "required": ["command"], "properties": {"command": {"type": "string"}}},
         }
+    if name.startswith("cloud."):
+        optional.update({"references", "save_to", "question", "scope", "inputs"})
+        for key, limit in {"prompt": 4000, "question": 4000, "instruction": 8000, "url": 2048, "save_to": 300}.items():
+            if key in properties:
+                properties[key]["maxLength"] = limit
+        for key, limit in {"references": 4, "inputs": 5}.items():
+            if key in properties:
+                properties[key].update(maxItems=limit, items={"type": "string", "maxLength": 1000})
+        if "format" in properties:
+            properties["format"]["enum"] = ["pdf", "docx", "pptx", "xlsx"]
+        if "scope" in properties:
+            properties["scope"]["enum"] = ["overview", "relevant"]
     if name.startswith("browser."):
         required_params = {"browser.open": {"url"}, "browser.type": {"text"}, "browser.press": {"key"}, "browser.select": {"value"}, "browser.eval": {"expression"}}
         optional.update(set(params) - required_params.get(name, set()))
@@ -938,6 +953,9 @@ MODE_TOOL_NAMES = {
         "context.compact",
         "web.search",
         "web.fetch",
+        "cloud.image",
+        "cloud.video",
+        "cloud.document",
         "browser.open",
         "browser.snapshot",
         "browser.click",

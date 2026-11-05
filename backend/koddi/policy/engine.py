@@ -623,6 +623,13 @@ def decide(tool_name: str, args: dict, workspace: Path | None, project_id: int |
             return Decision("ask", "uses a skill from a plugin the user installed: the user decides each time")
     if tool_name == "web.fetch":
         return _decide_fetch(args, profile)
+    if tool_name in {"cloud.image", "cloud.document", "cloud.video"}:
+        if profile == "read-only":
+            return Decision("block", "read-only permission profile")
+        if workspace is None and tool_name != "cloud.video":
+            return Decision("block", "workspace is required")
+        # стоит денег пользователя, текст запроса и перечисленные файлы проекта уходят на сервер Докки
+        return _confirm(profile, "cloud task at the user's expense; the request and listed project files go to the Dokky server")
     if tool_name in READ_ONLY_TOOLS:
         return Decision("allow", "read-only tool")
     if tool_name == "docs.lookup":

@@ -61,6 +61,8 @@ if command == "list-windows":
     out([{{"id": "w-7", "app_name": "Finder", "pid": 1, "title": "t"}}])
 if command == "snapshot":
     out({{"app": flag("app"), "snapshot_id": "snap1", "tree": {{}}}})
+if command == "launch":
+    out({{"app": "TextEdit", "pid": 5, "window": {{"id": "w-9", "app_name": "TextEdit"}}}})
 if command == "type" and config.get("partial"):
     out({{"details": {{"verification_reason": "postcondition_mismatch"}}, "disposition": {{"retry": "unsafe"}}}})
 if command == "screenshot":
@@ -111,6 +113,7 @@ def computer(tmp_path, monkeypatch):
     service._sessions.clear()
     service._snapshot_apps.clear()
     service._window_apps.clear()
+    service._app_aliases.clear()
     service._guide_cache.clear()
     service._revoked.clear()
 
@@ -288,10 +291,11 @@ def test_chat_session_with_cursor_is_started_once_and_ended_on_revoke(computer):
     runner = enable(computer)
     assert use(runner, command="list-apps")["ok"] and use(runner, command="list-windows")["ok"]
     seen = [item["argv"] for item in computer["calls"]()]
-    assert seen[0][:2] == ["session", "start"] and "--cursor" in seen[0]
+    # курсор включается только вместе с русской подписью, без английской по умолчанию
+    assert seen[0][:2] == ["session", "start"] and "--cursor" not in seen[0]
     overlay = seen[1]
     assert overlay[:4] == ["--session", "sess-1", "cursor-overlay", "enable"]
-    assert "--label=Докки" in overlay and "--accent=#438dff" in overlay
+    assert "--label=Докки за работой" in overlay and "--accent=#438dff" in overlay
     assert sum(1 for argv in seen if argv[:2] == ["session", "start"]) == 1
     assert seen[-1][:2] == ["--session", "sess-1"] and seen[-1][2] == "list-windows"
     service.set_consent(False)
@@ -505,3 +509,52 @@ def test_status_without_binary_is_not_available(computer, monkeypatch):
     monkeypatch.setattr(service, "binary_path", missing)
     status = service.status()
     assert status["ok"] is False and status["native_available"] is False
+
+
+def test_launch_and_later_actions_in_the_same_app_ask_once(computer):
+    from koddi.policy import scopes
+
+    scopes._granted.clear()
+    runner = enable(computer)
+    storage.set_setting("permission_profile", "trusted")
+    # модель запускает по bundle id, а дальше работает с именем, которое вернул launch
+    assert runner.run("computer.use", {"command": "launch", "app": "com.apple.TextEdit"})["approval_required"]
+    assert use(runner, command="launch", app="com.apple.TextEdit")["ok"]
+    assert runner.run("computer.use", {"command": "snapshot", "app": "TextEdit"})["ok"]
+    # другое приложение - по-прежнему вопрос
+    assert runner.run("computer.use", {"command": "snapshot", "app": "Notes"})["approval_required"]
+
+
+def test_sensitive_names_are_never_linked_to_an_approved_app(computer):
+    service._link_apps(computer["chat"], "Notes", "Terminal")
+    assert service.app_key("Terminal", computer["chat"]) == "terminal"
+    service._link_apps(computer["chat"], "Notes", "com.apple.Notes")
+    assert service.app_key("com.apple.Notes", computer["chat"]) == service.app_key("Notes", computer["chat"])
+
+
+@pytest.mark.parametrize("args", [
+    {"command": "launch", "app": "Terminal"},
+    {"command": "click", "ref": "@abc:e3"},
+    {"command": "mouse-click", "x": 1, "y": 2},
+    {"command": "type", "ref": "@abc:e1", "text": "Привет, мир!"},
+])
+def test_full_access_never_asks_for_computer_use(computer, args):
+    runner = enable(computer)
+    storage.set_setting("permission_profile", "allow-all")
+    storage.set_setting("permission_profile:user-a", "full")
+    storage.set_setting("permission_full_account:user-a", True)
+    result = runner.run("computer.use", args)
+    assert not result.get("approval_required") and not result.get("blocked")
+
+
+def test_long_russian_text_is_limited_in_bytes():
+    with pytest.raises(ValueError, match="байт"):
+        service.build_invocation({"command": "type", "ref": "@a:e1", "text": "я" * 6000})
+    assert service.build_invocation({"command": "type", "ref": "@a:e1", "text": "я" * 4000}).argv[-1] == "--stdin"
+
+
+def test_launch_of_another_app_does_not_inherit_the_grant():
+    assert service.same_app("com.apple.TextEdit", "TextEdit")
+    assert service.same_app("notepad", "Notepad")
+    assert service.same_app("Visual Studio Code", "Code")
+    assert not service.same_app("Notes", "Mail")

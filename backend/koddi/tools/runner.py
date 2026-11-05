@@ -812,6 +812,8 @@ class ToolRunner:
             return _run_async(self._network(web_fetch(args["url"], allow_private=private_network_allowed(self.project_id))))
         if name.startswith("browser."):
             return self.browser_tool(name, args)
+        if name.startswith("cloud."):
+            return self.cloud_tool(name, args)
         if name == "computer.status":
             from koddi.computer_use.service import status
 
@@ -1930,6 +1932,21 @@ class ToolRunner:
                 vision_transport="not_confirmed",
                 note="проверяй страницу через browser.snapshot, картинка нужна пользователю",
             )
+        return result
+
+    def cloud_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Облачная задача Докки; картинки результата ещё и показываются человеку в чате."""
+        from koddi.dokky import cloud
+
+        kind = name.split(".", 1)[1]
+        workspace = None if kind == "video" else self._require_workspace()
+        result = _run_async(self._network(cloud.run(kind, args, workspace, cancel_event=self.cancel_event)))
+        if kind == "image" and result.get("ok") and workspace is not None:
+            for item in result.get("files", []):
+                try:
+                    item.update(self.attach_image(workspace / item["path"], Path(item["path"]).name))
+                except (OSError, ValueError, KeyError):
+                    pass
         return result
 
     def attach_image(self, path: Path, name: str) -> dict[str, Any]:
