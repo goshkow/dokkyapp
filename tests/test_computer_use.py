@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import stat
 import subprocess
 import sys
@@ -51,6 +52,8 @@ if command == "session":
     out({{}})
 if command == "cursor-overlay":
     out({{}})
+if command == "permissions":
+    out({{"guide": "started"}})
 if config.get("error") and command not in ("status", "skills"):
     out(ok=False, error=config["error"])
 if command == "status":
@@ -291,16 +294,61 @@ def test_chat_session_with_cursor_is_started_once_and_ended_on_revoke(computer):
     runner = enable(computer)
     assert use(runner, command="list-apps")["ok"] and use(runner, command="list-windows")["ok"]
     seen = [item["argv"] for item in computer["calls"]()]
-    # курсор включается только вместе с русской подписью, без английской по умолчанию
+    # курсор включается только со своей картинкой (иначе английское приветствие) и русской фразой
     assert seen[0][:2] == ["session", "start"] and "--cursor" not in seen[0]
     overlay = seen[1]
     assert overlay[:4] == ["--session", "sess-1", "cursor-overlay", "enable"]
-    assert "--label=Докки за работой" in overlay and "--accent=#438dff" in overlay
+    labels = [arg.removeprefix("--label=") for arg in overlay if arg.startswith("--label=")]
+    assert len(labels) == 1 and labels[0] in service.CURSOR_LABELS
+    assert "--accent=#438dff" in overlay and f"--image={service.cursor_image()}" in overlay
+    assert sum(1 for argv in seen if argv[:3] == ["--session", "sess-1", "cursor-overlay"]) == 1
     assert sum(1 for argv in seen if argv[:2] == ["session", "start"]) == 1
     assert seen[-1][:2] == ["--session", "sess-1"] and seen[-1][2] == "list-windows"
     service.set_consent(False)
     assert computer["calls"]()[-1]["argv"] == ["session", "end", "sess-1"]
     assert not service._sessions
+
+
+def test_cursor_phrases_are_russian_short_and_image_is_shipped():
+    assert len(set(service.CURSOR_LABELS)) == len(service.CURSOR_LABELS) >= 5
+    for label in service.CURSOR_LABELS:
+        assert len(label.split()) <= 6 and not re.search(r"[A-Za-z]", label)
+    assert service.cursor_image().is_file()
+    assert service.cursor_image().read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_cursor_phrase_changes_during_work_but_not_on_every_call(computer, monkeypatch):
+    runner = enable(computer)
+    clock = [1000.0]
+    monkeypatch.setattr(service.time, "monotonic", lambda: clock[0])
+    assert use(runner, command="click", ref="@s1:e1")["ok"]
+    assert use(runner, command="click", ref="@s1:e1")["ok"]
+    clock[0] += service.CURSOR_LABEL_EVERY + 1
+    assert use(runner, command="click", ref="@s1:e1")["ok"]
+    overlays = [item["argv"] for item in computer["calls"]() if "cursor-overlay" in item["argv"]]
+    assert len(overlays) == 2
+    first, second = ([a for a in argv if a.startswith("--label=")][0] for argv in overlays)
+    assert first != second
+
+
+def test_without_cursor_image_the_cursor_stays_off(computer, monkeypatch, tmp_path):
+    monkeypatch.setattr(service, "cursor_image", lambda: tmp_path / "missing.png")
+    assert use(enable(computer), command="list-apps")["ok"]
+    assert not any("cursor-overlay" in item["argv"] for item in computer["calls"]())
+
+
+def test_permission_denied_opens_settings_guide_once(computer, monkeypatch):
+    monkeypatch.setattr(service.sys, "platform", "darwin")
+    monkeypatch.setattr(service, "_guide_opened_at", [0.0])
+    computer["configure"](error={"code": "PERM_DENIED", "message": "Accessibility permission not granted"})
+    runner = enable(computer)
+    first = use(runner, command="list-windows")
+    second = use(runner, command="list-windows")
+    assert first["error_code"] == "PERM_DENIED" and first["settings_opened"] is True
+    assert "уже открыла" in first["hint"] and "выключить и включить" in first["hint"]
+    assert "settings_opened" not in second and "shell" in second["hint"]
+    guides = [item["argv"] for item in computer["calls"]() if item["argv"][:1] == ["permissions"]]
+    assert guides == [["permissions", "--guide"]]
 
 
 def test_unrendered_cursor_is_not_an_error(computer):

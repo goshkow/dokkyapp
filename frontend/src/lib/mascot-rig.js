@@ -3,6 +3,8 @@
   const NS='http://www.w3.org/2000/svg';
   const STEP=1/120;
   const QUEUE_DELAY=.6;
+  // в покое маскот только дышит: хватает 20 кадров в секунду, а 60 в простое заметно грузят процессор и видеокарту
+  const CALM_MS=50;
   const EXTRA_KEY='doki-mascot-extra';
   const PIVOT={x:64,y:105};
   const GEO={
@@ -881,7 +883,7 @@
     let from={...REST},fade=1;
     let clip=null,clipT=0,onDone=null,propEls=[],holdRange=null;
     let idle=opts.idle!==false&&!reduced;
-    let speed=1,time=0,raf=0,last=0,acc=0;
+    let speed=1,time=0,raf=0,calmTimer=0,last=0,acc=0,gen=0;
     let breath=0,blinkAt=1.4+rnd()*2,blinkT=-1,blinkTwice=false;
     let gazeAt=1.5,gaze={x:0,y:0},gx=0,gy=0,tu=0,no=0;
     let pointer=null,pointerUntil=0;
@@ -1070,8 +1072,24 @@
       }
     }
 
+    // покой: нет клипа и его перехода, не моргает, не следит за мышью, взгляд, уши и лицо уже остановились
+    function calm(){
+      if(clip||fade<1||blinkT>=0||(pointer&&time<pointerUntil)||mouse)return false;
+      if(Math.abs(gx-gaze.x)>.002||Math.abs(gy-gaze.y)>.002||Math.abs(tu)>.002||Math.abs(no)>.002)return false;
+      return['L','R','f'].every(k=>Math.abs(sp[k].v)<.05&&Math.abs(sp[k].p)<.05);
+    }
     function frame(now){
-      raf=requestAnimationFrame(frame);
+      raf=0;
+      // stop() внутри кадра (клип вызвал destroy) меняет gen: тогда кадр не перепланируется; ошибка клипа цикл не роняет
+      const g=gen;
+      try{tick(now)}finally{
+        if(g===gen&&!running()&&!reduced&&onScreen&&!document.hidden){
+          if(calm())calmTimer=setTimeout(()=>{calmTimer=0;raf=requestAnimationFrame(frame)},CALM_MS);
+          else raf=requestAnimationFrame(frame);
+        }
+      }
+    }
+    function tick(now){
       if(mouse){
         const b=host.getBoundingClientRect();
         pointer={x:clamp((mouse.x-(b.left+b.width/2))/260,-1,1),y:clamp((mouse.y-(b.top+b.height*.45))/220,-1,1)};
@@ -1084,11 +1102,14 @@
       while(acc>=STEP){sub(STEP);acc-=STEP}
       render();
     }
-    function start(){if(!raf&&!reduced&&onScreen&&!document.hidden){last=performance.now();raf=requestAnimationFrame(frame)}}
-    function stop(){cancelAnimationFrame(raf);raf=0}
+    function running(){return raf||calmTimer}
+    function start(){if(!running()&&!reduced&&onScreen&&!document.hidden){last=performance.now();raf=requestAnimationFrame(frame)}}
+    function stop(){gen++;cancelAnimationFrame(raf);clearTimeout(calmTimer);raf=0;calmTimer=0}
+    // из покоя будим сразу, а не через CALM_MS: мышь, клип и моргание должны начинаться без задержки
+    function wakeNow(){if(calmTimer){clearTimeout(calmTimer);calmTimer=0;raf=requestAnimationFrame(frame)}}
     const onVis=()=>document.hidden?stop():start();
     document.addEventListener('visibilitychange',onVis);
-    const onMove=e=>{if(e.pointerType==='mouse')mouse={x:e.clientX,y:e.clientY}};
+    const onMove=e=>{if(e.pointerType==='mouse'){mouse={x:e.clientX,y:e.clientY};wakeNow()}};
     if(opts.followPointer)addEventListener('pointermove',onMove,{passive:true});
     // ушёл с экрана - не тратим кадры, вернулся - начинаем с покоя и снова ждём паузу
     const seen=opts.pauseOffscreen?new IntersectionObserver(([e])=>{
@@ -1111,11 +1132,11 @@
     return{
       svg,
       clips:CLIPS,
-      play(name,done){const c=CLIPS[name];if(!c||reduced)return;onDone=done||null;setClip(c)},
+      play(name,done){const c=CLIPS[name];if(!c||reduced)return;onDone=done||null;setClip(c);wakeNow()},
       // у клипа с hold первый раз играется вступление, дальше по кругу только этот отрезок
       loop(name){
         const c=CLIPS[name];
-        if(c&&c.hold){if(reduced)return;onDone=null;setClip(c);holdRange=c.hold;return}
+        if(c&&c.hold){if(reduced)return;onDone=null;setClip(c);holdRange=c.hold;wakeNow();return}
         const again=()=>this.play(name,again);again();
       },
       autoplay(gap){auto={gap,at:time+gap,bag:[],last:null,queue:[]}},
@@ -1130,7 +1151,7 @@
       playing:()=>clip?Object.keys(CLIPS).find(k=>CLIPS[k]===clip):null,
       progress:()=>clip?clipT/clip.dur:0,
       setSpeed(s){speed=s},
-      setPointer(x,y,hold=1.6){pointer={x:clamp(x,-1,1),y:clamp(y,-1,1)};pointerUntil=time+hold},
+      setPointer(x,y,hold=1.6){pointer={x:clamp(x,-1,1),y:clamp(y,-1,1)};pointerUntil=time+hold;wakeNow()},
       // покадровый просмотр для проверки: считаем с нуля шагами, без случайностей
       seek(name,t){
         stop();idle=false;

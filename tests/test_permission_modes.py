@@ -118,7 +118,15 @@ def test_verdict_thresholds_are_enforced_locally():
     allowed = parse_verdict('{"necessity": 9, "safety": 8, "decision": "allow", "reason": "Нужно для задачи"}')
     assert allowed["allowed"] and allowed["reason"] == "Нужно для задачи"
     # модель сказала allow, но оценки ниже порога
-    assert not parse_verdict('{"necessity": 4, "safety": 9, "decision": "allow", "reason": "x"}')["allowed"]
+    assert not parse_verdict('{"necessity": 4, "safety": 8, "decision": "allow", "reason": "x"}')["allowed"]
+    # безвредное (ожидание, чтение) не спрашивается, даже если к задаче не относится
+    assert parse_verdict('{"necessity": 2, "safety": 9, "decision": "allow", "reason": "x"}', contained=True)["allowed"]
+    # без явного признака «внутри проекта» послабления нет
+    assert not parse_verdict('{"necessity": 2, "safety": 9, "decision": "allow", "reason": "x"}')["allowed"]
+    assert not parse_verdict('{"necessity": 2, "safety": 9, "decision": "allow", "reason": "x"}', dangerous=True, contained=True)["allowed"]
+    assert not parse_verdict('{"necessity": 2, "safety": 10, "decision": "ask", "reason": "x"}')["allowed"]
+    # за пределы проекта и в сеть безвредное без нужности не уходит
+    assert not parse_verdict('{"necessity": 2, "safety": 9, "decision": "allow", "reason": "x"}', contained=False)["allowed"]
     assert not parse_verdict('{"necessity": 9, "safety": 7, "decision": "allow", "reason": "x"}', dangerous=True)["allowed"]
     assert not parse_verdict('{"necessity": 9, "safety": 9, "decision": "ask", "reason": "x"}')["allowed"]
     for broken in ("", "allow", '{"necessity": "9", "safety": 9, "decision": "allow"}', '{"necessity": 11, "safety": 9}'):

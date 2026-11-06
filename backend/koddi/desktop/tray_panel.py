@@ -1,19 +1,20 @@
-"""Меню значка в трее на Windows: своё окно без рамки вместо системного QMenu.
+"""Меню значка в трее на Windows: всплывающее меню (Qt.Popup) со своим оформлением вместо QMenu.
 
-Окно без активации: без заголовка и кнопок окна, закрывается крестиком, кликом мимо, Esc
-и когда курсор ушёл от меню и значка. Всё рисуется вручную: так подпись и знак стоят ровно по высоте
-(по высоте заглавных букв, а не по строке шрифта с её отступами), как в макете «Плитки».
-На macOS меню нативное (`macos_tray.py`) и этот модуль не используется.
+Ведёт себя как системное меню трея: забирает фокус (SetForegroundWindow, как перед TrackPopupMenu),
+закрывается кликом мимо, Esc, переключением в другое окно и крестиком; стрелки и Enter выбирают пункт.
+Всё рисуется вручную: так подпись и знак стоят ровно по высоте (по высоте заглавных букв, а не по строке
+шрифта с её отступами), как в макете «Плитки». На macOS меню нативное (`macos_tray.py`).
 """
 
 from __future__ import annotations
 
 import math
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QColor, QCursor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap,
 )
@@ -24,9 +25,8 @@ from koddi.desktop import splash
 WIDTH = 300
 SHADOW = 16
 PAD = 12
-# курсор дальше этого от меню и значка дольше LEAVE_MS - меню закрывается само
-LEAVE_GAP = 56
-LEAVE_MS = 450
+# щелчок по значку при открытом меню закрывает его: Qt прячет меню по нажатию, а значок тут же открыл бы снова
+REOPEN_GUARD = 0.35
 GAP = SHADOW + 8
 # свёрнутый список чатов: три строки, дальше строка «Ещё N» раскрывает остальные
 COLLAPSED = 3
@@ -159,25 +159,29 @@ def overflow_rect(screen, point: QPoint) -> QRect | None:
     return None
 
 
-def key_down(key: int) -> bool:
+def bring_forward(widget: QWidget) -> None:
+    """Меню трея должно стать окном переднего плана, иначе Windows не закроет его кликом мимо."""
     if sys.platform != "win32":
-        return False
-    import ctypes
+        return
+    try:
+        import ctypes
 
-    return bool(ctypes.windll.user32.GetAsyncKeyState(key) & 0x8000)
+        ctypes.windll.user32.SetForegroundWindow(int(widget.winId()))
+    except (AttributeError, OSError):
+        pass
 
 
 class TrayPanel(QWidget):
     """Плитки лимитов, статус чатов, «Открыть Докки» и ссылки; размеры считает `layout()`."""
 
     def __init__(self, owner) -> None:
-        flags = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint
-                 | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
+        # тень рисуется своя, поэтому системная выключена
+        flags = Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint
         super().__init__(None, flags)
         self.owner = owner
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.setAccessibleName("Меню Докки")
         self.hot: str | None = None
@@ -187,15 +191,11 @@ class TrayPanel(QWidget):
         self.mark = QPixmap(str(splash.mark_path()))
         self.anchor = QRect()
         self.overflow = None
-        self.away_ms = 0
-        self._escape_down = False
-        self._mouse_down = False
+        self.closed_at = 0.0
+        self._was_active = False
         self.spin = QTimer(self)
         self.spin.setInterval(33)
         self.spin.timeout.connect(self._tick)
-        self.watch = QTimer(self)
-        self.watch.setInterval(50)
-        self.watch.timeout.connect(self._watch_cursor)
 
     # данные
 
@@ -242,19 +242,34 @@ class TrayPanel(QWidget):
         self.overflow = self.overflow if preserve_target else overflow_rect(screen, cursor)
         target = self.overflow or (anchor if anchor.isValid() and not anchor.isEmpty() else QRect(point, point))
         self.move(panel_position(area, target, WIDTH, size_h - 2 * SHADOW, overflow=bool(self.overflow)))
-        self.hot = None
-        self.away_ms = 0
-        self._escape_down = key_down(0x1B)
-        self._mouse_down = key_down(0x01) or key_down(0x02)
+        if not preserve_target:
+            self.hot = None
+        opening = not self.isVisible()
         self.show()
         self.raise_()
-        self.watch.start()
+        if opening:
+            self._was_active = False
+            self.activateWindow()
+            bring_forward(self)
+            self.setFocus(Qt.FocusReason.PopupFocusReason)
         self._sync_spin()
 
+    def just_closed(self) -> bool:
+        return time.monotonic() - self.closed_at < REOPEN_GUARD
+
     def hideEvent(self, event) -> None:  # noqa: N802
-        self.watch.stop()
         self.spin.stop()
+        self.closed_at = time.monotonic()
         super().hideEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        # переключились в другое окно - меню закрывается, как системное
+        if event.type() == QEvent.Type.ActivationChange and self.isVisible():
+            if self.isActiveWindow():
+                self._was_active = True
+            elif self._was_active:
+                self.hide()
+        super().changeEvent(event)
 
     def _sync_spin(self) -> None:
         if self.isVisible() and any(chat.mark == "working" for chat in self.chats()):
@@ -269,30 +284,6 @@ class TrayPanel(QWidget):
     def _tick(self) -> None:
         self.angle = (self.angle + 12) % 360
         self.update()
-
-    def _watch_cursor(self) -> None:
-        cursor = QCursor.pos()
-        escape = key_down(0x1B)
-        mouse = key_down(0x01) or key_down(0x02)
-        if (escape and not self._escape_down) or (mouse and not self._mouse_down
-                                                   and not self.frameGeometry().contains(cursor)
-                                                   and not self.anchor.contains(cursor)):
-            self.hide()
-            return
-        self._escape_down, self._mouse_down = escape, mouse
-        zone = self.frameGeometry().adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
-        if self.anchor.isValid():
-            zone = zone.united(self.anchor)
-        if self.overflow:
-            zone = zone.united(self.overflow)
-        dx = max(zone.left() - cursor.x(), 0, cursor.x() - zone.right())
-        dy = max(zone.top() - cursor.y(), 0, cursor.y() - zone.bottom())
-        if math.hypot(dx, dy) > LEAVE_GAP:
-            self.away_ms += self.watch.interval()
-            if self.away_ms >= LEAVE_MS:
-                self.hide()
-        else:
-            self.away_ms = 0
 
     # мышь и клавиатура
 
@@ -323,13 +314,31 @@ class TrayPanel(QWidget):
             self.activate(target)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape:
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
             self.hide()
             return
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.activate("open")
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            # пункт мог исчезнуть: «Ещё N» раскрыли, чат ушёл из списка
+            self.activate(self.hot if self.hot in self.targets else "open")
+            return
+        if key in (Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            self.move_hot(-1 if key in (Qt.Key.Key_Up, Qt.Key.Key_Backtab) else 1)
             return
         super().keyPressEvent(event)
+
+    def move_hot(self, step: int) -> None:
+        """Стрелки ходят по пунктам сверху вниз, как в меню; крестик пропускается."""
+        order = [name for name in self.targets if name != "close"]
+        if not order:
+            return
+        index = order.index(self.hot) + step if self.hot in order else (0 if step > 0 else -1)
+        self.hot = order[index % len(order)]
+        self.update()
+
+    def focusNextPrevChild(self, _next: bool) -> bool:  # noqa: N802
+        # Tab остаётся внутри меню
+        return False
 
     def activate(self, target: str) -> None:
         if target == "more":

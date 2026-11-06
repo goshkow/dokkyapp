@@ -6,6 +6,8 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtCore import QPoint, QRect, QSize, QUrl
 from PySide6.QtWidgets import QApplication
 
@@ -126,12 +128,10 @@ def test_windows_panel_opens_on_right_click_and_runs_commands(app, monkeypatch):
         pixmap = tray_panel.grab(icon.panel)
         assert not pixmap.isNull()
         assert pixmap.width() / pixmap.devicePixelRatio() == tray_panel.WIDTH + 2 * tray_panel.SHADOW
-        # окно не забирает фокус у списка значков Windows
+        # настоящее всплывающее меню: без рамки, не в панели задач, закрывается кликом мимо
         flags = icon.panel.windowFlags()
-        assert flags & tray.Qt.WindowType.WindowType_Mask == tray.Qt.WindowType.Tool
+        assert flags & tray.Qt.WindowType.WindowType_Mask == tray.Qt.WindowType.Popup
         assert flags & tray.Qt.WindowType.FramelessWindowHint
-        assert flags & tray.Qt.WindowType.WindowDoesNotAcceptFocus
-        assert icon.panel.testAttribute(tray.Qt.WidgetAttribute.WA_ShowWithoutActivating)
         # четыре чата помещаются целиком, без строки «Ещё»
         assert {"close", "open", "usage", "quit", "chat:5", "chat:3", "chat:8", "chat:9"} <= set(icon.panel.targets)
         assert "more" not in icon.panel.targets
@@ -146,25 +146,28 @@ def test_windows_panel_opens_on_right_click_and_runs_commands(app, monkeypatch):
         icon.remove()
 
 
-def test_panel_closes_when_cursor_goes_away(app, monkeypatch):
-    monkeypatch.setattr(tray_panel, "key_down", lambda _: False)
+def test_panel_keyboard_moves_between_items_and_escape_closes(app):
     calls = []
     icon = tray.QtTray(actions(calls))
     try:
         icon.update(panel_state())
         icon.panel.popup_at(QRect(500, 500, 20, 20))
-        far = icon.panel.frameGeometry().topLeft() - QPoint(400, 400)
-        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: far))
-        for _ in range(tray_panel.LEAVE_MS // icon.panel.watch.interval() + 1):
-            icon.panel._watch_cursor()
+        tray_panel.grab(icon.panel)
+        order = [name for name in icon.panel.targets if name != "close"]
+        key = tray_panel.Qt.Key
+
+        def press(code):
+            icon.panel.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, code, tray_panel.Qt.KeyboardModifier.NoModifier))
+
+        press(key.Key_Down)
+        assert icon.panel.hot == order[0]
+        press(key.Key_Up)
+        assert icon.panel.hot == order[-1]
+        press(key.Key_Escape)
         assert not icon.panel.isVisible()
-        # рядом с меню - остаётся открытым
-        icon.panel.popup_at(QRect(500, 500, 20, 20))
-        near = icon.panel.frameGeometry().center()
-        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: near))
-        for _ in range(10):
-            icon.panel._watch_cursor()
-        assert icon.panel.isVisible()
+        # щелчок по значку, которым меню только что закрылось, не открывает его снова
+        icon.show_panel()
+        assert not icon.panel.isVisible()
     finally:
         icon.remove()
 
@@ -185,7 +188,6 @@ def test_panel_position_avoids_target_and_stays_on_screen(area, target, overflow
 
 
 def test_overflow_remains_target_when_panel_refreshes(app, monkeypatch):
-    monkeypatch.setattr(tray_panel, "key_down", lambda _: False)
     screen = app.primaryScreen().availableGeometry()
     overflow = QRect(screen.right() - 250, screen.bottom() - 200, 200, 150)
     monkeypatch.setattr(tray_panel, "overflow_rect", lambda *_: overflow)
@@ -198,26 +200,6 @@ def test_overflow_remains_target_when_panel_refreshes(app, monkeypatch):
         icon.panel.refresh()
         assert icon.panel.pos() == initial
         assert icon.panel.overflow == overflow
-        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: overflow.center()))
-        for _ in range(tray_panel.LEAVE_MS // icon.panel.watch.interval() + 1):
-            icon.panel._watch_cursor()
-        assert icon.panel.isVisible()
-    finally:
-        icon.remove()
-
-
-@pytest.mark.parametrize("key", [0x1B, 0x01, 0x02])
-def test_panel_closes_on_escape_or_outside_click(app, monkeypatch, key):
-    pressed = set()
-    monkeypatch.setattr(tray_panel, "key_down", lambda value: value in pressed)
-    icon = tray.QtTray(actions([]))
-    try:
-        icon.panel.popup_at(QRect(500, 500, 20, 20))
-        far = icon.panel.frameGeometry().topLeft() - QPoint(400, 400)
-        monkeypatch.setattr(tray_panel.QCursor, "pos", staticmethod(lambda: far))
-        pressed.add(key)
-        icon.panel._watch_cursor()
-        assert not icon.panel.isVisible()
     finally:
         icon.remove()
 
@@ -277,14 +259,42 @@ def test_mac_menu_matches_layout(app, monkeypatch):
         icon.update(tray.parse(payload()))
         items = list(icon.menu.itemArray())
         titles = [str(item.title()) for item in items]
-        assert titles[2] == "Лимиты использования плана · Plus"
+        assert titles[2:4] == ["Чаты", "Сейчас задач нет"] and not items[3].isEnabled()
+        assert titles[5] == "Лимиты использования плана · Plus"
         assert titles[-3:] == ["Настройки использования…", "", "Завершить Докки"]
         assert "Обновить" not in titles
         bars = [view for item in items if item.view() is not None for view in item.view().subviews() if isinstance(view, NSProgressIndicator)]
         assert [bar.doubleValue() for bar in bars] == [80, 72]
         assert icon.item.button().image() is not None and icon.item.button().image().isTemplate()
         icon.update(tray.parse(json.dumps({"plan": None, "window": None, "total": None})))
-        assert len(icon.menu.itemArray()) == 5
+        assert len(icon.menu.itemArray()) == 8
+    finally:
+        icon.remove()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="строка меню есть только на macOS")
+def test_mac_menu_lists_chats_and_opens_them(app, monkeypatch):
+    from koddi.desktop import macos_tray
+
+    monkeypatch.setattr(macos_tray.QTimer, "singleShot", lambda _ms, fn: fn())
+    calls = []
+    icon = macos_tray.MacTray(tray.Actions(open=lambda: calls.append("open"), usage=lambda: None, quit=lambda: None,
+                                           open_chat=lambda chat_id: calls.append(f"chat:{chat_id}")))
+    try:
+        icon.update(panel_state(chats=[{"id": n, "title": f"Чат {n}", "mark": mark}
+                                       for n, mark in zip(range(1, 7), ("question", "working", "done") * 2)]))
+        items = list(icon.menu.itemArray())
+        chats = [item for item in items if str(item.action() or "") == "chat:"]
+        # порядок задаёт общая модель трея: первые три сразу, остальные в подменю «Ещё»
+        order = [chat.id for chat in icon.state.chats]
+        assert [int(item.tag()) for item in chats] == order[:3]
+        assert [str(item.subtitle()) for item in chats] == [tray_panel.MARK_TEXT[c.mark] for c in icon.state.chats[:3]]
+        assert all(item.image() is not None for item in chats)
+        more = next(item for item in items if item.hasSubmenu())
+        assert str(more.title()) == "Ещё 3 чата"
+        assert [int(item.tag()) for item in more.submenu().itemArray()] == order[3:]
+        icon.target.chat_(chats[1])
+        assert calls == [f"chat:{order[1]}"]
     finally:
         icon.remove()
 

@@ -31,6 +31,8 @@ def chat_runner(workspace, monkeypatch, chat_id=7):
 @pytest.mark.parametrize("command", [
     "git status", "git log --oneline -5", "ls -la | grep foo", "rg TODO src | head -20", "find . -name '*.py'",
     "sed -n 1,5p a.py", "node --version", "Get-ChildItem",
+    "sleep 4; echo ok", "sleep 2 && ls", "ls -d /Applications/*.app 2>/dev/null | grep -i dokky", "git status 2>&1 | head",
+    "Start-Sleep 3", "true || echo no", "cat a.py >/dev/null",
 ])
 def test_reading_commands_never_ask(workspace, command):
     storage.set_setting("permission_profile", "ask")
@@ -41,6 +43,9 @@ def test_reading_commands_never_ask(workspace, command):
 @pytest.mark.parametrize("command", [
     "cat a > b", "find . -delete", "sed -i s/a/b/ f", "git push", "echo $(rm -rf /)", "npm test", "git -C .. status",
     "ls && rm x", "git diff --output=x", "sort -o out in",
+    "sleep 1; rm -rf x", "sleep 5 &", "echo hi > /dev/null.txt", "cat < secret", "echo x >/dev/nullx", "ls\nnpm i",
+    "sleep 1; $(curl x)", "echo `id`", "arch rm -rf x", "rg --pre sh x", "tree -o f", "sort --compress-program=sh x", "sort -oout x", "sort -ro out x", "sort --out=x y", "sort --compress=sh x", "tree -ao out",
+    "uniq in out", "Get-Content (New-Item x)", "echo hi > nul",
 ])
 def test_writing_commands_are_not_reads(command):
     assert not read_only_command(command)

@@ -87,7 +87,7 @@ export function MediaViewer() {
           const text = data.content as string;
           if (/\.(md|markdown)$/i.test(artifact.name ?? '')) {
             target.classList.add('message-body');
-            renderMarkdown(target, text, true);
+            renderMarkdown(target, text, true, { views: false });
             return;
           }
           const pre = document.createElement('pre');

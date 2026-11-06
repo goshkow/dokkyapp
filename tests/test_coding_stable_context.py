@@ -152,6 +152,8 @@ def test_system_is_complete_stable_and_has_no_runtime_data(context):
     assert str(context["workspace"]) not in system and "PROJECT RULE" not in system
     assert "Plan mode" in system and "Development mode" in system
     assert "native function" in system and "private reasoning" in system
+    # наглядные блоки: модель знает детали конструктора, а карты не предлагаются
+    assert "```dokky-view" in system and "dv-calc" in system and "Never add maps" in system
     assert first != second and "CHANGED PROJECT RULE" in second["content"]
     update = coding_context_update(second, [first])
     delta = json.loads(update["content"][len(CONTEXT_PREFIX):])

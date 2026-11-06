@@ -210,7 +210,7 @@ def windows_icon() -> QIcon:
 
 
 class QtTray:
-    """Значок в области уведомлений Windows: щелчок открывает окно, правый щелчок - своё меню (`tray_panel.py`)."""
+    """Значок в области уведомлений Windows: щелчок открывает окно, правый щелчок - всплывающее меню (`tray_panel.py`)."""
 
     def __init__(self, actions: Actions, parent=None) -> None:
         from koddi.desktop.tray_panel import TrayPanel
@@ -236,6 +236,9 @@ class QtTray:
         """Меню над значком; время до сброса считается на момент открытия."""
         if self.panel.isVisible():
             self.panel.hide()
+            return
+        if self.panel.just_closed():
+            # этим же щелчком по значку меню только что закрылось
             return
         self.panel.popup_at(self.icon.geometry())
 

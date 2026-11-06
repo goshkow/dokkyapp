@@ -21,6 +21,8 @@ function useSlow(loading: boolean): boolean {
   return slow;
 }
 
+const HIDDEN_GLASS_MS = 2000;
+
 /** Цвет фона приложения для страницы сайта: у чата приложения свой фон, а не фон сайта.
  * Под стеклом страница прозрачная, а цвет нужен её затуханиям у краёв: это тот же тон, что даёт стекло под окном. */
 function background(glass: boolean): string {
@@ -305,6 +307,7 @@ export function SiteSurface({ shown }: { shown: boolean }) {
   const field = tiles && capable && shown && status === 'ready';
   const frame = useRef<HTMLIFrameElement>(null);
   const relayout = useRef<() => void>(() => undefined);
+  const relayoutNow = useRef<() => void>(() => undefined);
   const host = useRef<HTMLDivElement>(null);
   // после закрытия затемнение гаснет вместе со слоем новости на сайте (0.18 с), а не пропадает рывком
   const [scrim, setScrim] = useState(false);
@@ -329,6 +332,18 @@ export function SiteSurface({ shown }: { shown: boolean }) {
 
   const ownPill = useRef(false);
   ownPill.current = field && pillCapable;
+
+  // скрытой странице стекло не нужно: иначе её покадровый замер блоков стекла не засыпает и грузит процессор
+  // в режиме кода. Гасим не сразу, чтобы быстрое переключение режимов не мигало, а включаем до первого кадра
+  const live = useRef(shown);
+  useLayoutEffect(() => {
+    if (shown) {
+      if (!live.current) { live.current = true; relayoutNow.current(); }
+      return undefined;
+    }
+    const timer = window.setTimeout(() => { live.current = false; relayout.current(); }, HIDDEN_GLASS_MS);
+    return () => window.clearTimeout(timer);
+  }, [shown]);
   useEffect(() => {
     surface.set({ field });
     relayout.current();
@@ -343,7 +358,7 @@ export function SiteSurface({ shown }: { shown: boolean }) {
     const measure = (force = false) => {
       frameId = 0;
       const [left, right] = insets(main);
-      const glass = glassActive();
+      const glass = glassActive() && live.current;
       const color = background(glass);
       const { field: own } = surface.get();
       const key = `${left}:${right}:${color}:${glass}:${own}:${ownPill.current}`;
@@ -353,6 +368,7 @@ export function SiteSurface({ shown }: { shown: boolean }) {
     };
     const schedule = () => { if (!frameId) frameId = requestAnimationFrame(() => measure()); };
     relayout.current = schedule;
+    relayoutNow.current = () => measure();
     setLayoutProvider(() => measure(true));
     const resize = new ResizeObserver(schedule);
     resize.observe(main);
@@ -365,6 +381,7 @@ export function SiteSurface({ shown }: { shown: boolean }) {
     return () => {
       setLayoutProvider(() => undefined);
       relayout.current = () => undefined;
+      relayoutNow.current = () => undefined;
       resize.disconnect();
       classes.disconnect();
       window.clearInterval(settle);

@@ -68,7 +68,7 @@ export function tailCurve(c: number[], t0: number): number[] {
 }
 
 /** Сдвиг, который ещё осталось проехать элементу и его предкам по идущим анимациям, и сколько миллисекунд до конца. */
-function pendingShift(node: Element): { dx: number; dy: number; ms: number; c: number[]; t: number; motion: Animation } | null {
+function pendingShift(node: Element, animated: Set<Element> | null): { dx: number; dy: number; ms: number; c: number[]; t: number; motion: Animation } | null {
   let dx = 0;
   let dy = 0;
   let ms = 0;
@@ -77,6 +77,8 @@ function pendingShift(node: Element): { dx: number; dy: number; ms: number; c: n
   let total = 0;
   let motion: Animation | null = null;
   for (let item: Element | null = node; item && item !== document.body; item = item.parentElement) {
+    // getAnimations у каждого предка каждый кадр дорогой: спрашиваем только тех, у кого анимация точно идёт
+    if (animated && !animated.has(item)) continue;
     for (const animation of item.getAnimations()) {
       const effect = animation.effect as KeyframeEffect | null;
       if (!effect || typeof effect.getKeyframes !== 'function') continue;
@@ -129,16 +131,28 @@ export function setGlassSource(source: () => GlassBlock[]): void {
   kickGlass();
 }
 
+/** Элементы с идущими анимациями; null - движок не умеет отдать их списком, тогда проверяется каждый предок. */
+function animatedTargets(): Set<Element> | null {
+  if (typeof document.getAnimations !== 'function') return null;
+  const targets = new Set<Element>();
+  for (const animation of document.getAnimations()) {
+    const target = (animation.effect as KeyframeEffect | null)?.target;
+    if (target) targets.add(target);
+  }
+  return targets;
+}
+
 function collect(): Region[] {
   const regions: Region[] = [];
   const seen = new Set<string>();
+  const animated = animatedTargets();
   document.querySelectorAll<HTMLElement>('[data-glass]').forEach((node, index) => {
     if (!node.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return;
     const id = node.dataset.glass || String(index);
     const box = rectOf(node);
     if (box.w < 2 || box.h < 2) return;
     const radius = Math.min(parseFloat(getComputedStyle(node).borderTopLeftRadius) || 0, box.h / 2, box.w / 2);
-    const shift = pendingShift(node);
+    const shift = !animated || animated.size ? pendingShift(node, animated) : null;
     const flight = flights.get(id);
     if (shift) {
       const to = { x: box.x - shift.dx, y: box.y - shift.dy, w: box.w, h: box.h };

@@ -1,0 +1,151 @@
+/* наглядные блоки в ответах режима кода (lib/dokkyView.ts): детали конструктора на токенах приложения */
+.dv {
+  --dv-tone: var(--accent);
+  --dv-warning: #f5a524;
+  --dv-radius: 18px;
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--message-size);
+  line-height: 1.5;
+}
+.dv * { box-sizing: border-box; }
+.dv :is(h3, h4, p, ul, ol, figure) { margin: 0; }
+.dv [data-tone="accent"] { --dv-tone: var(--accent); }
+.dv [data-tone="positive"] { --dv-tone: var(--positive); }
+.dv [data-tone="danger"] { --dv-tone: var(--danger); }
+.dv [data-tone="warning"] { --dv-tone: var(--dv-warning); }
+.dv [data-tone="neutral"] { --dv-tone: var(--muted); }
+
+.dv-card, .dv-callout, .dv-recipe, .dv-calc, .dv-before, .dv-after, .dv-col {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--dv-radius);
+  background: var(--fill);
+}
+.dv :is(.dv-card, .dv-col, .dv-callout)[data-tone] {
+  border-color: color-mix(in srgb, var(--dv-tone) 34%, transparent);
+  background: color-mix(in srgb, var(--dv-tone) 7%, var(--bg));
+}
+.dv-title { font-size: calc(var(--message-size) + 1px); font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; }
+.dv-text { color: var(--text); }
+.dv-muted { color: var(--muted); }
+.dv-small { font-size: calc(var(--message-size) - 1px); color: var(--muted); }
+.dv-accent { color: var(--dv-tone); }
+.dv-big { font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.dv hr { width: 100%; height: 1px; margin: 2px 0; border: 0; background: var(--line-soft); }
+
+/* сетки: на узкой ленте колонки складываются в одну */
+.dv-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); min-width: 0; }
+.dv-grid-2 { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dv-grid-3 { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .dv-grid-2, .dv-grid-3, .dv-compare, .dv-ba { grid-template-columns: 1fr; } }
+
+/* крупные числа */
+.dv-stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.dv-stat { display: grid; gap: 2px; min-width: 0; padding: 12px 14px; border-radius: 14px; background: var(--fill); }
+.dv-stat > :is(strong, b) { font-size: 26px; line-height: 1.15; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dv-stat[data-tone] > :is(strong, b) { color: var(--dv-tone); }
+.dv-stat > :is(span, small) { color: var(--muted); font-size: calc(var(--message-size) - 1px); }
+
+/* сравнение: колонки с плюсами и минусами */
+.dv-compare { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.dv :is(.dv-pros, .dv-cons) { display: grid; gap: 6px; padding: 0; list-style: none; }
+.dv :is(.dv-pros, .dv-cons) > li { position: relative; padding-left: 22px; }
+.dv :is(.dv-pros, .dv-cons) > li::before { position: absolute; left: 0; top: 0; width: 16px; text-align: center; font-weight: 700; }
+.dv .dv-pros > li::before { content: '+'; color: var(--positive); }
+.dv .dv-cons > li::before { content: '−'; color: var(--danger); }
+
+/* до и после */
+.dv-ba { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dv-before { background: color-mix(in srgb, var(--danger) 6%, var(--bg)); border-color: color-mix(in srgb, var(--danger) 26%, transparent); }
+.dv-after { background: color-mix(in srgb, var(--positive) 7%, var(--bg)); border-color: color-mix(in srgb, var(--positive) 30%, transparent); }
+.dv-label, .dv-badge, .dv-chip {
+  justify-self: start;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: calc(var(--message-size) - 2px);
+  font-weight: 600;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--dv-tone) 14%, transparent);
+  color: var(--dv-tone);
+}
+.dv-before > .dv-label { --dv-tone: var(--danger); }
+.dv-after > .dv-label { --dv-tone: var(--positive); }
+.dv-chip { --dv-tone: var(--muted); background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); font-weight: 500; }
+.dv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* шаги и этапы */
+.dv .dv-steps { display: grid; gap: 10px; padding: 0; list-style: none; counter-reset: dv-step; }
+.dv .dv-steps > li { position: relative; min-height: 24px; padding-left: 36px; counter-increment: dv-step; }
+.dv .dv-steps > li::before {
+  content: counter(dv-step);
+  position: absolute; left: 0; top: -1px;
+  display: grid; place-items: center;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dv-tone) 16%, transparent);
+  color: var(--dv-tone);
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.dv-timeline { display: grid; gap: 0; }
+.dv-event { position: relative; display: grid; gap: 2px; padding: 0 0 14px 22px; border-left: 2px solid var(--line-soft); margin-left: 5px; }
+.dv-event:last-child { padding-bottom: 0; border-left-color: transparent; }
+.dv-event::before { content: ''; position: absolute; left: -7px; top: 5px; width: 12px; height: 12px; border-radius: 50%; background: var(--dv-tone); box-shadow: 0 0 0 3px var(--bg); }
+
+/* рецепт и карточки с картинкой */
+.dv-recipe { padding: 0; overflow: hidden; gap: 0; }
+.dv-recipe > :not(.dv-cover) { margin: 0 16px; }
+.dv-recipe > :not(.dv-cover):first-child, .dv-recipe > .dv-cover + * { margin-top: 14px; }
+.dv-recipe > :not(.dv-cover) + :not(.dv-cover) { margin-top: 10px; }
+.dv-recipe > :last-child:not(.dv-cover) { margin-bottom: 16px; }
+.dv img { display: block; max-width: 100%; height: auto; border-radius: 14px; }
+.dv .dv-cover, .dv .dv-cover img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 0; background: var(--fill); }
+.dv figure { display: grid; gap: 6px; }
+.dv figcaption { color: var(--muted); font-size: calc(var(--message-size) - 1px); }
+
+/* полосы-диаграмма: ширина из data-value / data-max */
+.dv-bars { display: grid; gap: 10px; }
+.dv-bar { display: grid; grid-template-columns: minmax(80px, 34%) 1fr auto; align-items: center; gap: 10px; min-width: 0; }
+.dv-bar::after {
+  content: '';
+  grid-column: 2;
+  grid-row: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--dv-tone) calc(var(--dv-part, 0) * 100%), var(--fill) 0);
+}
+.dv-bar > :first-child { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-bar > :nth-child(2) { grid-column: 3; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* пары «параметр - значение» */
+.dv-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; }
+.dv-kv > :nth-child(odd) { color: var(--muted); }
+.dv-kv > :nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* подсказка */
+.dv .dv-callout { gap: 6px; padding: 12px 14px; border-left: 4px solid var(--dv-tone); }
+.dv .dv-callout[data-tone] { border-left-color: var(--dv-tone); }
+
+/* таблица */
+.dv .dv-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.dv .dv-table :is(th, td) { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.dv .dv-table th { color: var(--muted); font-weight: 600; font-size: calc(var(--message-size) - 1px); }
+.dv .dv-table tr:last-child td { border-bottom: 0; }
+
+/* расчёт: ползунки и итог пересчитываются сразу */
+.dv-field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; }
+.dv-field > input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.dv-field > input[type="number"] { padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); font: inherit; }
+.dv-field .dv-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+.dv-result { display: grid; gap: 2px; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--dv-tone) 10%, transparent); }
+.dv-result output { font-size: 26px; line-height: 1.15; font-weight: 650; letter-spacing: -0.02em; color: var(--dv-tone); font-variant-numeric: tabular-nums; }
+.dv output { font-variant-numeric: tabular-nums; }
+
+.dv-pending { margin: 14px 0; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--dv-radius); color: var(--muted); }

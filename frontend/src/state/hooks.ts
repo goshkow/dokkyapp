@@ -15,6 +15,7 @@ import { openFile } from './workspaceRemote';
 const development = (): boolean => ui.get().scope === 'development';
 
 markdownHooks.richEnabled = () => !development();
+markdownHooks.viewsEnabled = () => development();
 markdownHooks.hasProject = () => development() && Boolean(view.get().project);
 markdownHooks.openProjectFile = (path) => { void guarded(() => openFile(path))(); };
 markdownHooks.copy = (text, event, success) => { void copyText(text, event, success); };

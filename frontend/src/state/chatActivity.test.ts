@@ -5,7 +5,7 @@ vi.mock('../lib/api', async (importOriginal) => ({ ...(await importOriginal<type
 
 import { announceAgentNotice } from '../lib/bridge';
 import type { Chat } from '../lib/types';
-import { chatActivity, markSeen, onQuestion, onRunState } from './chatActivity';
+import { chatActivity, markSeen, onAnswered, onQuestion, onRunState } from './chatActivity';
 import { data } from './data';
 import { ui } from './ui';
 import { view } from './view';
@@ -37,6 +37,26 @@ describe('состояние чатов в меню', () => {
     expect(chatActivity.get().done['5']).toBe(true);
     markSeen(5);
     expect(chatActivity.get().done['5']).toBeUndefined();
+  });
+
+  it('ответ в окне сразу снимает оранжевую точку, если других вопросов нет', () => {
+    onRunState(8, true);
+    onQuestion(8, true, 'approval');
+    onAnswered(8, 1);
+    expect(chatActivity.get().activity['8']).toBe('question');
+    onAnswered(8, 0);
+    expect(chatActivity.get().activity['8']).toBe('working');
+  });
+
+  it('список, запрошенный до ответа, не возвращает точку; новый вопрос - возвращает', () => {
+    onRunState(9, true);
+    onQuestion(9, true);
+    onQuestion(9, false);
+    data.set({ localChats: [chat(9, 'question')] });
+    expect(chatActivity.get().activity['9']).toBe('working');
+    onQuestion(9, true);
+    data.set({ localChats: [chat(9, 'question'), chat(10)] });
+    expect(chatActivity.get().activity['9']).toBe('question');
   });
 
   it('открытый чат не получает отметку «готово»', () => {

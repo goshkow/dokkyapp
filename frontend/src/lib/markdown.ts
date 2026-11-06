@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 import { marked } from 'marked';
 import { renderMath } from './math';
+import { renderView, VIEW_LANGUAGE, VIEW_PENDING, viewPrepare } from './dokkyView';
 import { richChecklist, richHydrate, richPrepare } from './rich';
 
 /** Что нужно разметке от приложения: открыть файл проекта, ссылку и копирование. Подключается при старте. */
@@ -11,6 +12,8 @@ export interface MarkdownHooks {
   copy?: (text: string, event: MouseEvent, success: string) => void;
   /** Режим Докки (чат/поиск): картинки, видео и файлы сайта. */
   richEnabled?: () => boolean;
+  /** Режим кода: наглядные блоки ```dokky-view из деталей Докки (lib/dokkyView.ts). */
+  viewsEnabled?: () => boolean;
   /** Ссылка в браузерной панели рабочей области; false - панели нет, ссылка уходит в системный браузер. */
   openLink?: (href: string) => boolean;
 }
@@ -24,12 +27,16 @@ const desktopHost = () => Boolean(window.koddiDesktop);
 export interface RenderOptions {
   message?: unknown;
   streaming?: boolean;
+  /** false - файл проекта, а не ответ: наглядные блоки из него не собираются и картинок не тянут. */
+  views?: boolean;
 }
 
 /** Разбирает Markdown в безопасные узлы: картинки только вложения проекта (и сайта Докки в чате), код с подсветкой и кнопкой «Копировать». */
 export function renderMarkdown(target: HTMLElement, source: string, highlight = true, options: RenderOptions = {}): void {
   const rich = Boolean(markdownHooks.richEnabled?.());
-  const parsed = marked.parse(rich ? richPrepare(source, { streaming: options.streaming }) : String(source ?? ''), { gfm: true, breaks: false, async: false }) as string;
+  const views = options.views !== false && Boolean(markdownHooks.viewsEnabled?.());
+  const text = views ? viewPrepare(String(source ?? ''), Boolean(options.streaming)) : String(source ?? '');
+  const parsed = marked.parse(rich ? richPrepare(text, { streaming: options.streaming }) : text, { gfm: true, breaks: false, async: false }) as string;
   const fragment = DOMPurify.sanitize(rich ? richChecklist(parsed) : parsed, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ['style', 'iframe', 'form', 'input'],
@@ -69,6 +76,18 @@ export function renderMarkdown(target: HTMLElement, source: string, highlight = 
     const code = pre.querySelector('code');
     if (!code) return;
     const language = /language-([^\s]+)/.exec(code.className)?.[1] ?? 'Код';
+    if (views && language === VIEW_PENDING) {
+      const pending = document.createElement('div');
+      pending.className = 'dv-pending';
+      pending.setAttribute('role', 'status');
+      pending.textContent = 'Собираю наглядный блок…';
+      pre.replaceWith(pending);
+      return;
+    }
+    if (views && language === VIEW_LANGUAGE) {
+      const view = renderView(code.textContent ?? '');
+      if (view) { pre.replaceWith(view); return; }
+    }
     if (highlight && hljs.getLanguage(language) && (code.textContent ?? '').length < 50_000) {
       try {
         code.innerHTML = hljs.highlight(code.textContent ?? '', { language, ignoreIllegals: true }).value;

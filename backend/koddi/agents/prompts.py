@@ -164,8 +164,9 @@ def compose_coding_system_prompt() -> str:
     sections.append(read_prompt("prompts/depth/common.ru.txt", "## Work depth\nApply the profile named by work_depth."))
     for depth, path in DEPTH_FILES.items():
         sections.append(f"### Work depth reference: {DEPTH_NAMES[depth]} ({depth})\n" + read_prompt(path, f"Work depth: {depth}"))
+    sections.append(read_prompt(VIEW_PROMPT, ""))
     sections.append(read_prompt("prompts/tool_protocol.ru.txt", "Use native function calls."))
-    return "\n\n".join(sections)
+    return "\n\n".join(section for section in sections if section)
 
 
 def environment_info() -> dict[str, str]:
@@ -278,6 +279,10 @@ def coding_context_update(current: dict, history: list[dict]) -> dict | None:
     return {"role": "user", "content": CONTEXT_PREFIX + json.dumps(changes, ensure_ascii=False)}
 
 
+# наглядные блоки ответа (frontend/src/lib/dokkyView.ts): какие детали есть и когда их уместно собирать
+VIEW_PROMPT = "prompts/dokky_view.ru.txt"
+
+
 def read_prompt(relative: str, fallback: str) -> str:
     path = project_root() / relative
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else fallback
@@ -366,6 +371,7 @@ def compose_system_prompt(
             "## Response language\nRespond in the same language as the latest user task, even though all system instructions are in English. "
             "All visible progress, reasoning summaries and final response must use that language. "
             "Do not expose private chain-of-thought; emit only concise, user-facing progress.",
+            read_prompt(VIEW_PROMPT, ""),
         ]
         if include_tools:
             sections.extend(
@@ -388,6 +394,6 @@ def compose_system_prompt(
         sections.append(
             f"## Context budget\n{budget}. Read large files by range or search, never blindly."
         )
-        return "\n\n".join(sections)
+        return "\n\n".join(section for section in sections if section)
 
     return prompt_context_cache.get_or_build(inputs, build)

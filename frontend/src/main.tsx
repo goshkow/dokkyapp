@@ -33,6 +33,7 @@ import './styles/home.css';
 import './styles/plain.css';
 import './styles/glass.css';
 import './styles/surface.css';
+import './styles/dokkyView.css';
 
 import { role } from './lib/mirror';
 

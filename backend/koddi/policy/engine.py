@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -321,14 +322,24 @@ _READ_PROGRAMS = frozenset({
     "basename", "dirname", "realpath", "readlink", "sort", "uniq", "cut", "diff", "cmp", "jq",
     "get-childitem", "gci", "get-content", "gc", "select-string", "sls", "get-location", "test-path", "get-item",
     "resolve-path", "get-command", "measure-object",
+    # ничего не читают и не меняют: ожидание, пустые команды, сведения о системе
+    "sleep", "true", "false", "test", "[", "seq", "uptime", "nproc", "sw_vers", "start-sleep",
 })
 _READ_GIT = frozenset({
     "status", "log", "diff", "show", "blame", "shortlog", "describe", "rev-parse", "ls-files", "ls-tree",
     "cat-file", "grep", "reflog", "for-each-ref", "name-rev", "merge-base",
 })
 _READ_VERSION = re.compile(r"^[\w.+-]+(?:\.exe)?\s+(?:--version|-v|-V|version)$")
-# вывод в файл, подстановки и цепочки делают «чтение» записью или запуском чего угодно
-_WRITE_SYNTAX = re.compile(r"[;&<>`\n]|\$\(|\|\||>>")
+# вывод в файл, подстановки и фон делают «чтение» записью или запуском чего угодно;
+# последовательность (;, &&, ||, перенос строки) из одних чтений - по-прежнему чтение
+# скобки в PowerShell выполняют команду: Get-Content (New-Item x)
+_WRITE_SYNTAX = re.compile(r"[&<>`(]")
+_SEQUENCE = re.compile(r"&&|\|\||[;\n]")
+# вывод в никуда ничего не пишет: 2>/dev/null, >/dev/null, 2>&1, >$null и > NUL в Windows
+_DISCARD = re.compile(
+    r"\s*(?:(?:[12]|&)?>\s*(?:/dev/null|\$null" + (r"|nul" if sys.platform == "win32" else "") + r")|2>&1)(?=\s|$|[;|])",
+    re.IGNORECASE,
+)
 _SENSITIVE_PARTS = frozenset({
     ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".gcloud", "keychains", ".password-store", ".netrc",
     ".pgpass", ".git-credentials", "credentials", "koddi", ".npmrc", ".pypirc",
@@ -345,6 +356,11 @@ def sensitive_path(path: str) -> bool:
     if "gh" in lowered and ".config" in lowered:
         return True
     return bool(parts and _SENSITIVE_NAME.search(parts[-1]))
+
+
+def _short_flag(word: str, letter: str) -> bool:
+    """Короткий флаг в слове, в том числе склеенный с другими: -ro, -oout."""
+    return word.startswith("-") and not word.startswith("--") and letter in word[1:]
 
 
 def _read_segment(segment: str) -> bool:
@@ -364,8 +380,15 @@ def _read_segment(segment: str) -> bool:
         return not re.search(r"\s-(?:delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", " ".join(words))
     if name == "sed":
         return all(not word.startswith("-i") and word != "--in-place" for word in words[1:])
-    if name in {"sort", "uniq"}:
-        return "-o" not in words and not any(word.startswith("--output") for word in words)
+    if name == "sort":
+        # -o пишет в файл и в склейке (-ro, -oout), длинные опции GNU берёт и сокращёнными (--out, --compress)
+        return not any(_short_flag(word, "o") or word.startswith(("--o", "--com")) for word in words[1:])
+    if name == "uniq":
+        # второй файл у uniq - куда писать
+        return len([word for word in words[1:] if not word.startswith("-")]) <= 1
+    if name in {"rg", "tree"}:
+        # rg --pre запускает программу, tree -o пишет в файл
+        return not any(word.startswith("--pre") or (name == "tree" and (_short_flag(word, "o") or word.startswith("--o"))) for word in words[1:])
     return name in _READ_PROGRAMS or bool(_READ_VERSION.match(segment.strip()))
 
 
@@ -374,9 +397,10 @@ def read_only_command(command: str) -> bool:
     if dangerous_command(command):
         return False
     outer, texts, expanded = _unquote(command)
-    if expanded or _WRITE_SYNTAX.search(outer):
+    steps = [step.strip() for step in _SEQUENCE.split(_DISCARD.sub("", outer))]
+    if expanded or any(_WRITE_SYNTAX.search(step) for step in steps):
         return False
-    segments = [part.strip() for part in outer.split("|")]
+    segments = [part.strip() for step in steps for part in step.split("|")]
     return bool(segments) and all(segment and _read_segment(segment) for segment in segments)
 
 

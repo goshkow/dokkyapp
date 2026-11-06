@@ -67,6 +67,30 @@ describe('синхронизация стекла', () => {
   });
 });
 
+describe('замер без анимаций', () => {
+  it('без идущих анимаций предков не спрашивает', () => {
+    document.documentElement.classList.add('glass-capable');
+    const node = document.createElement('div');
+    node.dataset.glass = 'quiet';
+    document.body.append(node);
+    node.checkVisibility = () => true;
+    node.getBoundingClientRect = () => ({ left: 4, top: 4, width: 100, height: 40 }) as DOMRect;
+    const asked = vi.fn(() => []);
+    node.getAnimations = asked;
+    document.getAnimations = () => [];
+    const packets: Array<{ regions: Array<Record<string, unknown>> }> = [];
+    window.koddiWindowBridge = { setGlass: (payload: string) => packets.push(JSON.parse(payload)) } as unknown as NonNullable<typeof window.koddiWindowBridge>;
+    try {
+      setGlassEnabled(true, false);
+      expect(packets.at(-1)!.regions).toContainEqual(expect.objectContaining({ id: 'quiet', x: 4, w: 100 }));
+      expect(asked).not.toHaveBeenCalled();
+    } finally {
+      delete (document as { getAnimations?: unknown }).getAnimations;
+      node.remove();
+    }
+  });
+});
+
 describe('угасание блока', () => {
   it('новое угасание начинается с полной или нулевой прозрачности', () => {
     expect(nextFade(null, true, 1000, 240, [0, 0, 1, 1])).toEqual({ from: 0, to: 1, ms: 240, c: [0, 0, 1, 1], at: 1000 });

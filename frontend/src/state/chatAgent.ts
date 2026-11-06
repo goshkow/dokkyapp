@@ -1,6 +1,7 @@
 /* Запросы агента, план и изменения проекта. */
 import { api, post } from '../lib/api';
 import { notify, confirmDialog } from './overlay';
+import { onAnswered } from './chatActivity';
 import { chat, currentChatId, followFeed, setStatus } from './chatCore';
 import type { AgentRequest, Change, PlanSnapshot, PlanStep } from './chatTypes';
 
@@ -18,7 +19,10 @@ export async function respondRequest(
   payload: { approved?: boolean; scope?: 'project_edits'; answer?: string; answers?: { selected: string[]; text: string }[] },
 ): Promise<void> {
   await post(`/api/agent/requests/${request.id}/respond`, request.turn_id == null ? payload : { ...payload, turn_id: request.turn_id });
-  chat.set({ requests: chat.get().requests.filter((item) => item.id !== request.id) });
+  const requests = chat.get().requests.filter((item) => item.id !== request.id);
+  chat.set({ requests });
+  const chatId = request.chat_id ?? currentChatId();
+  onAnswered(chatId, requests.filter((item) => item.chat_id === undefined || String(item.chat_id) === String(chatId)).length);
   setStatus('Продолжаю выполнение…');
 }
 

@@ -6,6 +6,7 @@ import atexit
 import io
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -23,8 +24,23 @@ from koddi.storage.db import db, get_setting, set_setting
 _device_lock = threading.Lock()
 _revoked = threading.Event()
 NATIVE = Path(__file__).with_name("native")
-# не больше 6 слов (ограничение agent-desktop)
-CURSOR_LABEL = "Докки за работой"
+# не больше 6 слов (ограничение agent-desktop); фраза случайная и иногда меняется по ходу работы
+CURSOR_LABELS = (
+    "Докки за работой",
+    "Сейчас всё сделаю",
+    "Минутку, я тут кликаю",
+    "Аккуратно жму кнопки",
+    "Докки разбирается",
+    "Не мешайте, я печатаю",
+    "Хожу по окнам",
+    "Докки ведёт мышку",
+    "Почти готово",
+    "Одну секунду",
+)
+CURSOR_LABEL_EVERY = 30.0
+# свой курсор обязателен: без --image agent-desktop при включении пишет своё английское приветствие
+CURSOR_IMAGE_NAME = "cursor.png"
+CURSOR_HOTSPOT = "2,2"
 # --accent из frontend/src/styles/tokens.css
 CURSOR_ACCENT = "#438dff"
 MAX_OUTPUT = 4_000_000
@@ -97,7 +113,7 @@ def sensitive_app(name: str | None) -> bool:
 ERROR_HINTS = {
     "STALE_REF": "Интерфейс изменился, ссылка устарела. Сделайте snapshot заново и возьмите свежий ref.",
     "AMBIGUOUS_TARGET": "Под запрос подходит несколько окон или элементов. Вызовите list-windows и повторите с window_id (или уточните запрос).",
-    "PERM_DENIED": "Нет разрешений системы. На macOS попросите пользователя включить Универсальный доступ и Запись экрана для Докки (Настройки - Система - Управление приложениями), затем повторите.",
+    "PERM_DENIED": "Нет разрешения системы. Не ищите приложения и не открывайте настройки через shell. Попросите пользователя включить Докки в Настройках: Конфиденциальность и безопасность - Универсальный доступ (и Запись экрана для снимков). Если Докки там уже включена, её нужно выключить и включить снова или убрать минусом и добавить заново: после обновления macOS иногда не узнаёт новую версию. Затем повторите команду.",
     "POLICY_DENIED": "Действие запретила политика безопасности. Не обходите её: объясните пользователю, что нужно сделать самому.",
     "APP_NOT_FOUND": "Приложение не найдено или не запущено. Вызовите list-apps, при необходимости launch.",
     "APP_UNRESPONSIVE": "Приложение не отвечает. Подождите (wait) и повторите, либо сообщите пользователю.",
@@ -562,6 +578,8 @@ def set_consent(enabled: bool) -> None:
 
 _state_lock = threading.Lock()
 _sessions: dict[int, str] = {}
+# фраза у курсора сессии и когда её поставили
+_cursor_labels: dict[str, tuple[str, float]] = {}
 _snapshot_apps: dict[int, dict[str, str]] = {}
 _window_apps: dict[int, dict[str, str]] = {}
 # разные имена одного приложения в чате (bundle id, имя из launch, имя окна) -> одно имя для разрешения
@@ -627,6 +645,7 @@ def end_sessions() -> None:
     with _state_lock:
         ids = list(_sessions.values())
         _sessions.clear()
+        _cursor_labels.clear()
         _snapshot_apps.clear()
         _window_apps.clear()
         _app_aliases.clear()
@@ -640,6 +659,60 @@ def end_sessions() -> None:
 atexit.register(end_sessions)
 
 
+PERMISSION_GUIDE_EVERY = 120.0
+_guide_opened_at = [0.0]
+
+
+def _open_permission_guide(cancel_event: threading.Event, owner: str) -> bool:
+    """Открывает Настройки на нужном разрешении с подсказкой agent-desktop, не чаще раза в 2 минуты."""
+    with _state_lock:
+        now = time.monotonic()
+        if _guide_opened_at[0] and now - _guide_opened_at[0] < PERMISSION_GUIDE_EVERY:
+            return False
+        _guide_opened_at[0] = now
+    try:
+        reply = run_process(["permissions", "--guide"], timeout=15, cancel_event=cancel_event, owner=owner)
+    except (OSError, ValueError):
+        return False
+    return bool(reply.get("ok")) and (reply.get("data") or {}).get("guide") in {"started", "already_running"}
+
+
+def cursor_image() -> Path:
+    base = app_dir() / "koddi" / "computer_use" / "native" if is_packaged_build() else NATIVE
+    return base / CURSOR_IMAGE_NAME
+
+
+def _cursor_label(previous: str | None = None) -> str:
+    choices = [label for label in CURSOR_LABELS if label != previous] or list(CURSOR_LABELS)
+    return random.choice(choices)
+
+
+def _show_cursor(session_id: str, cancel_event: threading.Event, owner: str) -> None:
+    """Включает курсор со своей картинкой и новой фразой; сбой оформления не мешает работе."""
+    image = cursor_image()
+    if not image.is_file() or image.is_symlink():
+        # без картинки курсор выйдет с английским приветствием - лучше без курсора
+        return
+    with _state_lock:
+        label = _cursor_label(_cursor_labels.get(session_id, (None, 0.0))[0])
+        _cursor_labels[session_id] = (label, time.monotonic())
+    try:
+        run_process(
+            ["--session", session_id, "cursor-overlay", "enable", f"--label={label}",
+             f"--accent={CURSOR_ACCENT}", f"--image={image}", f"--hotspot={CURSOR_HOTSPOT}"],
+            timeout=10, cancel_event=cancel_event, owner=owner,
+        )
+    except (OSError, ValueError):
+        pass
+
+
+def _refresh_cursor(session_id: str, cancel_event: threading.Event, owner: str) -> None:
+    with _state_lock:
+        shown = _cursor_labels.get(session_id)
+    if shown is None or time.monotonic() - shown[1] >= CURSOR_LABEL_EVERY:
+        _show_cursor(session_id, cancel_event, owner)
+
+
 def _ensure_session(chat_id: int, cancel_event: threading.Event, owner: str) -> str | None:
     with _state_lock:
         known = _sessions.get(chat_id)
@@ -647,24 +720,16 @@ def _ensure_session(chat_id: int, cancel_event: threading.Event, owner: str) -> 
         return known
     try:
         started = run_process(
-            # без --cursor: курсор по умолчанию успевает показаться с английской подписью agent-desktop,
-            # поэтому включаем его сразу со своей подписью
+            # без --cursor: он включает курсор с английским приветствием agent-desktop
             ["session", "start", f"--name=dokky-chat-{chat_id}"],
             timeout=15, cancel_event=cancel_event, owner=owner,
         )
-        session_id = (started.get("data") or {}).get("session_id") if started.get("ok") else None
-        if not isinstance(session_id, str) or not session_id:
-            return None
-        # подпись и цвет курсора; сбой оформления не мешает работе
-        try:
-            run_process(
-                ["--session", session_id, "cursor-overlay", "enable", f"--label={CURSOR_LABEL}", f"--accent={CURSOR_ACCENT}"],
-                timeout=10, cancel_event=cancel_event, owner=owner,
-            )
-        except ValueError:
-            pass
     except ValueError:
         return None
+    session_id = (started.get("data") or {}).get("session_id") if started.get("ok") else None
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    _show_cursor(session_id, cancel_event, owner)
     with _state_lock:
         _sessions[chat_id] = session_id
     return session_id
@@ -841,6 +906,8 @@ class ComputerSession:
                 if invocation.command != "status":
                     session_id = _ensure_session(chat_id, self.cancel_event, self.owner)
                     if session_id:
+                        if invocation.command not in READ_COMMANDS:
+                            _refresh_cursor(session_id, self.cancel_event, self.owner)
                         argv = ["--session", session_id, *argv]
                 reply = run_process(
                     argv,
@@ -869,6 +936,9 @@ class ComputerSession:
                 ELEVATION_RE.search(message) or ELEVATION_RE.search(str(error.get("suggestion") or ""))
             ):
                 hint, result["needs_elevation"] = ELEVATION_HINT, True
+            if code == "PERM_DENIED" and sys.platform == "darwin" and _open_permission_guide(self.cancel_event, self.owner):
+                result["settings_opened"] = True
+                hint = (hint or "") + " Докки уже открыла нужный раздел Настроек с подсказкой, повторно открывать не нужно."
             if hint:
                 result["hint"] = hint
             if error.get("suggestion"):

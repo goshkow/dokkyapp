@@ -86,10 +86,26 @@ function update(id: string, next: Activity | null, live = false, ask: 'question'
   if (patch.done) saveDone(patch.done);
 }
 
+// когда в чате последний раз спросили и ответили: список, запрошенный до ответа, не должен вернуть точку
+// порядок событий считается счётчиком: вопрос и ответ бывают в одну миллисекунду
+let order = 0;
+const askedAt: Record<string, number> = {};
+const answeredAt: Record<string, { order: number; at: number }> = {};
+const STALE_LIST_MS = 10_000;
+
+const answeredRecently = (id: string): boolean => {
+  const answered = answeredAt[id];
+  return answered !== undefined && answered.order > (askedAt[id] ?? 0) && Date.now() - answered.at < STALE_LIST_MS;
+};
+
 /** Список чатов с сервера - источник правды: ходы, закончившиеся без события (перезапуск окна), тоже снимаются. */
 export function applyChatActivity(chats: Chat[]): void {
   const known = new Set(chats.map((chat) => String(chat.id)));
-  for (const chat of chats) update(String(chat.id), chat.activity ?? null);
+  for (const chat of chats) {
+    const id = String(chat.id);
+    const next = chat.activity ?? null;
+    update(id, next === 'question' && answeredRecently(id) ? 'working' : next);
+  }
   for (const id of Object.keys(chatActivity.get().activity)) if (!known.has(id)) update(id, null);
   const { done } = chatActivity.get();
   const kept = Object.fromEntries(Object.keys(done).filter((id) => known.has(id)).map((id) => [id, true as const]));
@@ -108,8 +124,17 @@ export function onRunState(chatId: number, active: boolean): void {
 /** kind - вид запроса агента: подтверждение действия или вопрос; в меню оба ждут человека, а уведомление у них разное. */
 export function onQuestion(chatId: number, asking: boolean, kind: string = 'question'): void {
   const id = String(chatId);
+  order += 1;
+  if (asking) askedAt[id] = order;
+  else answeredAt[id] = { order, at: Date.now() };
   if (asking) update(id, 'question', true, kind === 'approval' ? 'approval' : 'question');
   else if (chatActivity.get().activity[id] === 'question') update(id, 'working', true);
+}
+
+/** Человек ответил в этом окне: точка снимается сразу, не дожидаясь события шины (оно может потеряться). */
+export function onAnswered(chatId: Chat['id'] | null | undefined, pending: number): void {
+  if (pending > 0 || chatId == null || !/^[0-9]+$/.test(String(chatId))) return;
+  onQuestion(Number(chatId), false);
 }
 
 export function markSeen(chatId: Chat['id'] | null | undefined): void {

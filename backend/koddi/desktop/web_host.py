@@ -640,10 +640,11 @@ class KoddiPage(QWebEnginePage):
         self.permissionRequested.connect(self._permission)
 
     def _permission(self, permission) -> None:
-        """Микрофон и камера (голосовой ввод, фото в «Еде») - только своей странице и сайту в режиме чата."""
+        """Микрофон и камера (голосовой ввод, фото в «Еде») и буфер обмена - только своей странице и сайту
+        в режиме чата. Без буфера сайт не мог скопировать сообщение: navigator.clipboard в Qt спрашивает разрешение."""
         kinds = QWebEnginePermission.PermissionType
         if trusted_origin(permission.origin(), self.host.api_base) and permission.permissionType() in (
-            kinds.MediaAudioCapture, kinds.MediaVideoCapture, kinds.MediaAudioVideoCapture,
+            kinds.MediaAudioCapture, kinds.MediaVideoCapture, kinds.MediaAudioVideoCapture, kinds.ClipboardReadWrite,
         ):
             permission.grant()
         else:

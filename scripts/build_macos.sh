@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Сборка Докки.app через Nuitka на macOS: scripts/build_macos.sh [папка_сборки]
-# Подпись: SIGN_IDENTITY="Developer ID Application: ..." (по умолчанию подпись без сертификата).
+# Подпись: SIGN_IDENTITY="Developer ID Application: ..."; по умолчанию свой сертификат из ~/.dokky-signing
+# (scripts/create_signing_identity.sh), без него - подпись без сертификата.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -100,7 +101,7 @@ cp -R backend/koddi/computer_use/native/agent-desktop "$APP/Contents/MacOS/koddi
 # служебные файлы профилировщика могут лежать рядом с исходниками, в поставке им делать нечего
 find "$APP" -name '*.profraw' -delete
 
-"$PYTHON" scripts/finalize_macos_app.py "$APP" --identity "${SIGN_IDENTITY:--}" ${ASSETS_CAR:+--assets-car "$ASSETS_CAR"}
+"$PYTHON" scripts/finalize_macos_app.py "$APP" --identity "${SIGN_IDENTITY:-auto}" ${ASSETS_CAR:+--assets-car "$ASSETS_CAR"}
 # сборка в папке проекта не должна перехватывать запуск Докки и ссылки koddi:// у установленной копии
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 [ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$APP" >/dev/null 2>&1 || true

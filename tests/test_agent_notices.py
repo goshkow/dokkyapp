@@ -158,7 +158,8 @@ def test_camera_and_microphone_only_for_own_page_and_dokky_site(monkeypatch):
         web_host.KoddiPage._permission(page, permission)
         return permission.answer
 
-    for kind in (kinds.MediaAudioCapture, kinds.MediaVideoCapture, kinds.MediaAudioVideoCapture):
+    # буфер обмена нужен сайту в режиме чата, чтобы копировать сообщения
+    for kind in (kinds.MediaAudioCapture, kinds.MediaVideoCapture, kinds.MediaAudioVideoCapture, kinds.ClipboardReadWrite):
         assert answer("https://dokky.goshkow.com", kind) == "grant"
         assert answer("http://127.0.0.1:8765", kind) == "grant"
         assert answer("https://evil.example", kind) == "deny"

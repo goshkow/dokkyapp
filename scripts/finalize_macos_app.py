@@ -8,8 +8,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
+BUNDLE_ID = "com.goshkow.dokky"
 ENTITLEMENTS = {
     # Chromium из Qt WebEngine: JIT и исполняемая память, библиотеки Qt подписаны другим ключом, микрофон для голоса
     "com.apple.security.cs.allow-jit": True,
@@ -45,7 +47,7 @@ def patch_info(bundle: Path) -> None:
         "LSApplicationCategoryType": "public.app-category.developer-tools",
         # ссылки koddi:// возвращают человека в программу после оплаты и входа на сайте
         "CFBundleURLTypes": [{
-            "CFBundleURLName": "com.goshkow.dokky",
+            "CFBundleURLName": BUNDLE_ID,
             "CFBundleURLSchemes": ["koddi"],
         }],
     })
@@ -74,28 +76,88 @@ def bundle_browser(bundle: Path) -> None:
         browsers.symlink_to(Path("../../../../Resources/playwright-browsers"))
 
 
-def sign_agent_desktop(bundle: Path, identity: str) -> None:
-    """Бинарники agent-desktop подписываются нашим Developer ID с hardened runtime до подписи всего бандла."""
+LOCAL_SIGNING = Path.home() / ".dokky-signing"
+
+
+@dataclass(frozen=True)
+class Signer:
+    """adhoc - без сертификата; local - свой сертификат из ~/.dokky-signing; developer - Developer ID."""
+
+    identity: str
+    kind: str
+    keychain: Path | None = None
+
+    def args(self) -> list[str]:
+        command = ["--sign", self.identity]
+        if self.keychain:
+            command += ["--keychain", str(self.keychain)]
+        if self.kind == "developer":
+            command += ["--options", "runtime", "--timestamp"]
+        return command
+
+
+def local_signer() -> Signer | None:
+    """Свой сертификат: macOS привязывает права к нему и к идентификатору, а не к хэшу сборки,
+    поэтому Универсальный доступ переживает обновления, и чужая программа его не унаследует."""
+    keychain = LOCAL_SIGNING / "dokky-signing.keychain-db"
+    password_file = LOCAL_SIGNING / "keychain-pass"
+    certificate = LOCAL_SIGNING / "cert.pem"
+    if not (keychain.is_file() and password_file.is_file() and certificate.is_file()):
+        return None
+    password = password_file.read_text(encoding="utf-8").strip()
+    subprocess.run(["security", "unlock-keychain", "-p", password, str(keychain)], check=True)
+    fingerprint = subprocess.run(
+        ["openssl", "x509", "-in", str(certificate), "-noout", "-fingerprint", "-sha1"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split("=", 1)[1].strip().replace(":", "")
+    return Signer(fingerprint, "local", keychain)
+
+
+def resolve_signer(identity: str) -> Signer:
+    if identity == "auto":
+        signer = local_signer()
+        if signer:
+            return signer
+        print("Нет ~/.dokky-signing: подпись без сертификата, права macOS после обновления придётся выдать заново")
+        identity = "-"
+    if identity == "-":
+        return Signer("-", "adhoc")
+    return Signer(identity, "developer")
+
+
+def stable_requirement(identifier: str) -> str:
+    """Без сертификата macOS по умолчанию привязывает права к хэшу сборки, и после обновления
+    Универсальный доступ молча перестаёт действовать. Требование по идентификатору переживает обновления,
+    но его может повторить любая программа - поэтому это запасной путь, когда своего сертификата нет."""
+    return f'=designated => identifier "{identifier}"'
+
+
+def sign_agent_desktop(bundle: Path, signer: Signer) -> None:
+    """Бинарники agent-desktop получают свой постоянный идентификатор вместо случайного из их сборки."""
     folder = bundle / "Contents" / "MacOS" / "koddi" / "computer_use" / "native" / "agent-desktop"
     if not folder.is_dir():
         raise SystemExit("В бандле нет agent-desktop: сначала python scripts/fetch_agent_desktop.py")
     for path in sorted(folder.iterdir()):
         if path.is_file() and path.name.startswith("agent-desktop") and not path.is_symlink():
-            command = ["codesign", "--force", "--sign", identity]
-            if identity != "-":
-                command += ["--options", "runtime", "--timestamp"]
+            identifier = f"{BUNDLE_ID}.{path.name}"
+            command = ["codesign", "--force", *signer.args(), "--identifier", identifier]
+            if signer.kind == "adhoc":
+                command += ["--requirements", stable_requirement(identifier)]
             subprocess.run([*command, str(path)], check=True)
 
 
-def sign(bundle: Path, identity: str) -> None:
-    sign_agent_desktop(bundle, identity)
+def sign(bundle: Path, signer: Signer) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         entitlements = Path(tmp) / "entitlements.plist"
         entitlements.write_bytes(plistlib.dumps(ENTITLEMENTS))
-        command = ["codesign", "--force", "--deep", "--sign", identity,
-                   "--entitlements", str(entitlements)]
-        if identity != "-":
-            command += ["--options", "runtime", "--timestamp"]
+        subprocess.run(["codesign", "--force", "--deep", *signer.args(), "--entitlements", str(entitlements),
+                        str(bundle)], check=True)
+        # --deep переподписал вложенный код со случайными идентификаторами, а --deep с --requirements навесил бы
+        # всем одно требование, поэтому agent-desktop и сам бандл подписываются ещё раз отдельно
+        sign_agent_desktop(bundle, signer)
+        command = ["codesign", "--force", *signer.args(), "--entitlements", str(entitlements), "--identifier", BUNDLE_ID]
+        if signer.kind == "adhoc":
+            command += ["--requirements", stable_requirement(BUNDLE_ID)]
         subprocess.run([*command, str(bundle)], check=True)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
 
@@ -103,7 +165,8 @@ def sign(bundle: Path, identity: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
-    parser.add_argument("--identity", default="-", help="Developer ID или '-' для подписи без сертификата")
+    parser.add_argument("--identity", default="auto",
+                        help="auto - свой сертификат из ~/.dokky-signing, иначе без сертификата; '-' - без сертификата; Developer ID")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--assets-car", type=Path, help="Assets.car, скомпилированный actool из DokkyApp.icon")
     args = parser.parse_args()
@@ -115,7 +178,7 @@ def main() -> None:
         install_glass_icon(bundle, args.assets_car.resolve())
     if not args.no_browser:
         bundle_browser(bundle)
-    sign(bundle, args.identity)
+    sign(bundle, resolve_signer(args.identity))
     print(f"Готово: {bundle}")
 
 
